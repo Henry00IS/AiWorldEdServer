@@ -1,0 +1,17 @@
+{
+  "name": "aiworlded-server",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Collaborative editing WebSocket relay for AiWorldEd.",
+  "scripts": {
+    "start": "bun src/main.ts",
+    "dev": "bun --watch src/main.ts",
+    "test": "bun test",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5.9.0"
+  }
+}
