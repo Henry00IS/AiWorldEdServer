@@ -1,0 +1,296 @@
+/**
+ * Room list, create, join and leave, plus membership teardown.
+ */
+import { sessionSend, sessionSendError, type ConnectionSession } from '../connection/connection_session.ts';
+import { Room } from '../rooms/room.ts';
+import { roomBroadcast, roomBroadcastLocks } from '../rooms/room_broadcast.ts';
+import type { ServerCore } from '../server/server_core.ts';
+import { passwordPolicyEvaluate } from '../shared/password_policy.ts';
+import type { ClientMessage } from '../shared/protocol_definitions.ts';
+import { roomNameNormalize } from '../shared/room_name_policy.ts';
+
+type RoomCreateMessage = Extract<ClientMessage, { t: 'room.create' }>;
+type RoomJoinMessage = Extract<ClientMessage, { t: 'room.join' }>;
+
+/** Argon2id parameters (OWASP minimum: 19 MiB, 2 iterations) keep hashing cheap enough for a small server. */
+export const PASSWORD_HASH_OPTIONS = { algorithm: 'argon2id', memoryCost: 19456, timeCost: 2 } as const;
+
+/** Text sent to members when the owner leaves. */
+export const OFFLINE_SESSION_MESSAGE =
+  'The room owner disconnected. You are now working offline: save your changes locally. Re-joining a room discards local work.';
+
+/**
+ * Replies with the visible rooms. Internal test rooms are only visible to direct connections.
+ *
+ * @param core Relay core.
+ * @param session Requester.
+ * @param message Request.
+ */
+export function handlerRoomList(core: ServerCore, session: ConnectionSession, message: { r?: number }): void {
+  const rooms = [];
+  for (const room of core.registry.all()) {
+    if (rooms.length >= core.config.roomListMaximum) break;
+    if (room.internalTest && session.via !== 'direct') continue;
+    rooms.push(room.describe());
+  }
+  sessionSend(session, { t: 'room.list', r: message.r, rooms });
+}
+
+/**
+ * Validates and creates a room owned by the sender.
+ *
+ * @param core Relay core.
+ * @param session Creator.
+ * @param message Request.
+ */
+export async function handlerRoomCreate(core: ServerCore, session: ConnectionSession, message: RoomCreateMessage): Promise<void> {
+  const rejection = roomCreateRejection(core, session, message);
+  if (rejection) return sessionSendError(session, rejection.code, message.r, rejection.details);
+  const reservation = core.registry.reserve(session.ipKey);
+  if (reservation !== 'ok') return sessionSendError(session, reservation, message.r);
+  const passwordHash = message.private ? await passwordHashGuarded(core, session, message.password ?? '') : null;
+  if (session.closed || session.room || (message.private && passwordHash === null)) {
+    core.registry.reservationCancel(session.ipKey);
+    if (message.private && passwordHash === null && !session.closed) sessionSendError(session, 'busy', message.r);
+    return;
+  }
+  const room = roomInstantiate(core, session, message, passwordHash);
+  core.registry.reservationCommit(room);
+  session.room = room;
+  session.synced = true;
+  sessionSend(session, { t: 'room.created', r: message.r, room: room.describe(), you: session.user });
+}
+
+/**
+ * @param core Relay core.
+ * @param session Creator.
+ * @param message Request.
+ * @returns Null when acceptable, otherwise the error code and details.
+ */
+function roomCreateRejection(core: ServerCore, session: ConnectionSession, message: RoomCreateMessage): { code: string; details?: object } | null {
+  if (session.room) return { code: 'already_in_room' };
+  if (session.pendingAsyncOperation) return { code: 'busy' };
+  const name = roomNameNormalize(message.name);
+  if (!name.ok) return { code: 'invalid_name', details: { reason: name.reason } };
+  if (message.internalTest && (session.via !== 'direct' || !core.config.internalTestRoomsEnabled)) return { code: 'internal_test_forbidden' };
+  if (!message.private) return message.password === undefined ? null : { code: 'password_not_allowed' };
+  if (message.password === undefined) return { code: 'password_required' };
+  const policy = passwordPolicyEvaluate(message.password);
+  return policy.ok ? null : { code: 'weak_password', details: { issues: policy.issues } };
+}
+
+/**
+ * @param core Relay core.
+ * @param session Owner.
+ * @param message Validated request.
+ * @param passwordHash Argon2id hash or null for public rooms.
+ * @returns New room.
+ */
+function roomInstantiate(core: ServerCore, session: ConnectionSession, message: RoomCreateMessage, passwordHash: string | null): Room {
+  const name = roomNameNormalize(message.name);
+  return new Room({
+    id: roomIdGenerateUnique(core),
+    name: name.ok ? name.name : '',
+    isPrivate: message.private,
+    passwordHash,
+    internalTest: message.internalTest === true,
+    maxUsers: Math.min(message.maxUsers ?? core.config.usersPerRoomDefault, core.config.usersPerRoomMaximum),
+    owner: session,
+    locksPerUser: core.config.locksPerUser,
+    locksPerRoom: core.config.locksPerRoom,
+  });
+}
+
+/**
+ * @param core Relay core.
+ * @returns A random 16 character base64url id not in use.
+ */
+function roomIdGenerateUnique(core: ServerCore): string {
+  for (;;) {
+    const id = Buffer.from(crypto.getRandomValues(new Uint8Array(12))).toString('base64url');
+    if (!core.registry.get(id)) return id;
+  }
+}
+
+/**
+ * Hashes a password with a global concurrency cap.
+ *
+ * @param core Relay core.
+ * @param session Requester (marked busy meanwhile).
+ * @param password Plain password.
+ * @returns Hash, or null when the server is busy.
+ */
+async function passwordHashGuarded(core: ServerCore, session: ConnectionSession, password: string): Promise<string | null> {
+  return passwordWorkGuarded(core, session, () => Bun.password.hash(password, PASSWORD_HASH_OPTIONS));
+}
+
+/**
+ * Runs password work under the concurrency cap and the per-session busy flag.
+ *
+ * @param core Relay core.
+ * @param session Requester.
+ * @param work Async password operation.
+ * @returns Work result, or null when the cap was reached.
+ */
+async function passwordWorkGuarded<T>(core: ServerCore, session: ConnectionSession, work: () => Promise<T>): Promise<T | null> {
+  if (core.passwordHashesInFlight >= core.config.passwordHashConcurrency) return null;
+  core.passwordHashesInFlight++;
+  session.pendingAsyncOperation = true;
+  try {
+    return await work();
+  } finally {
+    core.passwordHashesInFlight--;
+    session.pendingAsyncOperation = false;
+  }
+}
+
+/**
+ * Verifies access and adds the sender to a room; asks the owner for a snapshot.
+ *
+ * @param core Relay core.
+ * @param session Joiner.
+ * @param message Request (discardLocalWork is guaranteed true by the schema).
+ */
+export async function handlerRoomJoin(core: ServerCore, session: ConnectionSession, message: RoomJoinMessage): Promise<void> {
+  const room = core.registry.get(message.room);
+  const rejection = roomJoinRejection(session, room);
+  if (rejection || !room) return sessionSendError(session, rejection ?? 'room_not_found', message.r);
+  if (room.passwordHash !== null) {
+    const verdict = await roomJoinPasswordCheck(core, session, room, message.password);
+    if (verdict !== 'ok') return verdict === 'gone' ? undefined : sessionSendError(session, verdict, message.r);
+    const lateRejection = roomJoinRejection(session, room);
+    if (lateRejection) return sessionSendError(session, lateRejection, message.r);
+  }
+  roomMemberAdd(core, session, room, message.r);
+}
+
+/**
+ * @param session Joiner.
+ * @param room Target room, if it exists.
+ * @returns Error code, or null when the join may proceed.
+ */
+function roomJoinRejection(session: ConnectionSession, room: Room | undefined): string | null {
+  if (session.room) return 'already_in_room';
+  if (session.pendingAsyncOperation) return 'busy';
+  if (!room || room.closed || (room.internalTest && session.via !== 'direct')) return 'room_not_found';
+  if (room.members.size >= room.maxUsers) return 'room_full';
+  return null;
+}
+
+/**
+ * Rate-limited, constant-time password verification.
+ *
+ * @param core Relay core.
+ * @param session Joiner.
+ * @param room Private room.
+ * @param password Supplied password.
+ * @returns 'ok', 'gone' when the session closed meanwhile, or an error code.
+ */
+async function roomJoinPasswordCheck(core: ServerCore, session: ConnectionSession, room: Room, password: string | undefined): Promise<string> {
+  if (password === undefined) return 'password_required';
+  if (core.joinFailuresPerIp.isBlocked(session.ipKey) || core.joinFailuresPerRoom.isBlocked(room.id)) return 'too_many_attempts';
+  const hash = room.passwordHash ?? '';
+  const matches = await passwordWorkGuarded(core, session, () => Bun.password.verify(password, hash));
+  if (session.closed) return 'gone';
+  if (matches === null) return 'busy';
+  if (matches) return 'ok';
+  core.joinFailuresPerIp.recordFailure(session.ipKey);
+  core.joinFailuresPerRoom.recordFailure(room.id);
+  return 'wrong_password';
+}
+
+/**
+ * Adds a verified joiner, informs everyone and requests a snapshot from the owner.
+ *
+ * @param core Relay core.
+ * @param session Joiner.
+ * @param room Room.
+ * @param requestId Request id to echo.
+ */
+function roomMemberAdd(core: ServerCore, session: ConnectionSession, room: Room, requestId: number | undefined): void {
+  room.members.set(session.user, session);
+  session.room = room;
+  session.synced = false;
+  session.awaitingSnapshotBegin = true;
+  session.snapshotTimer = setTimeout(() => roomMembershipEnd(core, session, 'snapshot_timeout'), core.config.snapshotTimeoutMs);
+  sessionSend(session, {
+    t: 'room.joined', r: requestId, room: room.describe(), you: session.user, owner: room.owner.user,
+    members: room.memberList(), locks: room.locks.listAll(),
+  });
+  roomBroadcast(room, { t: 'member.joined', user: session.user, name: session.name }, session.user);
+  sessionSend(room.owner, { t: 'snapshot.request', for: session.user });
+}
+
+/**
+ * Explicit leave request.
+ *
+ * @param core Relay core.
+ * @param session Leaver.
+ * @param message Request.
+ */
+export function handlerRoomLeave(core: ServerCore, session: ConnectionSession, message: { r?: number }): void {
+  if (!session.room) return sessionSendError(session, 'not_in_room', message.r);
+  roomMembershipEnd(core, session, 'left', message.r);
+}
+
+/**
+ * Ends a session's room membership. An owner leaving closes the room.
+ *
+ * @param core Relay core.
+ * @param session Leaving session.
+ * @param reason Reason reported in room.left.
+ * @param requestId Request id to echo, if any.
+ */
+export function roomMembershipEnd(core: ServerCore, session: ConnectionSession, reason: string, requestId?: number): void {
+  const room = session.room;
+  if (!room) return;
+  if (room.owner === session) roomClose(core, room);
+  else roomMemberRemove(room, session);
+  sessionSend(session, { t: 'room.left', reason: room.owner === session ? 'closed' : reason, ...(requestId === undefined ? {} : { r: requestId }) });
+}
+
+/**
+ * Removes a non-owner member: frees locks, aborts its streams, informs the room.
+ *
+ * @param room Room.
+ * @param session Member.
+ */
+function roomMemberRemove(room: Room, session: ConnectionSession): void {
+  room.members.delete(session.user);
+  sessionRoomStateReset(session);
+  roomBroadcastLocks(room, session, [], room.locks.release(session.user));
+  for (const stream of room.streamsRemoveFor(session.user)) {
+    sessionSend(room.owner, { t: 'stream.abort', to: session.user, stream: stream.id, reason: 'recipient_left' });
+  }
+  roomBroadcast(room, { t: 'member.left', user: session.user });
+}
+
+/**
+ * Closes a room after its owner left; members are told they are offline now.
+ *
+ * @param core Relay core.
+ * @param room Room to close.
+ */
+function roomClose(core: ServerCore, room: Room): void {
+  room.closed = true;
+  core.registry.remove(room);
+  room.streams.clear();
+  for (const member of room.members.values()) {
+    sessionRoomStateReset(member);
+    if (member !== room.owner) sessionSend(member, { t: 'room.closed', reason: 'owner_left', offline: true, message: OFFLINE_SESSION_MESSAGE });
+  }
+  room.members.clear();
+}
+
+/**
+ * Clears all per-room state of a session.
+ *
+ * @param session Session leaving its room.
+ */
+function sessionRoomStateReset(session: ConnectionSession): void {
+  if (session.snapshotTimer) clearTimeout(session.snapshotTimer);
+  session.snapshotTimer = null;
+  session.room = null;
+  session.synced = false;
+  session.awaitingSnapshotBegin = false;
+}

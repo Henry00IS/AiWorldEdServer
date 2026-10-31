@@ -1,0 +1,109 @@
+/**
+ * One collaboration room: owner, members, locks and in-flight streams.
+ * Holds no world data.
+ */
+import type { ConnectionSession } from '../connection/connection_session.ts';
+import type { StreamKind } from '../shared/protocol_definitions.ts';
+import { RoomLockTable } from './room_lock_table.ts';
+
+/** One owner-to-member stream that is currently in flight. */
+export interface RoomStream {
+  readonly to: number;
+  readonly id: number;
+  readonly kind: StreamKind;
+  readonly size: number;
+  received: number;
+  delivered: number;
+  creditedAt: number;
+  ended: boolean;
+}
+
+/** Room construction parameters. */
+export interface RoomOptions {
+  id: string;
+  name: string;
+  isPrivate: boolean;
+  passwordHash: string | null;
+  internalTest: boolean;
+  maxUsers: number;
+  owner: ConnectionSession;
+  locksPerUser: number;
+  locksPerRoom: number;
+}
+
+/** Live room state. */
+export class Room {
+  readonly id: string;
+  readonly name: string;
+  readonly isPrivate: boolean;
+  readonly passwordHash: string | null;
+  readonly internalTest: boolean;
+  readonly maxUsers: number;
+  readonly owner: ConnectionSession;
+  readonly ownerIpKey: string;
+  readonly members = new Map<number, ConnectionSession>();
+  readonly locks: RoomLockTable;
+  readonly streams = new Map<string, RoomStream>();
+  closed = false;
+
+  /**
+   * @param options Room parameters; the owner becomes the first member.
+   */
+  constructor(options: RoomOptions) {
+    this.id = options.id;
+    this.name = options.name;
+    this.isPrivate = options.isPrivate;
+    this.passwordHash = options.passwordHash;
+    this.internalTest = options.internalTest;
+    this.maxUsers = options.maxUsers;
+    this.owner = options.owner;
+    this.ownerIpKey = options.owner.ipKey;
+    this.locks = new RoomLockTable(options.locksPerUser, options.locksPerRoom);
+    this.members.set(options.owner.user, options.owner);
+  }
+
+  /**
+   * @param to Recipient user id.
+   * @param id Stream id.
+   * @returns Map key of the stream.
+   */
+  static streamKey(to: number, id: number): string {
+    return `${to}:${id}`;
+  }
+
+  /**
+   * @param to Recipient user id.
+   * @returns Number of active streams to that member.
+   */
+  streamCountFor(to: number): number {
+    let count = 0;
+    for (const stream of this.streams.values()) if (stream.to === to) count++;
+    return count;
+  }
+
+  /**
+   * Removes and returns every stream addressed to a member.
+   *
+   * @param to Recipient user id.
+   * @returns Removed streams.
+   */
+  streamsRemoveFor(to: number): RoomStream[] {
+    const removed = [...this.streams.values()].filter((stream) => stream.to === to);
+    for (const stream of removed) this.streams.delete(Room.streamKey(stream.to, stream.id));
+    return removed;
+  }
+
+  /**
+   * @returns Public description used in list and join replies.
+   */
+  describe(): { id: string; name: string; private: boolean; users: number; maxUsers: number } {
+    return { id: this.id, name: this.name, private: this.isPrivate, users: this.members.size, maxUsers: this.maxUsers };
+  }
+
+  /**
+   * @returns Member listing for join replies.
+   */
+  memberList(): { user: number; name: string; owner: boolean }[] {
+    return [...this.members.values()].map((member) => ({ user: member.user, name: member.name, owner: member === this.owner }));
+  }
+}
