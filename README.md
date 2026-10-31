@@ -144,6 +144,8 @@ A count of 0 clears the sender's presence. One camera is 22 bytes up and 26 byte
 framing). The length must match the count exactly, ids must be unique and positions finite and within
 ±10^6; anything else closes the connection with `4001`. Each member may send 10 presence frames per second
 (burst 20); excess frames and frames from members that are not synced are dropped silently.
+`welcome.limits.presencePerSecond` advertises presence support: clients must not send presence frames to a relay
+that leaves it out, because older relays close the connection on an unknown binary frame kind.
 
 The relay keeps one mailbox slot per sender per recipient: a newer frame replaces an undelivered older
 one, and the mailbox is delivered only while the recipient's outbound queue is empty and its socket

@@ -53,6 +53,7 @@ describe('handshake and gatekeeping', () => {
     const client = await connect({ name: '  Tester  ' });
     expect(client.welcome).toMatchObject({ protocol: PROTOCOL_ID, version: 1, via: 'direct', name: 'Tester' });
     expect(client.welcome.limits.roomsPerIp).toBe(8);
+    expect(client.welcome.limits.presencePerSecond).toBe(10);
     client.send({ t: 'ping', r: 5 });
     expect((await client.next('pong')).r).toBe(5);
   });

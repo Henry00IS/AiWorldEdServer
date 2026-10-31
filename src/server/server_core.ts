@@ -251,6 +251,7 @@ export class ServerCore {
         roomsPerIp: config.roomsPerIp,
         usersPerRoom: config.usersPerRoomMaximum,
         locksPerUser: config.locksPerUser,
+        presencePerSecond: config.presencePerSecond,
       },
     };
   }
