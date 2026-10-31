@@ -3,7 +3,7 @@
  * Holds no world data.
  */
 import type { ConnectionSession } from '../connection/connection_session.ts';
-import type { StreamKind } from '../shared/protocol_definitions.ts';
+import type { RoomMemberEntry, StreamKind } from '../shared/protocol_definitions.ts';
 import { RoomLockTable } from './room_lock_table.ts';
 
 /** One owner-to-member stream that is currently in flight. */
@@ -42,8 +42,11 @@ export class Room {
   readonly owner: ConnectionSession;
   readonly ownerIpKey: string;
   readonly members = new Map<number, ConnectionSession>();
+  private readonly colorSlots = new Map<number, number>();
   readonly locks: RoomLockTable;
   readonly streams = new Map<string, RoomStream>();
+  /** Latest relayed presence frame per member, handed to members when they finish syncing. */
+  readonly presenceLatest = new Map<number, Uint8Array>();
   closed = false;
 
   /**
@@ -59,7 +62,38 @@ export class Room {
     this.owner = options.owner;
     this.ownerIpKey = options.owner.ipKey;
     this.locks = new RoomLockTable(options.locksPerUser, options.locksPerRoom);
-    this.members.set(options.owner.user, options.owner);
+    this.memberAdd(options.owner);
+  }
+
+  /**
+   * Adds a member and gives it the lowest color slot no current member holds.
+   *
+   * @param session New member.
+   */
+  memberAdd(session: ConnectionSession): void {
+    const used = new Set(this.colorSlots.values());
+    let slot = 0;
+    while (used.has(slot)) slot++;
+    this.colorSlots.set(session.user, slot);
+    this.members.set(session.user, session);
+  }
+
+  /**
+   * Removes a member and frees its color slot.
+   *
+   * @param user Member user id.
+   */
+  memberDelete(user: number): void {
+    this.members.delete(user);
+    this.colorSlots.delete(user);
+  }
+
+  /**
+   * @param user Member user id.
+   * @returns The member's color slot (0 for unknown users).
+   */
+  colorOf(user: number): number {
+    return this.colorSlots.get(user) ?? 0;
   }
 
   /**
@@ -103,7 +137,7 @@ export class Room {
   /**
    * @returns Member listing for join replies.
    */
-  memberList(): { user: number; name: string; owner: boolean }[] {
-    return [...this.members.values()].map((member) => ({ user: member.user, name: member.name, owner: member === this.owner }));
+  memberList(): RoomMemberEntry[] {
+    return [...this.members.values()].map((member) => ({ user: member.user, name: member.name, owner: member === this.owner, color: this.colorOf(member.user) }));
   }
 }

@@ -7,7 +7,8 @@ import { roomBroadcast, roomBroadcastLocks } from '../rooms/room_broadcast.ts';
 import type { ServerCore } from '../server/server_core.ts';
 import { passwordPolicyEvaluate } from '../shared/password_policy.ts';
 import type { ClientMessage } from '../shared/protocol_definitions.ts';
-import { roomNameNormalize } from '../shared/room_name_policy.ts';
+import { displayNameNormalize, roomNameNormalize } from '../shared/room_name_policy.ts';
+import { presencePurge } from './handler_presence.ts';
 
 type RoomCreateMessage = Extract<ClientMessage, { t: 'room.create' }>;
 type RoomJoinMessage = Extract<ClientMessage, { t: 'room.join' }>;
@@ -54,11 +55,12 @@ export async function handlerRoomCreate(core: ServerCore, session: ConnectionSes
     if (message.private && passwordHash === null && !session.closed) sessionSendError(session, 'busy', message.r);
     return;
   }
+  sessionDisplayNameApply(session, message.displayName);
   const room = roomInstantiate(core, session, message, passwordHash);
   core.registry.reservationCommit(room);
   session.room = room;
   session.synced = true;
-  sessionSend(session, { t: 'room.created', r: message.r, room: room.describe(), you: session.user });
+  sessionSend(session, { t: 'room.created', r: message.r, room: room.describe(), you: session.user, name: session.name, color: room.colorOf(session.user) });
 }
 
 /**
@@ -72,6 +74,8 @@ function roomCreateRejection(core: ServerCore, session: ConnectionSession, messa
   if (session.pendingAsyncOperation) return { code: 'busy' };
   const name = roomNameNormalize(message.name);
   if (!name.ok) return { code: 'invalid_name', details: { reason: name.reason } };
+  const displayName = displayNameRejection(message.displayName);
+  if (displayName) return displayName;
   if (message.internalTest && (session.via !== 'direct' || !core.config.internalTestRoomsEnabled)) return { code: 'internal_test_forbidden' };
   if (!message.private) return message.password === undefined ? null : { code: 'password_not_allowed' };
   if (message.password === undefined) return { code: 'password_required' };
@@ -155,13 +159,37 @@ export async function handlerRoomJoin(core: ServerCore, session: ConnectionSessi
   const room = core.registry.get(message.room);
   const rejection = roomJoinRejection(session, room);
   if (rejection || !room) return sessionSendError(session, rejection ?? 'room_not_found', message.r);
+  const displayName = displayNameRejection(message.displayName);
+  if (displayName) return sessionSendError(session, displayName.code, message.r, displayName.details);
   if (room.passwordHash !== null) {
     const verdict = await roomJoinPasswordCheck(core, session, room, message.password);
     if (verdict !== 'ok') return verdict === 'gone' ? undefined : sessionSendError(session, verdict, message.r);
     const lateRejection = roomJoinRejection(session, room);
     if (lateRejection) return sessionSendError(session, lateRejection, message.r);
   }
+  sessionDisplayNameApply(session, message.displayName);
   roomMemberAdd(core, session, room, message.r);
+}
+
+/**
+ * @param rawName Display name from a create or join request, if any.
+ * @returns Null when absent or valid, otherwise the invalid_name error with field "displayName".
+ */
+function displayNameRejection(rawName: string | undefined): { code: string; details: object } | null {
+  if (rawName === undefined) return null;
+  const name = displayNameNormalize(rawName);
+  return name.ok ? null : { code: 'invalid_name', details: { reason: name.reason, field: 'displayName' } };
+}
+
+/**
+ * Adopts the display name chosen for this room, if one was sent (validated beforehand).
+ *
+ * @param session Session entering a room.
+ * @param rawName Display name from the request, if any.
+ */
+function sessionDisplayNameApply(session: ConnectionSession, rawName: string | undefined): void {
+  const name = rawName === undefined ? null : displayNameNormalize(rawName);
+  if (name?.ok) session.name = name.name;
 }
 
 /**
@@ -208,7 +236,7 @@ async function roomJoinPasswordCheck(core: ServerCore, session: ConnectionSessio
  * @param requestId Request id to echo.
  */
 function roomMemberAdd(core: ServerCore, session: ConnectionSession, room: Room, requestId: number | undefined): void {
-  room.members.set(session.user, session);
+  room.memberAdd(session);
   session.room = room;
   session.synced = false;
   session.awaitingSnapshotBegin = true;
@@ -217,7 +245,7 @@ function roomMemberAdd(core: ServerCore, session: ConnectionSession, room: Room,
     t: 'room.joined', r: requestId, room: room.describe(), you: session.user, owner: room.owner.user,
     members: room.memberList(), locks: room.locks.listAll(),
   });
-  roomBroadcast(room, { t: 'member.joined', user: session.user, name: session.name }, session.user);
+  roomBroadcast(room, { t: 'member.joined', user: session.user, name: session.name, color: room.colorOf(session.user) }, session.user);
   sessionSend(room.owner, { t: 'snapshot.request', for: session.user });
 }
 
@@ -256,7 +284,8 @@ export function roomMembershipEnd(core: ServerCore, session: ConnectionSession, 
  * @param session Member.
  */
 function roomMemberRemove(room: Room, session: ConnectionSession): void {
-  room.members.delete(session.user);
+  room.memberDelete(session.user);
+  presencePurge(room, session);
   sessionRoomStateReset(session);
   roomBroadcastLocks(room, session, [], room.locks.release(session.user));
   for (const stream of room.streamsRemoveFor(session.user)) {
@@ -275,7 +304,9 @@ function roomClose(core: ServerCore, room: Room): void {
   room.closed = true;
   core.registry.remove(room);
   room.streams.clear();
+  room.presenceLatest.clear();
   for (const member of room.members.values()) {
+    member.presencePending.clear();
     sessionRoomStateReset(member);
     if (member !== room.owner) sessionSend(member, { t: 'room.closed', reason: 'owner_left', offline: true, message: OFFLINE_SESSION_MESSAGE });
   }

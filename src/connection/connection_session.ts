@@ -21,6 +21,11 @@ export interface ConnectionSession {
   readonly outbound: ConnectionOutboundQueue;
   readonly messageBucket: LimiterTokenBucket;
   readonly byteBucket: LimiterTokenBucket;
+  readonly presenceBucket: LimiterTokenBucket;
+  /** Presence mailbox: latest undelivered relayed frame per sender. */
+  readonly presencePending: Map<number, Uint8Array>;
+  /** Socket buffer level above which presence waits. */
+  readonly presenceHighWaterBytes: number;
   readonly close: (code: number, reason: string) => void;
   name: string;
   helloDone: boolean;

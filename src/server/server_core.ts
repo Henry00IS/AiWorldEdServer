@@ -5,6 +5,7 @@ import type { ServerConfiguration } from '../config/server_configuration.ts';
 import { ConnectionOutboundQueue, type OutboundSocket } from '../connection/connection_outbound_queue.ts';
 import { sessionSend, type ConnectionSession, type ConnectionUpgradeData } from '../connection/connection_session.ts';
 import { handlerEdit } from '../handlers/handler_edit.ts';
+import { handlerPresence, presenceFlush } from '../handlers/handler_presence.ts';
 import { handlerLockAcquire, handlerLockRelease } from '../handlers/handler_lock.ts';
 import { handlerRoomCreate, handlerRoomJoin, handlerRoomLeave, handlerRoomList, roomMembershipEnd } from '../handlers/handler_room.ts';
 import { handlerAssetMissing, handlerAssetRequest, handlerStreamAbort, handlerStreamBegin, handlerStreamChunk, handlerStreamEnd } from '../handlers/handler_stream.ts';
@@ -14,12 +15,24 @@ import { LimiterTokenBucket } from '../network/limiter_token_bucket.ts';
 import { protocolMessageDecode } from '../protocol/protocol_message_decoder.ts';
 import { PROTOCOL_CAPS } from '../protocol/protocol_message_schemas.ts';
 import { RoomRegistry } from '../rooms/room_registry.ts';
-import { displayNameNormalize } from '../shared/room_name_policy.ts';
-import { CLOSE_CODES, PROTOCOL_ID, PROTOCOL_VERSION, type ClientMessage } from '../shared/protocol_definitions.ts';
+import { displayNameFallback, displayNameNormalize, DISPLAY_NAME_LENGTH_MAXIMUM } from '../shared/room_name_policy.ts';
+import { BINARY_FRAME_KIND_PRESENCE, CLOSE_CODES, PROTOCOL_ID, PROTOCOL_VERSION, type ClientMessage } from '../shared/protocol_definitions.ts';
 
 /** Socket surface the core needs from the transport. */
 export interface CoreSocket extends OutboundSocket {
   close(code: number, reason: string): void;
+}
+
+/**
+ * Display name from the hello message. Older clients may send longer names; they are cut to the maximum.
+ *
+ * @param rawName Name from hello, if any.
+ * @param user User id for the fallback.
+ * @returns Valid display name.
+ */
+function displayNameFromHello(rawName: string | undefined, user: number): string {
+  const name = displayNameNormalize(Array.from(rawName?.trim() ?? '').slice(0, DISPLAY_NAME_LENGTH_MAXIMUM).join(''));
+  return name.ok ? name.name : displayNameFallback(user);
 }
 
 /** Relay state shared by every handler. */
@@ -147,6 +160,9 @@ export class ServerCore {
       outbound,
       messageBucket: new LimiterTokenBucket(config.messagesPerSecond, config.messageBurst),
       byteBucket: new LimiterTokenBucket(config.bytesPerSecond, config.byteBurst),
+      presenceBucket: new LimiterTokenBucket(config.presencePerSecond, config.presenceBurst),
+      presencePending: new Map(),
+      presenceHighWaterBytes: config.presenceHighWaterBytes,
       close: (code, reason) => socket.close(code, reason),
       name: '',
       helloDone: false,
@@ -158,6 +174,7 @@ export class ServerCore {
       handshakeTimer: null,
       pendingAsyncOperation: false,
     };
+    outbound.idleListener = () => presenceFlush(session);
     return session;
   }
 
@@ -177,6 +194,7 @@ export class ServerCore {
    */
   private sessionBinary(session: ConnectionSession, frame: Uint8Array): void {
     if (!session.helloDone) return this.violation(session, 'binary before hello');
+    if (frame[1] === BINARY_FRAME_KIND_PRESENCE) return handlerPresence(this, session, frame);
     handlerStreamChunk(this, session, frame);
   }
 
@@ -201,8 +219,7 @@ export class ServerCore {
   private handshake(session: ConnectionSession, message: ClientMessage): void {
     if (message.t !== 'hello') return this.violation(session, 'expected hello');
     if (message.version !== PROTOCOL_VERSION) return this.violation(session, `unsupported version, server speaks ${PROTOCOL_VERSION}`);
-    const name = displayNameNormalize(message.name ?? `User ${session.user}`);
-    session.name = name.ok ? name.name : `User ${session.user}`;
+    session.name = displayNameFromHello(message.name, session.user);
     session.helloDone = true;
     if (session.handshakeTimer) clearTimeout(session.handshakeTimer);
     session.handshakeTimer = null;

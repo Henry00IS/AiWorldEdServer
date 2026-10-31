@@ -16,6 +16,8 @@ export const BINARY_FRAME_MAGIC = 0xa7;
 export const BINARY_FRAME_KIND_STREAM_CHUNK = 1;
 /** Size of the fixed binary frame header in bytes. */
 export const BINARY_FRAME_HEADER_BYTES = 12;
+/** Binary frame kind: low-priority presence (viewport cameras and play-mode character pose). */
+export const BINARY_FRAME_KIND_PRESENCE = 2;
 
 /** WebSocket close codes used by the relay. */
 export const CLOSE_CODES = {
@@ -53,8 +55,8 @@ export type ClientMessage =
   | { t: 'hello'; protocol: typeof PROTOCOL_ID; version: number; client: string; name?: string }
   | { t: 'ping'; r?: number }
   | { t: 'room.list'; r?: number }
-  | { t: 'room.create'; r?: number; name: string; private: boolean; password?: string; internalTest?: boolean; maxUsers?: number }
-  | { t: 'room.join'; r?: number; room: string; password?: string; discardLocalWork: true }
+  | { t: 'room.create'; r?: number; name: string; private: boolean; password?: string; internalTest?: boolean; maxUsers?: number; displayName?: string }
+  | { t: 'room.join'; r?: number; room: string; password?: string; discardLocalWork: true; displayName?: string }
   | { t: 'room.leave'; r?: number }
   | { t: 'lock.acquire'; r?: number; ids: string[]; replace?: boolean }
   | { t: 'lock.release'; r?: number; ids?: string[] }
@@ -82,6 +84,8 @@ export interface RoomMemberEntry {
   user: number;
   name: string;
   owner: boolean;
+  /** Color slot: the lowest slot free in the room when the member entered; unique among current members. */
+  color: number;
 }
 
 /** Error codes sent in `error` messages. */

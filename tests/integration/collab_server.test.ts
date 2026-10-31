@@ -5,10 +5,11 @@
  */
 import { afterAll, afterEach, beforeAll, describe, expect, test } from 'bun:test';
 import { collabServerStart, type CollabServer } from '../../src/server/server_collab.ts';
-import { binaryFrameEncode, binaryFrameParse, binaryFramePayload } from '../../src/shared/binary_frame.ts';
+import { binaryFrameEncode } from '../../src/shared/binary_frame.ts';
 import { CLOSE_CODES, PROTOCOL_ID } from '../../src/shared/protocol_definitions.ts';
 import { passwordGenerate } from '../../src/shared/password_generator.ts';
 import { TestClient, testConnectionRefused } from '../support/test_client.ts';
+import { roomCreate, snapshotSend, streamReceive, testRoomJoinSynced } from '../support/test_room.ts';
 import { TEST_DUMMY_FORWARDED_SECRET, TEST_ORIGIN, testConfiguration } from '../support/test_configuration.ts';
 
 let server: CollabServer;
@@ -27,52 +28,9 @@ function proxiedHeaders(clientIp: string): Record<string, string> {
   return { 'X-Forwarded-Secret': TEST_DUMMY_FORWARDED_SECRET, 'X-Real-IP': clientIp, 'X-Forwarded-For': clientIp };
 }
 
-/** Creates an internal test room and returns its id. */
-async function roomCreate(owner: TestClient, extra: Record<string, unknown> = {}): Promise<string> {
-  const reply = await owner.request({ t: 'room.create', name: `test room ${Math.random()}`, private: false, internalTest: true, ...extra }, 'room.created');
-  expect(reply.t).toBe('room.created');
-  return reply.room.id;
-}
-
-/** Owner answers the pending snapshot request with the given bytes. */
-async function snapshotSend(owner: TestClient, snapshot: Uint8Array, streamId = 1): Promise<number> {
-  const request = await owner.next('snapshot.request');
-  owner.send({ t: 'stream.begin', to: request.for, stream: streamId, kind: 'snapshot', size: snapshot.byteLength });
-  for (let offset = 0; offset < snapshot.byteLength; offset += 64 * 1024) {
-    owner.sendRaw(binaryFrameEncode(streamId, request.for, snapshot.subarray(offset, offset + 64 * 1024)));
-  }
-  owner.send({ t: 'stream.end', to: request.for, stream: streamId });
-  return request.for;
-}
-
 /** Joins and receives the full snapshot; returns the joiner and the snapshot bytes. */
-async function joinSynced(owner: TestClient, roomId: string, snapshot = new TextEncoder().encode('{"world":1}')): Promise<{ joiner: TestClient; received: Uint8Array }> {
-  const joiner = await connect();
-  const joined = await joiner.request({ t: 'room.join', room: roomId, discardLocalWork: true }, 'room.joined');
-  expect(joined.t).toBe('room.joined');
-  await snapshotSend(owner, snapshot);
-  return { joiner, received: await streamReceive(joiner) };
-}
-
-/** Collects one stream on the receiving side. */
-async function streamReceive(receiver: TestClient): Promise<Uint8Array> {
-  const begin = await receiver.next('stream.begin');
-  const parts: Uint8Array[] = [];
-  let received = 0;
-  while (received < begin.size) {
-    const frame = await receiver.nextBinary();
-    const chunk = binaryFrameParse(frame, 1 << 20);
-    if (!chunk) throw new Error('bad chunk');
-    expect(chunk.stream).toBe(begin.stream);
-    expect(chunk.peer).toBe(begin.from);
-    parts.push(binaryFramePayload(frame).slice());
-    received += chunk.payloadBytes;
-  }
-  await receiver.next('stream.end', (message) => message.stream === begin.stream);
-  const result = new Uint8Array(received);
-  let offset = 0;
-  for (const part of parts) result.set(part, (offset += part.byteLength) - part.byteLength);
-  return result;
+async function joinSynced(owner: TestClient, roomId: string, snapshot?: Uint8Array): Promise<{ joiner: TestClient; received: Uint8Array }> {
+  return testRoomJoinSynced(await connect(), owner, roomId, snapshot);
 }
 
 beforeAll(() => {

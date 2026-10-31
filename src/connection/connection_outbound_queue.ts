@@ -25,6 +25,8 @@ export class ConnectionOutboundQueue {
   private head = 0;
   private queuedBytes = 0;
   private overflowed = false;
+  /** Called after a flush that left the queue empty (presence delivery hook). */
+  idleListener: (() => void) | null = null;
 
   /**
    * @param socket Destination socket.
@@ -82,6 +84,20 @@ export class ConnectionOutboundQueue {
   }
 
   /**
+   * Sends a low-priority frame right away only if nothing is queued and the socket buffer is below a threshold.
+   * The frame never enters the queue.
+   *
+   * @param data Frame bytes.
+   * @param highWaterBytes Socket buffer level at or above which the frame is refused.
+   * @returns True when the frame was handed to the socket.
+   */
+  sendIfIdle(data: Uint8Array, highWaterBytes: number): boolean {
+    if (this.overflowed || this.length() > 0 || this.socket.getBufferedAmount() >= highWaterBytes) return false;
+    this.socket.send(data);
+    return true;
+  }
+
+  /**
    * Drops everything (connection closing).
    */
   clear(): void {
@@ -100,6 +116,7 @@ export class ConnectionOutboundQueue {
       else this.flushSingle(item);
     }
     this.compact();
+    if (this.length() === 0) this.idleListener?.();
   }
 
   /**

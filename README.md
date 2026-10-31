@@ -42,7 +42,7 @@ string is shared by all recipient queues. Consecutive queued edits are sent as o
 Text frames are JSON objects with a `t` type. Every client message is checked against
 a strict schema: unknown types, unknown fields, wrong types, out-of-range values or
 `__proto__` tricks close the connection with `4001`. Binary frames are only used for
-stream chunks. An optional `r` (int 0..2^31-1) on requests is echoed back in replies and errors.
+stream chunks and presence. An optional `r` (int 0..2^31-1) on requests is echoed back in replies and errors.
 
 ### Handshake
 
@@ -53,6 +53,8 @@ The first frame must be `hello` within 5 s:
 ```
 
 Reply: `{"t":"welcome","protocol":"aiworlded-collab","version":1,"user":7,"name":"Henry","via":"proxy","limits":{...}}`.
+Display names are at most 12 characters (trimmed, no control characters). A longer hello name is
+cut to 12; a missing or invalid one becomes `User N` (`N` = user id modulo 10^7).
 `via` is `proxy` when the request carried the correct `X-Forwarded-Secret`, otherwise `direct`.
 `limits` reports the effective limits (payload, chunk, window, snapshot/asset sizes, ids per
 message, ops per edit, messages per second, rooms per IP, users per room, locks per user).
@@ -63,8 +65,8 @@ message, ops per edit, messages per second, rooms per IP, users per room, locks 
 | --- | --- | --- |
 | `ping` | | → `pong` |
 | `room.list` | | → `room.list {rooms:[{id,name,private,users,maxUsers}]}`. Private rooms are flagged and reveal nothing else. |
-| `room.create` | `name`, `private`, `password?`, `maxUsers?` (clamped to 32, default 16), `internalTest?` | → `room.created {room, you}`. Creator becomes owner. One room per connection. |
-| `room.join` | `room`, `discardLocalWork: true`, `password?` | → `room.joined {room, you, owner, members, locks}`. `discardLocalWork` must be literally `true`: joining always discards local work. |
+| `room.create` | `name`, `private`, `password?`, `maxUsers?` (clamped to 32, default 16), `internalTest?`, `displayName?` | → `room.created {room, you, name, color}`. Creator becomes owner. One room per connection. |
+| `room.join` | `room`, `discardLocalWork: true`, `password?`, `displayName?` | → `room.joined {room, you, owner, members, locks}`; members are `{user, name, owner, color}`. `discardLocalWork` must be literally `true`: joining always discards local work. |
 | `room.leave` | | → `room.left`. If the owner leaves, the room closes. |
 | `lock.acquire` | `ids[]`, `replace?` | All-or-nothing. → `lock.result {ok:true, add, remove}` or `{ok:false, code:'lock_conflict', conflicts:[{id,by}]}` / `lock_limit`. `replace:true` atomically swaps the whole selection (releases held ids not in `ids`). |
 | `lock.release` | `ids?` | Omit `ids` to release everything. |
@@ -73,6 +75,7 @@ message, ops per edit, messages per second, rooms per IP, users per room, locks 
 | `asset.missing` | `to`, `name` | Owner answers that an asset does not exist. |
 | `stream.begin` | `to`, `stream`, `kind: snapshot\|asset`, `size`, `name?`, `mime?` | Owner only. `name` is required for assets. |
 | *(binary chunk)* | see below | Owner only. |
+| *(binary presence)* | see below | Synced members only. Low priority, latest-only. |
 | `stream.end` | `to`, `stream` | Must follow exactly `size` bytes. |
 | `stream.abort` | `to`, `stream`, `reason?` | |
 
@@ -85,7 +88,7 @@ max 256 ops per edit; `d` is opaque JSON (max depth 32, max 200k nodes) relayed 
 | Type | Fields |
 | --- | --- |
 | `welcome`, `pong`, `room.list`, `room.created`, `room.joined`, `room.left {reason}` | replies |
-| `member.joined {user, name}`, `member.left {user}` | membership |
+| `member.joined {user, name, color}`, `member.left {user}` | membership |
 | `locks {by, add?, remove?}` | lock changes of another user |
 | `lock.result` | reply to `lock.acquire` / `lock.release` |
 | `edits {list:[{from, seq, ops}]}` | relayed edits, in order per sender |
@@ -96,6 +99,10 @@ max 256 ops per edit; `d` is opaque JSON (max depth 32, max 200k nodes) relayed 
 | `asset.request {from, name}` (owner), `asset.missing {from, name}` | assets |
 | `room.closed {reason:'owner_left', offline:true, message}` | the owner left: you are now offline, save locally |
 | `error {code, r?, ...}` | see error codes |
+
+`displayName` on create and join replaces the hello name for this room; an invalid one is rejected with
+`invalid_name {reason, field: "displayName"}`. `color` is a color slot: the lowest slot no current member
+of the room holds (owner 0), freed when the member leaves. Clients map slots to colors.
 
 Error codes: `not_in_room`, `not_synced`, `not_owner`, `already_in_room`, `busy`, `invalid_name`,
 `password_required`, `password_not_allowed`, `weak_password {issues}`, `wrong_password`,
@@ -119,6 +126,30 @@ offset 12 ...  payload (1..256 KiB)
 ```
 
 `src/shared/binary_frame.ts` has `binaryFrameEncode`, `binaryFrameParse`, `binaryFramePayload`.
+
+### Binary presence
+
+Viewport cameras and the play-mode character of a member, for drawing remote users. Shared codec:
+`src/shared/presence_frame.ts` (`presenceFrameEncode`, `presenceFrameCheck`, `presenceFrameRelay`,
+`presenceFrameDecode`).
+
+```
+client → relay: [0xA7][kind 2][version 1][count 0..6][entries]
+relay → client: [0xA7][kind 2][version 1][count][sender u32 BE][entries]
+entry (18 B):   [id u8: camera 0..15 | 0xFF character][x y z float32 BE]
+                [orientation u32: smallest-three quaternion, 2 + 3×10 bits][fov u8: 1..179, 0 for the character]
+```
+
+A count of 0 clears the sender's presence. One camera is 22 bytes up and 26 bytes down (plus WebSocket
+framing). The length must match the count exactly, ids must be unique and positions finite and within
+±10^6; anything else closes the connection with `4001`. Each member may send 10 presence frames per second
+(burst 20); excess frames and frames from members that are not synced are dropped silently.
+
+The relay keeps one mailbox slot per sender per recipient: a newer frame replaces an undelivered older
+one, and the mailbox is delivered only while the recipient's outbound queue is empty and its socket
+buffer is below 64 KiB. Presence therefore never delays edits or streams and never builds a backlog. The
+latest frame of every member is handed to a joiner once its snapshot is complete. A member's presence
+is forgotten when it leaves; clients drop it on `member.left`.
 
 ### Flow control
 
@@ -191,13 +222,15 @@ warn the user that they are offline and should save locally. Re-joining any room
 | Handshake / idle | 5 s / 60 s (with ping/pong) |
 | Snapshot / asset | 256 MiB / 64 MiB, 4 MiB window, 8 streams per recipient, 60 s snapshot timeout |
 | Room list | 200 entries |
+| Presence | 10 frames/s per member (burst 20), latest-only per sender per recipient, 116 bytes max |
 
 Other measures: versioned hello handshake; strict schemas; only allowed `Origin`s
 (`https://henry00is.github.io`, `http://localhost:*`, `http://127.0.0.1:*`, `http://[::1]:*`,
 `views://main_ui`; override with `ALLOWED_ORIGINS`); only `/ws` upgrades; no compression
 (no zip bombs, low CPU); only the owner can stream and only to members of its room; a joiner
 receives only a snapshot it was promised. The relay can't be used as a general pipe: every text
-frame must be a known AiWorldEd message and binary frames must belong to an open, size-declared stream.
+frame must be a known AiWorldEd message and binary frames must belong to an open, size-declared stream
+or be a well-formed presence frame from a synced room member.
 
 ### Proxy trust model
 
@@ -234,7 +267,7 @@ on a private interface the proxy can reach, and let the proxy forward only the W
 
 ## Client integration checklist (AiWorldEd)
 
-- Copy or import `src/shared/*` (protocol constants/types, binary frames, password policy + generator, name rules).
+- Copy or import `src/shared/*` (protocol constants/types, binary frames, presence frames, password policy + generator, name rules).
 - Connect to `wss://aiworlded.00labs.net/ws` (Origin must be allowed), send `hello`, read `welcome.limits`.
 - Room browser: `room.list`; create dialog with name (≤128) and private toggle; prefill the password with
   `passwordGenerate()` and show `passwordPolicyEvaluate()` issues live.

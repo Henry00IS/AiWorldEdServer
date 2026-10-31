@@ -58,3 +58,25 @@ test('overflow clears the queue and reports the slow consumer once', () => {
   expect(overflows).toBe(1);
   expect(queue.length()).toBe(0);
 });
+
+test('sendIfIdle only sends while nothing is queued and the socket is below the threshold; idle listener fires after draining', () => {
+  const { socket, sent } = socketFake();
+  const queue = new ConnectionOutboundQueue(socket, 10_000, 100, () => {});
+  let idleCalls = 0;
+  queue.idleListener = () => idleCalls++;
+  const presence = new Uint8Array([0xa7, 2]);
+  expect(queue.sendIfIdle(presence, 10)).toBe(true);
+  socket.buffered = 50;
+  expect(queue.sendIfIdle(presence, 10)).toBe(false);
+  queue.pushText('{"t":"locks"}');
+  expect(queue.length()).toBe(0);
+  socket.buffered = 500;
+  queue.pushEdit('{"from":1,"seq":1,"ops":[]}');
+  expect(queue.sendIfIdle(presence, 1000)).toBe(false);
+  idleCalls = 0;
+  socket.buffered = 0;
+  queue.flush();
+  expect(idleCalls).toBe(1);
+  expect(sent.length).toBe(3);
+  expect(queue.bytesQueued()).toBe(0);
+});

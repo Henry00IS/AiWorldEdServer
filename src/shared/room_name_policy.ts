@@ -5,7 +5,7 @@
 /** Maximum room name length in code points (after trimming). */
 export const ROOM_NAME_LENGTH_MAXIMUM = 128;
 /** Maximum display name length in code points (after trimming). */
-export const DISPLAY_NAME_LENGTH_MAXIMUM = 32;
+export const DISPLAY_NAME_LENGTH_MAXIMUM = 12;
 
 /** Result of normalizing a user supplied name. */
 export type NameNormalizeResult = { ok: true; name: string } | { ok: false; reason: 'empty' | 'too_long' | 'invalid_characters' };
@@ -43,4 +43,14 @@ function nameNormalizeWithLimit(rawName: string, maximumLength: number): NameNor
   if (name.length === 0) return { ok: false, reason: 'empty' };
   if (Array.from(name).length > maximumLength) return { ok: false, reason: 'too_long' };
   return { ok: true, name };
+}
+
+/**
+ * Default display name for a user who did not pick one; always within DISPLAY_NAME_LENGTH_MAXIMUM.
+ *
+ * @param user User id.
+ * @returns Name like "User 42".
+ */
+export function displayNameFallback(user: number): string {
+  return `User ${user % 10_000_000}`;
 }

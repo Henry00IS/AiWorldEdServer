@@ -36,6 +36,9 @@ export interface ServerConfiguration {
   joinFailuresPerRoomPerMinute: number;
   passwordHashConcurrency: number;
   roomListMaximum: number;
+  presencePerSecond: number;
+  presenceBurst: number;
+  presenceHighWaterBytes: number;
 }
 
 /** Default Origin allow list: GitHub Pages, local dev servers and the desktop app. */
@@ -86,6 +89,9 @@ export function configurationDefault(): ServerConfiguration {
     joinFailuresPerRoomPerMinute: 30,
     passwordHashConcurrency: 4,
     roomListMaximum: 200,
+    presencePerSecond: 10,
+    presenceBurst: 20,
+    presenceHighWaterBytes: 64 * 1024,
   };
 }
 

@@ -22,6 +22,7 @@ const SCHEMA_OBJECT_ID: Schema = { type: 'string', min: 1, max: 64, pattern: /^[
 const SCHEMA_OBJECT_IDS: Schema = { type: 'array', items: SCHEMA_OBJECT_ID, min: 1, max: PROTOCOL_CAPS.idsPerMessage };
 const SCHEMA_ROOM_ID: Schema = { type: 'string', min: 16, max: 16, pattern: /^[A-Za-z0-9_-]{16}$/ };
 const SCHEMA_ASSET_NAME: Schema = { type: 'string', min: 1, max: PROTOCOL_CAPS.assetNameMaximum, pattern: /^[^\p{Cc}]+$/u };
+const SCHEMA_DISPLAY_NAME: Schema = { type: 'string', min: 1, max: 64 };
 const SCHEMA_EDIT_OPERATION: Schema = {
   type: 'object',
   required: { k: { type: 'enum', values: EDIT_KINDS }, ids: SCHEMA_OBJECT_IDS },
@@ -61,12 +62,13 @@ export const CLIENT_MESSAGE_SCHEMAS: Readonly<Record<ClientMessageType, Schema>>
       password: { type: 'string', min: 1, max: PROTOCOL_CAPS.passwordInputMaximum },
       internalTest: { type: 'bool' },
       maxUsers: { type: 'int', min: 2, max: 1000 },
+      displayName: SCHEMA_DISPLAY_NAME,
     },
   ),
   'room.join': messageSchema(
     'room.join',
     { room: SCHEMA_ROOM_ID, discardLocalWork: { type: 'literal', value: true } },
-    { password: { type: 'string', min: 1, max: PROTOCOL_CAPS.passwordInputMaximum } },
+    { password: { type: 'string', min: 1, max: PROTOCOL_CAPS.passwordInputMaximum }, displayName: SCHEMA_DISPLAY_NAME },
   ),
   'room.leave': messageSchema('room.leave'),
   'lock.acquire': messageSchema('lock.acquire', { ids: SCHEMA_OBJECT_IDS }, { replace: { type: 'bool' } }),
