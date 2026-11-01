@@ -7,7 +7,9 @@ const server = collabServerStart(configuration);
 console.log(
   `aiworlded-server listening on ${configuration.hostname}:${server.port} ` +
     `(proxy secret ${configuration.forwardedSecret ? 'configured' : 'NOT configured: proxied requests will be rejected'}, ` +
-    `internal test rooms ${configuration.internalTestRoomsEnabled ? 'enabled' : 'disabled'})`,
+    `internal test rooms ${configuration.internalTestRoomsEnabled ? 'enabled' : 'disabled'}` +
+    `${configuration.internalTestRoomsViaProxy ? ' (also via proxy)' : ''}, ` +
+    `per IP: ${configuration.connectionsPerIp} connections, ${configuration.roomsPerIp} rooms)`,
 );
 
 /** Stops the server gracefully on termination signals. */

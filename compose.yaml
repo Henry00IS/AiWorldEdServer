@@ -1,19 +1,21 @@
 # Runs the relay on the server. Secrets come from ./.env (chmod 600, never committed).
+# The same file serves both instances: live (/srv/relay, defaults below) and
+# dev (/srv/relay-dev, whose .env sets CONTAINER_NAME, IMAGE_TAG and PORT).
 services:
   relay:
     build: .
-    image: aiworlded-server:latest
-    container_name: aiworlded-server
+    image: aiworlded-server:${IMAGE_TAG:-latest}
+    container_name: ${CONTAINER_NAME:-aiworlded-server}
     restart: unless-stopped
     env_file: .env
     environment:
       HOST: 0.0.0.0
-      PORT: '8081'
+      PORT: '${PORT:-8081}'
     # Published only on the private interface the reverse proxy forwards to.
     # Docker-published ports bypass the host INPUT chain, so binding to the
-    # private address (not 0.0.0.0) is what keeps 8081 off the public internet.
+    # private address (not 0.0.0.0) is what keeps the port off the public internet.
     ports:
-      - '${BIND_ADDRESS:?set BIND_ADDRESS in .env}:8081:8081'
+      - '${BIND_ADDRESS:?set BIND_ADDRESS in .env}:${PORT:-8081}:${PORT:-8081}'
     read_only: true
     tmpfs:
       - /tmp:size=16m
@@ -39,7 +41,7 @@ services:
           'CMD',
           'bun',
           '-e',
-          "fetch('http://127.0.0.1:8081/healthz').then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))",
+          "fetch('http://127.0.0.1:' + process.env.PORT + '/healthz').then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))",
         ]
       interval: 30s
       timeout: 5s

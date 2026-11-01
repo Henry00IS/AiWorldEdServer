@@ -22,8 +22,21 @@ export const OFFLINE_SESSION_MESSAGE =
   'The room owner disconnected. You are now working offline: save your changes locally. Re-joining a room discards local work.';
 
 /**
+ * Returns whether a session may create, list and join internal test rooms:
+ * direct connections always, proxied ones only when the relay is configured
+ * with INTERNAL_TEST_ROOMS_VIA_PROXY (development relay only).
+ *
+ * @param core Relay core.
+ * @param session Requester.
+ * @returns True when internal test rooms are accessible to the session.
+ */
+export function internalTestRoomsAccessible(core: ServerCore, session: ConnectionSession): boolean {
+  return session.via === 'direct' || core.config.internalTestRoomsViaProxy;
+}
+
+/**
  * Replies with the visible rooms. Internal test rooms are only visible to
- * direct connections.
+ * sessions for which {@link internalTestRoomsAccessible} holds.
  *
  * @param core Relay core.
  * @param session Requester.
@@ -33,7 +46,7 @@ export function handlerRoomList(core: ServerCore, session: ConnectionSession, me
   const rooms = [];
   for (const room of core.registry.all()) {
     if (rooms.length >= core.config.roomListMaximum) break;
-    if (room.internalTest && session.via !== 'direct') continue;
+    if (room.internalTest && !internalTestRoomsAccessible(core, session)) continue;
     rooms.push(room.describe());
   }
   sessionSend(session, { t: 'room.list', r: message.r, rooms });
@@ -114,7 +127,7 @@ function roomCreateRejection(
   if (!name.ok) return { code: 'invalid_name', details: { reason: name.reason } };
   const displayName = displayNameRejection(message.displayName);
   if (displayName) return displayName;
-  if (message.internalTest && (session.via !== 'direct' || !core.config.internalTestRoomsEnabled))
+  if (message.internalTest && (!internalTestRoomsAccessible(core, session) || !core.config.internalTestRoomsEnabled))
     return { code: 'internal_test_forbidden' };
   if (!message.private) return message.password === undefined ? null : { code: 'password_not_allowed' };
   if (message.password === undefined) return { code: 'password_required' };
@@ -217,14 +230,14 @@ export async function handlerRoomJoin(
   message: RoomJoinMessage,
 ): Promise<void> {
   const room = core.registry.get(message.room);
-  const rejection = roomJoinRejection(session, room);
+  const rejection = roomJoinRejection(core, session, room);
   if (rejection || !room) return sessionSendError(session, rejection ?? 'room_not_found', message.r);
   const displayName = displayNameRejection(message.displayName);
   if (displayName) return sessionSendError(session, displayName.code, message.r, displayName.details);
   if (room.passwordHash !== null) {
     const verdict = await roomJoinPasswordCheck(core, session, room, message.password);
     if (verdict !== 'ok') return verdict === 'gone' ? undefined : sessionSendError(session, verdict, message.r);
-    const lateRejection = roomJoinRejection(session, room);
+    const lateRejection = roomJoinRejection(core, session, room);
     if (lateRejection) return sessionSendError(session, lateRejection, message.r);
   }
   sessionDisplayNameApply(session, message.displayName);
@@ -259,14 +272,16 @@ function sessionDisplayNameApply(session: ConnectionSession, rawName: string | u
 /**
  * Checks whether a session may join a room before the password is verified.
  *
+ * @param core Relay core.
  * @param session Joiner.
  * @param room Target room, if it exists.
  * @returns Error code, or null when the join may proceed.
  */
-function roomJoinRejection(session: ConnectionSession, room: Room | undefined): string | null {
+function roomJoinRejection(core: ServerCore, session: ConnectionSession, room: Room | undefined): string | null {
   if (session.room) return 'already_in_room';
   if (session.pendingAsyncOperation) return 'busy';
-  if (!room || room.closed || (room.internalTest && session.via !== 'direct')) return 'room_not_found';
+  if (!room || room.closed || (room.internalTest && !internalTestRoomsAccessible(core, session)))
+    return 'room_not_found';
   if (room.members.size >= room.maxUsers) return 'room_full';
   return null;
 }

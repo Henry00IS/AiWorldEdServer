@@ -10,6 +10,7 @@ export interface ServerConfiguration {
   forwardedSecret: string | null;
   allowedOrigins: string[];
   internalTestRoomsEnabled: boolean;
+  internalTestRoomsViaProxy: boolean;
   maxPayloadBytes: number;
   streamChunkBytesMaximum: number;
   handshakeTimeoutMs: number;
@@ -104,6 +105,7 @@ export function configurationDefault(): ServerConfiguration {
     forwardedSecret: null,
     allowedOrigins: [...ALLOWED_ORIGINS_DEFAULT],
     internalTestRoomsEnabled: true,
+    internalTestRoomsViaProxy: false,
     ...CONFIGURATION_CONNECTION_LIMITS_DEFAULT,
     ...CONFIGURATION_ROOM_LIMITS_DEFAULT,
   };
@@ -121,9 +123,51 @@ export function configurationFromEnvironment(environment: Record<string, string 
   configuration.port = configurationParsePort(environment['PORT'], configuration.port);
   configuration.forwardedSecret = configurationParseSecret(environment['FORWARDED_SECRET']);
   configuration.internalTestRoomsEnabled = environment['INTERNAL_TEST_ROOMS'] !== 'false';
+  configuration.internalTestRoomsViaProxy = environment['INTERNAL_TEST_ROOMS_VIA_PROXY'] === 'true';
   if (environment['ALLOWED_ORIGINS'])
     configuration.allowedOrigins = configurationParseList(environment['ALLOWED_ORIGINS']);
+  configurationApplyPerIpLimits(configuration, environment);
   return configuration;
+}
+
+/**
+ * Applies the optional per-IP limit overrides (CONNECTIONS_PER_IP,
+ * ROOMS_PER_IP). Meant for the development relay, where every test client
+ * shares one address; production leaves them unset.
+ *
+ * @param configuration Configuration to update.
+ * @param environment Environment variable map.
+ */
+function configurationApplyPerIpLimits(
+  configuration: ServerConfiguration,
+  environment: Record<string, string | undefined>,
+): void {
+  configuration.connectionsPerIp = configurationParseLimit(
+    'CONNECTIONS_PER_IP',
+    environment['CONNECTIONS_PER_IP'],
+    configuration.connectionsPerIp,
+  );
+  configuration.roomsPerIp = configurationParseLimit(
+    'ROOMS_PER_IP',
+    environment['ROOMS_PER_IP'],
+    configuration.roomsPerIp,
+  );
+}
+
+/**
+ * Parses a positive integer limit from an environment value.
+ *
+ * @param variableName Environment variable name, used in the error message.
+ * @param value Raw value.
+ * @param fallback Limit used when unset.
+ * @returns Limit between 1 and 100000.
+ */
+function configurationParseLimit(variableName: string, value: string | undefined, fallback: number): number {
+  if (value === undefined || value === '') return fallback;
+  const limit = Number(value);
+  if (!Number.isInteger(limit) || limit < 1 || limit > 100_000)
+    throw new Error(`${variableName} must be an integer between 1 and 100000`);
+  return limit;
 }
 
 /**

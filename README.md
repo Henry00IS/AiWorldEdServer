@@ -9,7 +9,8 @@ selection locks.
 Contributors and agents: read [AGENTS.md](AGENTS.md) for the code standards and
 server rules before changing anything.
 
-Public endpoint: `wss://aiworlded.00labs.net/ws` (TLS terminated by the reverse proxy, proxied to `192.0.2.10:8081`).
+The official public relay is `wss://aiworlded.00labs.net/ws`; editor builds connect to it by
+default.
 
 ```
 bun install
@@ -251,18 +252,23 @@ or be a well-formed presence frame from a synced room member.
 `room.create {internalTest:true}` is accepted only on direct connections (no `X-Forwarded-Secret`),
 i.e. local tests. Such rooms are hidden from proxied clients' room lists and cannot be joined through
 the proxy (`room_not_found`). Proxied creation attempts get `internal_test_forbidden`. Set
-`INTERNAL_TEST_ROOMS=false` to disable them. Tests use the dummy secret in
+`INTERNAL_TEST_ROOMS=false` to disable them. `INTERNAL_TEST_ROOMS_VIA_PROXY=true`
+also allows them through the proxy, for test suites against a private development relay; it defaults
+to off and must never be set on a public relay. Tests use the dummy secret in
 `tests/support/test_configuration.ts`; the real secret is never in this repository.
 
 ## Configuration (environment)
 
-| Variable              | Meaning                                                                                          |
-| --------------------- | ------------------------------------------------------------------------------------------------ |
-| `HOST`, `PORT`        | Listen address (container: `0.0.0.0:8081`)                                                       |
-| `FORWARDED_SECRET`    | Secret the reverse proxy sends as `X-Forwarded-Secret` (≥16 chars). Without it, proxied requests are refused. |
-| `ALLOWED_ORIGINS`     | Comma-separated Origin allow list                                                                |
-| `INTERNAL_TEST_ROOMS` | `false` disables internal test rooms                                                             |
-| `BIND_ADDRESS`        | compose only: host address to publish 8081 on                                                    |
+| Variable                             | Meaning                                                                                          |
+| ------------------------------------ | ------------------------------------------------------------------------------------------------ |
+| `HOST`, `PORT`                       | Listen address (container: `0.0.0.0:8081`)                                                       |
+| `FORWARDED_SECRET`                   | Secret the reverse proxy sends as `X-Forwarded-Secret` (≥16 chars). Without it, proxied requests are refused. |
+| `ALLOWED_ORIGINS`                    | Comma-separated Origin allow list                                                                |
+| `INTERNAL_TEST_ROOMS`                | `false` disables internal test rooms                                                             |
+| `INTERNAL_TEST_ROOMS_VIA_PROXY`      | dev relay only: `true` allows internal test rooms through the proxy (default off)                |
+| `CONNECTIONS_PER_IP`, `ROOMS_PER_IP` | dev relay only: raise the per-IP limits (defaults 24 and 8)                                      |
+| `BIND_ADDRESS`                       | compose only: host address to publish the port on                                                |
+| `CONTAINER_NAME`, `IMAGE_TAG`        | compose only: dev instance names (defaults `aiworlded-server`, `latest`)                         |
 
 ## Deployment
 

@@ -1,11 +1,18 @@
 /**
  * End-to-end check through the public proxy: connect -> hello -> create room ->
  * list -> second client joins -> snapshot relay. Asserts the server reports the
- * connection as coming through the proxy (via=proxy).
+ * connection as coming through the proxy (via=proxy), then checks presence
+ * (member name and color, a camera pose relayed between the two clients) and
+ * whether internal test rooms are allowed.
  *
  * Usage: bun scripts/verify_public.ts [wss://aiworlded.00labs.net/ws]
+ *
+ * Env: EXPECT_VIA=proxy|direct (default proxy),
+ * EXPECT_INTERNAL_TEST=forbidden|allowed (default forbidden; the dev relay at
+ * /wstest allows them).
  */
 import { binaryFrameEncode } from '../src/shared/binary_frame.ts';
+import { presenceFrameDecode, presenceFrameEncode } from '../src/shared/presence_frame.ts';
 import { PROTOCOL_ID, PROTOCOL_VERSION } from '../src/shared/protocol_definitions.ts';
 
 const url = process.argv[2] ?? process.env['PUBLIC_WS_URL'] ?? 'wss://aiworlded.00labs.net/ws';
@@ -15,6 +22,8 @@ const origin = 'https://henry00is.github.io';
  * server.
  */
 const expectedVia = process.env['EXPECT_VIA'] ?? 'proxy';
+/** Expected answer to an internal test room request. */
+const expectedInternalTest = process.env['EXPECT_INTERNAL_TEST'] ?? 'forbidden';
 
 /** Minimal client with an inbox. */
 interface VerifyClient {
@@ -54,7 +63,9 @@ async function socketOpen(inbox: any[]): Promise<WebSocket> {
   const socket = new WebSocket(url, { headers: { Origin: origin } } as any);
   socket.binaryType = 'arraybuffer';
   socket.addEventListener('message', (event) =>
-    inbox.push(typeof event.data === 'string' ? JSON.parse(event.data) : { t: '#binary' }),
+    inbox.push(
+      typeof event.data === 'string' ? JSON.parse(event.data) : { t: '#binary', data: new Uint8Array(event.data) },
+    ),
   );
   await new Promise((resolve, reject) => {
     socket.addEventListener('open', resolve, { once: true });
@@ -81,7 +92,7 @@ async function clientOpen(): Promise<VerifyClient> {
 
 const hello = { t: 'hello', protocol: PROTOCOL_ID, version: PROTOCOL_VERSION, client: 'verify-public/1' };
 const owner = await clientOpen();
-owner.send({ ...hello, name: 'verify-owner' });
+owner.send({ ...hello, name: 'verify-own' });
 const welcome = await owner.next('welcome');
 console.log(`welcome: user=${welcome.user} via=${welcome.via}`);
 if (welcome.via !== expectedVia) throw new Error(`expected via=${expectedVia}, got via=${welcome.via}`);
@@ -91,7 +102,7 @@ const created = await owner.next('room.created');
 console.log(`created room ${created.room.id}`);
 
 const joiner = await clientOpen();
-joiner.send({ ...hello, name: 'verify-joiner' });
+joiner.send({ ...hello, name: 'verify-join' });
 await joiner.next('welcome');
 joiner.send({ t: 'room.list', r: 2 });
 const list = await joiner.next('room.list');
@@ -109,6 +120,28 @@ await joiner.next('stream.begin');
 await joiner.next('#binary');
 await joiner.next('stream.end');
 console.log('join + snapshot relay ok');
+
+const memberJoined = await owner.next('member.joined');
+if (memberJoined.name !== 'verify-join' || typeof memberJoined.color !== 'number')
+  throw new Error(`unexpected member.joined: ${JSON.stringify(memberJoined)}`);
+joiner.raw(presenceFrameEncode([{ id: 0, position: [1.5, 2, -3], quaternion: [0, 0, 0, 1], fov: 60 }]));
+const presence = presenceFrameDecode((await owner.next('#binary')).data);
+if (!presence || presence.sender !== memberJoined.user || presence.entries[0]?.position[0] !== 1.5)
+  throw new Error(`unexpected presence frame: ${JSON.stringify(presence)}`);
+console.log(`presence ok: member ${memberJoined.name} color ${memberJoined.color}, camera pose relayed`);
+
+const tester = await clientOpen();
+tester.send({ ...hello, name: 'verify-test' });
+await tester.next('welcome');
+tester.send({ t: 'room.create', r: 4, name: 'verify internal', private: false, internalTest: true });
+const internalAnswer = await tester.next('room.created').then(
+  () => 'allowed',
+  (error: Error) => (String(error.message).includes('internal_test_forbidden') ? 'forbidden' : String(error)),
+);
+tester.close();
+console.log(`internal test room: ${internalAnswer}`);
+if (internalAnswer !== expectedInternalTest)
+  throw new Error(`expected internal test rooms ${expectedInternalTest}, got ${internalAnswer}`);
 
 owner.close();
 const closed = await joiner.next('room.closed');
