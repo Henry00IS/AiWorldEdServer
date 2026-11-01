@@ -66,7 +66,10 @@ function editGate(
   session: ConnectionSession,
   message: EditMessage,
 ): EditGateReason | null {
-  if (abuseThrottled(core, session)) return 'throttled';
+  if (abuseThrottled(core, session)) {
+    abuseRecord(core, session, 1, 'edit while throttled');
+    return 'throttled';
+  }
   const running = room.locks.leases.of(session.user);
   if (message.lease !== undefined && running?.id !== message.lease) {
     const neverIssued = message.lease > room.locks.leases.lastId(session.user);

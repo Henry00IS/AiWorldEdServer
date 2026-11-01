@@ -278,6 +278,13 @@ describe('abuse', () => {
     expect(joiner.closeCode).toBeNull();
   });
 
+  test('acquires that keep coming while throttled escalate to a close', async () => {
+    const { joiner } = await roomPair();
+    for (let lease = 2; lease < 200 && joiner.closeCode === null; lease++)
+      joiner.send({ t: 'lock.acquire', r: lease, lease, ids: ['a'], replace: true });
+    expect(await joiner.closed()).toBe(CLOSE_CODES.abuse);
+  });
+
   test('renewal floods close the connection, flag it and keep the address out of the room', async () => {
     const { owner, joiner, roomId } = await roomPair();
     await joiner.request({ t: 'lock.acquire', ids: ['a'] }, 'lock.result');

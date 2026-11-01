@@ -75,7 +75,8 @@ export function handlerLockAcquire(core: ServerCore, session: ConnectionSession,
 
 /**
  * Checks the one-operation rule, throttling and the new-lease rate before an
- * acquire.
+ * acquire. Requests that keep coming while throttled still earn points, so a
+ * flood escalates to the disconnect score.
  *
  * @param core Relay core.
  * @param room Room.
@@ -89,7 +90,7 @@ function leaseRefusal(
   session: ConnectionSession,
   message: LockAcquireMessage,
 ): LeaseRefusal | null {
-  if (abuseThrottled(core, session)) return { code: 'throttled', points: 0 };
+  if (abuseThrottled(core, session)) return { code: 'throttled', points: 1 };
   const conflict = leaseConflict(room, session, message);
   if (conflict) return { code: conflict, points: 1 };
   if (room.locks.leases.of(session.user)?.id === message.lease) return null;
