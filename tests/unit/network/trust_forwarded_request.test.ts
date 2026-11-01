@@ -22,19 +22,33 @@ function forwarded(secret: string | null, extra: Record<string, string> = {}): H
   });
 }
 
-test('trust: no secret header is direct and ignores forwarded headers', () => {
-  expect(requestTrustResolve(forwarded(null), '192.0.2.5', TEST_DUMMY_FORWARDED_SECRET)).toEqual({
+/** Proxy trusted, secret required. */
+const PROXY_WITH_SECRET = { trustProxy: true, forwardedSecret: TEST_DUMMY_FORWARDED_SECRET };
+/** Proxy trusted, no secret. */
+const PROXY_WITHOUT_SECRET = { trustProxy: true, forwardedSecret: null };
+/** Default: no proxy. */
+const DIRECT_ONLY = { trustProxy: false, forwardedSecret: null };
+
+test('trust: without TRUST_PROXY every request is direct and forwarded headers are ignored', () => {
+  expect(requestTrustResolve(forwarded(TEST_DUMMY_FORWARDED_SECRET), '192.0.2.5', DIRECT_ONLY)).toEqual({
     kind: 'direct',
     clientIp: '192.0.2.5',
   });
-  expect(requestTrustResolve(forwarded(null), '::ffff:127.0.0.1', null)).toEqual({
+  expect(requestTrustResolve(forwarded('wrong'), '::ffff:127.0.0.1', DIRECT_ONLY)).toEqual({
     kind: 'direct',
     clientIp: '127.0.0.1',
   });
 });
 
-test('trust: correct secret uses X-Real-IP, then the last X-Forwarded-For hop', () => {
-  expect(requestTrustResolve(forwarded(TEST_DUMMY_FORWARDED_SECRET), '192.0.2.1', TEST_DUMMY_FORWARDED_SECRET)).toEqual({
+test('trust: with a required secret, no secret header is direct and ignores forwarded headers', () => {
+  expect(requestTrustResolve(forwarded(null), '192.0.2.5', PROXY_WITH_SECRET)).toEqual({
+    kind: 'direct',
+    clientIp: '192.0.2.5',
+  });
+});
+
+test('trust: correct secret uses X-Real-IP, then the last X-Forwarded-For hop, then the socket', () => {
+  expect(requestTrustResolve(forwarded(TEST_DUMMY_FORWARDED_SECRET), '192.0.2.1', PROXY_WITH_SECRET)).toEqual({
     kind: 'proxied',
     clientIp: '203.0.113.9',
   });
@@ -42,23 +56,34 @@ test('trust: correct secret uses X-Real-IP, then the last X-Forwarded-For hop', 
     'x-forwarded-secret': TEST_DUMMY_FORWARDED_SECRET,
     'x-forwarded-for': '1.1.1.1, 198.51.100.7',
   });
-  expect(requestTrustResolve(headers, '192.0.2.1', TEST_DUMMY_FORWARDED_SECRET)).toEqual({
+  expect(requestTrustResolve(headers, '192.0.2.1', PROXY_WITH_SECRET)).toEqual({
     kind: 'proxied',
     clientIp: '198.51.100.7',
   });
   const garbage = new Headers({ 'x-forwarded-secret': TEST_DUMMY_FORWARDED_SECRET, 'x-real-ip': 'not-an-ip' });
-  expect(requestTrustResolve(garbage, '192.0.2.1', TEST_DUMMY_FORWARDED_SECRET)).toEqual({
+  expect(requestTrustResolve(garbage, '192.0.2.1', PROXY_WITH_SECRET)).toEqual({
     kind: 'proxied',
     clientIp: '192.0.2.1',
   });
 });
 
-test('trust: wrong secret or unconfigured secret is rejected', () => {
-  expect(requestTrustResolve(forwarded('wrong'), '192.0.2.1', TEST_DUMMY_FORWARDED_SECRET).kind).toBe('rejected');
-  expect(requestTrustResolve(forwarded(''), '192.0.2.1', TEST_DUMMY_FORWARDED_SECRET).kind).toBe('rejected');
-  expect(requestTrustResolve(forwarded(TEST_DUMMY_FORWARDED_SECRET), '192.0.2.1', null).kind).toBe('rejected');
+test('trust: a wrong or empty secret is rejected when a secret is required', () => {
+  expect(requestTrustResolve(forwarded('wrong'), '192.0.2.1', PROXY_WITH_SECRET).kind).toBe('rejected');
+  expect(requestTrustResolve(forwarded(''), '192.0.2.1', PROXY_WITH_SECRET).kind).toBe('rejected');
   expect(secretEqualsConstantTime('abc', 'abc')).toBe(true);
   expect(secretEqualsConstantTime('abc', 'abcd')).toBe(false);
+});
+
+test('trust: TRUST_PROXY without a secret believes forwarded headers and ignores any secret header', () => {
+  expect(requestTrustResolve(forwarded(null), '192.0.2.1', PROXY_WITHOUT_SECRET)).toEqual({
+    kind: 'proxied',
+    clientIp: '203.0.113.9',
+  });
+  expect(requestTrustResolve(forwarded('anything'), '192.0.2.1', PROXY_WITHOUT_SECRET).kind).toBe('proxied');
+  expect(requestTrustResolve(new Headers(), '::ffff:192.0.2.1', PROXY_WITHOUT_SECRET)).toEqual({
+    kind: 'proxied',
+    clientIp: '192.0.2.1',
+  });
 });
 
 test('IPv6 addresses share a /64 limit key', () => {

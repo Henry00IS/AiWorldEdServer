@@ -19,6 +19,9 @@ bun run typecheck
 bun run start       # listens on 0.0.0.0:8081 (HOST / PORT override)
 ```
 
+Running your own relay (executable, Docker, TLS, reverse proxies, every setting):
+[`docs/SELF_HOSTING.md`](docs/SELF_HOSTING.md).
+
 ## Architecture
 
 ```
@@ -176,7 +179,11 @@ Close codes: `4001` protocol violation, `4002` rate limited, `4003` handshake ti
 `4004` slow consumer (outbound queue overflow), `4005` reserved, `4006` shutting down,
 `4007` abuse (repeated protocol misuse; the address may not enter rooms for 60 s),
 `4008` protocol unsupported (no common version; preceded by `error protocol_unsupported`).
-Connection-limit rejections happen at the upgrade as HTTP 429 (403 for Origin/secret).
+Refused upgrades complete the handshake and close at once with a reason the editor can show:
+`4009` origin refused (`origin not allowed: <origin>`), `4010` proxy refused (wrong
+`X-Forwarded-Secret`), `4011` too many connections from one address, `4005` server full.
+At most `refusedSocketsMaximum` (256) refused sockets wait to close; beyond that the upgrade
+gets plain HTTP 403 / 429 / 503.
 `1009` is used by Bun for frames above the payload limit.
 
 ### Binary stream chunk
@@ -415,37 +422,41 @@ or be a well-formed presence frame from a synced room member.
 
 ### Proxy trust model
 
-- **No `X-Forwarded-Secret`**: direct connection. The socket address is used; `X-Real-IP` /
-  `X-Forwarded-For` are ignored (they could be spoofed).
-- **Correct secret** (sha256 + `timingSafeEqual`): proxied. Client IP = `X-Real-IP`, else the last
-  `X-Forwarded-For` hop, else the socket address. `welcome.via = "proxy"`.
-- **Wrong or empty secret, or a secret while none is configured**: the upgrade is refused with 403.
-  A wrong secret means someone is impersonating the proxy, so it is neither trusted nor treated as direct.
+- **`TRUST_PROXY` off (default)**: every connection is direct. The socket address is used;
+  `X-Real-IP` / `X-Forwarded-For` / `X-Forwarded-Secret` are ignored (they could be spoofed).
+- **`TRUST_PROXY=true` with `FORWARDED_SECRET`**:
+  - no `X-Forwarded-Secret`: direct, socket address;
+  - correct secret (sha256 + `timingSafeEqual`): proxied. Client IP = `X-Real-IP`, else the last
+    `X-Forwarded-For` hop, else the socket address. `welcome.via = "proxy"`;
+  - wrong or empty secret: refused with close code `4010`. A wrong secret means someone is
+    impersonating the proxy, so it is neither trusted nor treated as direct.
+- **`TRUST_PROXY=true` without a secret**: every connection is proxied (only safe when the port is
+  reachable through the proxy alone; the relay warns at start when it listens on all interfaces).
+
+`FORWARDED_SECRET` without `TRUST_PROXY=true` is a startup error.
 
 ### Internal test rooms
 
 `room.create {internalTest:true}` is accepted only on direct connections (no `X-Forwarded-Secret`),
 i.e. local tests. Such rooms are hidden from proxied clients' room lists and cannot be joined through
-the proxy (`room_not_found`). Proxied creation attempts get `internal_test_forbidden`. Set
-`INTERNAL_TEST_ROOMS=false` to disable them. `INTERNAL_TEST_ROOMS_VIA_PROXY=true`
+the proxy (`room_not_found`). Proxied creation attempts get `internal_test_forbidden`. They are
+off by default; development relays set `INTERNAL_TEST_ROOMS=true`. `INTERNAL_TEST_ROOMS_VIA_PROXY=true`
 also allows them through the proxy, for test suites against a private development relay; it defaults
 to off and must never be set on a public relay. Tests use the dummy secret in
 `tests/support/test_configuration.ts`; the real secret is never in this repository.
 
 ## Configuration (environment)
 
-| Variable                                                    | Meaning                                                                                          |
-| ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
-| `HOST`, `PORT`                                              | Listen address (container: `0.0.0.0:8081`)                                                       |
-| `FORWARDED_SECRET`                                          | Secret the reverse proxy sends as `X-Forwarded-Secret` (≥16 chars). Without it, proxied requests are refused. |
-| `WEBSOCKET_PATH`                                            | WebSocket path (default `/ws`)  |
-| `ALLOWED_ORIGINS`                                           | Comma-separated Origin allow list                                                                |
-| `INTERNAL_TEST_ROOMS`                                       | `false` disables internal test rooms                                                             |
-| `INTERNAL_TEST_ROOMS_VIA_PROXY`                             | dev relay only: `true` allows internal test rooms through the proxy (default off)                |
-| `CONNECTIONS_PER_IP`, `ROOMS_PER_IP`                        | dev relay only: raise the per-IP limits (defaults 24 and 8)                                      |
-| `ROOM_ENTRIES_PER_IP_PER_MINUTE`, `ROOM_ENTRY_BURST_PER_IP` | dev relay only: raise the room create/join rate per IP (defaults 30/min and 10)                  |
-| `BIND_ADDRESS`                                              | compose only: host address to publish the port on                                                |
-| `CONTAINER_NAME`, `IMAGE_TAG`                               | compose only: dev instance names (defaults `aiworlded-server`, `latest`)                         |
+Every setting, its default and accepted range is listed in
+[`docs/SELF_HOSTING.md`](docs/SELF_HOSTING.md#settings) (`bun run config:table` prints the same
+table). Values are validated at start; an invalid one stops the relay with a `relay.error` line.
+The same names work as keys of an optional JSON file (`--config <path>` or `CONFIG_FILE`).
+Compose-only variables:
+
+| Variable                      | Meaning                                                                  |
+| ----------------------------- | ------------------------------------------------------------------------ |
+| `BIND_ADDRESS`                | compose only: host address to publish the port on                        |
+| `CONTAINER_NAME`, `IMAGE_TAG` | compose only: dev instance names (defaults `aiworlded-server`, `latest`) |
 
 ## Deployment
 

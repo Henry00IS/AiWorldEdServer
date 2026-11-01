@@ -1,15 +1,20 @@
 /** Origin allow list check for WebSocket upgrades. */
 
+/** Allow list entry that allows every origin. */
+export const ORIGIN_ALLOW_ANY = '*';
+
 /**
- * Checks an Origin header against the allow list. Entries are exact origins or
- * `scheme://host:*`, which matches the host with any (or no) port. Requests
- * without an Origin header are rejected.
+ * Checks an Origin header against the allow list. Entries are exact origins,
+ * `scheme://host:*`, which matches the host with any (or no) port, or `*`,
+ * which allows every request including those without an Origin header.
+ * Otherwise requests without an Origin header are rejected.
  *
  * @param origin Origin header value or null.
  * @param allowedOrigins Allow list entries.
  * @returns True when allowed.
  */
 export function originIsAllowed(origin: string | null, allowedOrigins: readonly string[]): boolean {
+  if (allowedOrigins.includes(ORIGIN_ALLOW_ANY)) return true;
   if (origin === null || origin === '' || origin === 'null') return false;
   const loweredOrigin = origin.toLowerCase();
   return allowedOrigins.some((entry) => originMatchesEntry(loweredOrigin, entry.toLowerCase()));

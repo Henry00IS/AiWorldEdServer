@@ -4,6 +4,7 @@
   "version": "1.0.0",
   "type": "module",
   "description": "Collaborative editing WebSocket relay for AiWorldEd.",
+  "packageManager": "bun@1.4.4",
   "scripts": {
     "start": "bun src/main.ts",
     "dev": "bun --watch src/main.ts",
@@ -18,7 +19,9 @@
     "audit:agents": "bun scripts/audit_agents_compliance.ts",
     "audit:agents:strict": "bun scripts/audit_agents_compliance.ts --strict",
     "ci": "bun run format:check && bun run typecheck && bun run typecheck:strict && bun run testrun && bun run audit:agents:strict",
-    "build:binary": "bun build src/main.ts --compile --minify --sourcemap --outfile dist/aiworlded-relay"
+    "build:binary": "bun build src/main.ts --compile --minify --sourcemap --outfile dist/aiworlded-relay",
+    "config:table": "bun scripts/configuration_table.ts",
+    "build:release": "bun scripts/release_build.ts"
   },
   "devDependencies": {
     "@types/bun": "latest",

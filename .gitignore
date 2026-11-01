@@ -6,3 +6,5 @@ node_modules/
 coverage/
 .DS_Store
 dist/
+deploy/self-host/relay.env
+deploy/self-host/certs/

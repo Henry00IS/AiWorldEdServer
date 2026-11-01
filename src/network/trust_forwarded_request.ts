@@ -12,32 +12,38 @@ export const HEADER_FORWARDED_SECRET = 'x-forwarded-secret';
 export type RequestTrust =
   { kind: 'direct'; clientIp: string } | { kind: 'proxied'; clientIp: string } | { kind: 'rejected'; reason: string };
 
+/** Settings that decide whether forwarded client addresses are believed. */
+export interface RequestTrustPolicy {
+  /** Whether a reverse proxy sits in front and its address headers are believed. */
+  readonly trustProxy: boolean;
+  /** Secret the proxy must present, or null when none is required. */
+  readonly forwardedSecret: string | null;
+}
+
 /**
  * Resolves trust and client address.
  *
- * - No secret header: direct connection, socket address is used, forwarded
- *   headers are ignored.
- * - Correct secret: proxied, X-Real-IP (or the last X-Forwarded-For hop) is the
- *   client.
- * - Wrong secret, or a secret header while none is configured: rejected.
+ * - Without TRUST_PROXY: direct, the socket address is the client and every
+ *   forwarded header is ignored.
+ * - TRUST_PROXY with a secret: no secret header is a direct connection (socket
+ *   address); the correct secret is proxied (X-Real-IP, else the last
+ *   X-Forwarded-For hop); a wrong secret is rejected.
+ * - TRUST_PROXY without a secret: every request is proxied.
  *
  * @param headers Request headers.
  * @param socketAddress Remote address of the TCP peer.
- * @param configuredSecret Expected secret, or null when the proxy is not
- *   configured.
+ * @param policy Proxy trust settings.
  * @returns Trust verdict.
  */
-export function requestTrustResolve(
-  headers: Headers,
-  socketAddress: string,
-  configuredSecret: string | null,
-): RequestTrust {
+export function requestTrustResolve(headers: Headers, socketAddress: string, policy: RequestTrustPolicy): RequestTrust {
+  if (!policy.trustProxy) return { kind: 'direct', clientIp: ipNormalize(socketAddress) };
+  const proxied: RequestTrust = { kind: 'proxied', clientIp: forwardedClientIp(headers) ?? ipNormalize(socketAddress) };
+  if (policy.forwardedSecret === null) return proxied;
   const presentedSecret = headers.get(HEADER_FORWARDED_SECRET);
   if (presentedSecret === null) return { kind: 'direct', clientIp: ipNormalize(socketAddress) };
-  if (configuredSecret === null || !secretEqualsConstantTime(presentedSecret, configuredSecret)) {
+  if (!secretEqualsConstantTime(presentedSecret, policy.forwardedSecret))
     return { kind: 'rejected', reason: 'forwarded secret mismatch' };
-  }
-  return { kind: 'proxied', clientIp: forwardedClientIp(headers) ?? ipNormalize(socketAddress) };
+  return proxied;
 }
 
 /**

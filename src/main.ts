@@ -1,22 +1,52 @@
-/** Entry point: reads the environment and starts the relay. */
-import { configurationFromEnvironment } from './config/server_configuration.ts';
-import { collabServerStart } from './server/server_collab.ts';
+/**
+ * Entry point: loads the configuration, starts the relay and prints a startup
+ * summary.
+ */
+import { configurationLoad } from './config/configuration_load.ts';
+import { configurationSummary, configurationWarnings } from './config/configuration_summary.ts';
+import { collabServerStart, type CollabServer } from './server/server_collab.ts';
 
-const configuration = configurationFromEnvironment(process.env);
-const server = collabServerStart(configuration);
-console.log(
-  `aiworlded-server listening on ${configuration.hostname}:${server.port}${configuration.websocketPath} ` +
-    `(proxy secret ${configuration.forwardedSecret ? 'configured' : 'NOT configured: proxied requests will be rejected'}, ` +
-    `internal test rooms ${configuration.internalTestRoomsEnabled ? 'enabled' : 'disabled'}` +
-    `${configuration.internalTestRoomsViaProxy ? ' (also via proxy)' : ''}, ` +
-    `per IP: ${configuration.connectionsPerIp} connections, ${configuration.roomsPerIp} rooms)`,
-);
+/**
+ * Prints one JSON log line.
+ *
+ * @param record Log record.
+ */
+function mainLog(record: Record<string, unknown>): void {
+  console.log(JSON.stringify(record));
+}
 
-/** Stops the server gracefully on termination signals. */
-async function shutdownGracefully(): Promise<void> {
+/**
+ * Prints a startup error as one JSON line and exits with status 1.
+ *
+ * @param error Thrown value.
+ * @returns Never returns.
+ */
+function mainFail(error: unknown): never {
+  mainLog({ event: 'relay.error', message: error instanceof Error ? error.message : String(error) });
+  process.exit(1);
+}
+
+/**
+ * Stops the relay gracefully and exits.
+ *
+ * @param server Running relay.
+ */
+async function mainShutdown(server: CollabServer): Promise<void> {
   await server.stop();
   process.exit(0);
 }
 
-process.on('SIGTERM', () => void shutdownGracefully());
-process.on('SIGINT', () => void shutdownGracefully());
+/**
+ * Loads the configuration, starts the relay, logs the summary and warnings, and
+ * installs the termination signal handlers.
+ */
+async function mainStart(): Promise<void> {
+  const { configuration, configFile } = await configurationLoad(process.argv.slice(2), process.env);
+  const server = collabServerStart(configuration);
+  mainLog({ ...configurationSummary(configuration, server.port, configFile) });
+  for (const warning of configurationWarnings(configuration)) mainLog({ event: 'relay.warning', message: warning });
+  process.on('SIGTERM', () => void mainShutdown(server));
+  process.on('SIGINT', () => void mainShutdown(server));
+}
+
+await mainStart().catch(mainFail);

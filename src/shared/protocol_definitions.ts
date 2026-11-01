@@ -35,6 +35,9 @@ export const CLOSE_CODES = {
   shuttingDown: 4006,
   abuse: 4007,
   protocolUnsupported: 4008,
+  originRefused: 4009,
+  proxyRefused: 4010,
+  tooManyConnections: 4011,
 } as const;
 
 /**

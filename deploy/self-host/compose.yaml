@@ -1,0 +1,26 @@
+# Minimal self-hosted relay. From the repository root:
+#   docker compose -f deploy/self-host/compose.yaml up -d
+# Settings go in deploy/self-host/relay.env (optional; see docs/SELF_HOSTING.md for every
+# variable). For built-in TLS, put cert.pem and key.pem in deploy/self-host/certs and set
+#   TLS_CERT=/certs/cert.pem
+#   TLS_KEY=/certs/key.pem
+services:
+  relay:
+    build: ../..
+    image: aiworlded-relay:latest
+    restart: unless-stopped
+    env_file:
+      - path: relay.env
+        required: false
+    ports:
+      - '8081:8081'
+    volumes:
+      - ./certs:/certs:ro
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    mem_limit: 768m

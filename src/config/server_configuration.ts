@@ -1,6 +1,6 @@
 /**
- * Server configuration with production defaults, overridable from the
- * environment['']
+ * Server configuration and its production defaults. The environment and the
+ * optional config file override them through `configuration_load.ts`.
  */
 import {
   CHAT_SEND_INTERVAL_MS,
@@ -14,6 +14,22 @@ export interface ServerConfiguration {
   hostname: string;
   port: number;
   websocketPath: string;
+  /**
+   * PEM certificate file served for wss://, or null for plain ws:// (TLS at a
+   * proxy or none).
+   */
+  tlsCertificateFile: string | null;
+  /** PEM private key file for the certificate, or null. */
+  tlsKeyFile: string | null;
+  /**
+   * Whether forwarded client address headers are trusted (only behind a reverse
+   * proxy).
+   */
+  trustProxy: boolean;
+  /**
+   * Secret a trusted proxy must send in X-Forwarded-Secret, or null to not
+   * require one.
+   */
   forwardedSecret: string | null;
   allowedOrigins: string[];
   internalTestRoomsEnabled: boolean;
@@ -28,6 +44,11 @@ export interface ServerConfiguration {
   byteBurst: number;
   connectionsPerIp: number;
   connectionsTotal: number;
+  /**
+   * Refused upgrades kept open at once just long enough to tell the client why
+   * (close code plus reason); beyond this they get a plain HTTP error.
+   */
+  refusedSocketsMaximum: number;
   roomsPerIp: number;
   roomsTotal: number;
   usersPerRoomDefault: number;
@@ -156,6 +177,7 @@ const CONFIGURATION_CONNECTION_LIMITS_DEFAULT = {
   byteBurst: 32 * 1024 * 1024,
   connectionsPerIp: 24,
   connectionsTotal: 2000,
+  refusedSocketsMaximum: 256,
 } satisfies Partial<ServerConfiguration>;
 
 /** Default room, lock, stream, join and presence limits. */
@@ -234,137 +256,23 @@ const CONFIGURATION_EDIT_LIMITS_DEFAULT = {
 /**
  * Builds the default configuration.
  *
- * @returns Configuration with production defaults and no forwarded secret.
+ * @returns Configuration with production defaults: direct connections, no TLS,
+ *   no internal test rooms.
  */
 export function configurationDefault(): ServerConfiguration {
   return {
     hostname: '0.0.0.0',
     port: 8081,
     websocketPath: PROTOCOL_WEBSOCKET_PATH,
+    tlsCertificateFile: null,
+    tlsKeyFile: null,
+    trustProxy: false,
     forwardedSecret: null,
     allowedOrigins: [...ALLOWED_ORIGINS_DEFAULT],
-    internalTestRoomsEnabled: true,
+    internalTestRoomsEnabled: false,
     internalTestRoomsViaProxy: false,
     ...CONFIGURATION_CONNECTION_LIMITS_DEFAULT,
     ...CONFIGURATION_ROOM_LIMITS_DEFAULT,
     ...CONFIGURATION_EDIT_LIMITS_DEFAULT,
   };
-}
-
-/**
- * Builds the configuration from environment variables on top of the defaults.
- *
- * @param environment Environment variable map.
- * @returns Effective configuration.
- */
-export function configurationFromEnvironment(environment: Record<string, string | undefined>): ServerConfiguration {
-  const configuration = configurationDefault();
-  configuration.hostname = environment['HOST'] ?? configuration.hostname;
-  configuration.port = configurationParsePort(environment['PORT'], configuration.port);
-  configuration.websocketPath = configurationParsePath(environment['WEBSOCKET_PATH'], configuration.websocketPath);
-  configuration.forwardedSecret = configurationParseSecret(environment['FORWARDED_SECRET']);
-  configuration.internalTestRoomsEnabled = environment['INTERNAL_TEST_ROOMS'] !== 'false';
-  configuration.internalTestRoomsViaProxy = environment['INTERNAL_TEST_ROOMS_VIA_PROXY'] === 'true';
-  if (environment['ALLOWED_ORIGINS'])
-    configuration.allowedOrigins = configurationParseList(environment['ALLOWED_ORIGINS']);
-  configurationApplyPerIpLimits(configuration, environment);
-  return configuration;
-}
-
-/**
- * Optional per-IP limit overrides and the configuration field each one sets.
- * Meant for the development relay, where every test client shares one address;
- * production leaves them unset.
- */
-const CONFIGURATION_PER_IP_LIMIT_VARIABLES = [
-  ['CONNECTIONS_PER_IP', 'connectionsPerIp'],
-  ['ROOMS_PER_IP', 'roomsPerIp'],
-  ['ROOM_ENTRIES_PER_IP_PER_MINUTE', 'roomEntriesPerIpPerMinute'],
-  ['ROOM_ENTRY_BURST_PER_IP', 'roomEntryBurstPerIp'],
-] as const;
-
-/**
- * Applies the optional per-IP limit overrides listed in
- * CONFIGURATION_PER_IP_LIMIT_VARIABLES.
- *
- * @param configuration Configuration to update.
- * @param environment Environment variable map.
- */
-function configurationApplyPerIpLimits(
-  configuration: ServerConfiguration,
-  environment: Record<string, string | undefined>,
-): void {
-  for (const [variableName, field] of CONFIGURATION_PER_IP_LIMIT_VARIABLES)
-    configuration[field] = configurationParseLimit(variableName, environment[variableName], configuration[field]);
-}
-
-/**
- * Parses a positive integer limit from an environment value.
- *
- * @param variableName Environment variable name, used in the error message.
- * @param value Raw value.
- * @param fallback Limit used when unset.
- * @returns Limit between 1 and 100000.
- */
-function configurationParseLimit(variableName: string, value: string | undefined, fallback: number): number {
-  if (value === undefined || value === '') return fallback;
-  const limit = Number(value);
-  if (!Number.isInteger(limit) || limit < 1 || limit > 100_000)
-    throw new Error(`${variableName} must be an integer between 1 and 100000`);
-  return limit;
-}
-
-/**
- * Parses a TCP port from an environment value.
- *
- * @param value Raw port string.
- * @param fallback Port used when unset.
- * @returns Valid TCP port.
- */
-function configurationParsePort(value: string | undefined, fallback: number): number {
-  if (value === undefined || value === '') return fallback;
-  const port = Number(value);
-  if (!Number.isInteger(port) || port < 0 || port > 65535)
-    throw new Error('PORT must be an integer between 0 and 65535');
-  return port;
-}
-
-/**
- * Parses the WebSocket path from an environment value. The dev relay uses
- * `/wstest` because the proxy forwards that path unchanged.
- *
- * @param value Raw path.
- * @param fallback Path used when unset.
- * @returns Path starting with a slash.
- */
-function configurationParsePath(value: string | undefined, fallback: string): string {
-  if (value === undefined || value === '') return fallback;
-  if (!/^\/[A-Za-z0-9_\-/]{1,63}$/.test(value)) throw new Error('WEBSOCKET_PATH must look like /ws or /wstest');
-  return value;
-}
-
-/**
- * Parses the shared proxy secret from an environment value.
- *
- * @param value Raw secret.
- * @returns The secret, or null when unset. Rejects secrets shorter than 16
- *   characters.
- */
-function configurationParseSecret(value: string | undefined): string | null {
-  if (value === undefined || value === '') return null;
-  if (value.length < 16) throw new Error('FORWARDED_SECRET must be at least 16 characters');
-  return value;
-}
-
-/**
- * Splits a comma separated environment value into entries.
- *
- * @param value Comma separated list.
- * @returns Trimmed non-empty entries.
- */
-function configurationParseList(value: string): string[] {
-  return value
-    .split(',')
-    .map((entry) => entry.trim())
-    .filter((entry) => entry.length > 0);
 }

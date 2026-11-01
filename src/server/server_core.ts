@@ -295,8 +295,17 @@ export class ServerCore {
    * @returns True when the connection may proceed.
    */
   connectionReserve(ipKey: string): boolean {
-    if (this.sessions.size >= this.config.connectionsTotal) return false;
+    if (this.connectionsFull()) return false;
     return this.connectionsPerIpKey.tryAcquire(ipKey);
+  }
+
+  /**
+   * Whether the relay already has as many sessions as CONNECTIONS_TOTAL allows.
+   *
+   * @returns True when no further connection fits.
+   */
+  connectionsFull(): boolean {
+    return this.sessions.size >= this.config.connectionsTotal;
   }
 
   /**

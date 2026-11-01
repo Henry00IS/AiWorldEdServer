@@ -10,9 +10,11 @@ export const TEST_DUMMY_FORWARDED_SECRET = 'dummy-test-secret-0000-not-real';
 export const TEST_ORIGIN = 'http://localhost:5173';
 
 /**
- * Builds a server configuration for tests on an ephemeral loopback port. Every
- * test client shares 127.0.0.1, so the per-address room entry rate is raised;
- * tests of that limit set it explicitly.
+ * Builds a server configuration for tests on an ephemeral loopback port, with
+ * internal test rooms enabled and a trusted proxy that must present the dummy
+ * secret (requests without it count as direct). Every test client shares
+ * 127.0.0.1, so the per-address room entry rate is raised; tests of that limit
+ * set it explicitly.
  *
  * @param overrides Fields to override.
  * @returns Test configuration bound to an ephemeral loopback port.
@@ -22,7 +24,9 @@ export function testConfiguration(overrides: Partial<ServerConfiguration> = {}):
     ...configurationDefault(),
     hostname: '127.0.0.1',
     port: 0,
+    trustProxy: true,
     forwardedSecret: TEST_DUMMY_FORWARDED_SECRET,
+    internalTestRoomsEnabled: true,
     roomEntriesPerIpPerMinute: 1_000_000,
     roomEntryBurstPerIp: 1_000_000,
     ...overrides,

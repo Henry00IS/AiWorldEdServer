@@ -264,21 +264,3 @@ export class TestClient {
     });
   }
 }
-
-/**
- * Expects a WebSocket upgrade to be refused.
- *
- * @param port Server port.
- * @param headers Request headers (Origin is not added automatically).
- * @returns True when the connection failed.
- */
-export async function testConnectionRefused(port: number, headers: Record<string, string>): Promise<boolean> {
-  const socket = new WebSocket(`ws://127.0.0.1:${port}/ws`, { headers } as any);
-  return new Promise((resolve) => {
-    socket.addEventListener('open', () => {
-      socket.close();
-      resolve(false);
-    });
-    socket.addEventListener('error', () => resolve(true));
-  });
-}

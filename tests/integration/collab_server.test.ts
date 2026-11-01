@@ -8,7 +8,8 @@ import { collabServerStart, type CollabServer } from '../../src/server/server_co
 import { binaryFrameEncode } from '../../src/shared/binary_frame.ts';
 import { CLOSE_CODES, PROTOCOL_ID, PROTOCOL_VERSION } from '../../src/shared/protocol_definitions.ts';
 import { passwordGenerate } from '../../src/shared/password_generator.ts';
-import { TestClient, testConnectionRefused, type TestMessage } from '../support/test_client.ts';
+import { testSocketOutcome } from '../support/test_socket_outcome.ts';
+import { TestClient, type TestMessage } from '../support/test_client.ts';
 import { roomCreate, snapshotSend, streamReceive, testRoomJoinSynced } from '../support/test_room.ts';
 import { TEST_DUMMY_FORWARDED_SECRET, TEST_ORIGIN, testConfiguration } from '../support/test_configuration.ts';
 
@@ -160,10 +161,15 @@ describe('handshake and gatekeeping', () => {
   });
 
   test('upgrade is refused without an allowed Origin and with a wrong forwarded secret', async () => {
-    expect(await testConnectionRefused(port, {})).toBe(true);
-    expect(await testConnectionRefused(port, { Origin: 'https://evil.example' })).toBe(true);
-    expect(await testConnectionRefused(port, { Origin: TEST_ORIGIN, 'X-Forwarded-Secret': 'wrong-secret' })).toBe(true);
-    expect(await testConnectionRefused(port, { Origin: TEST_ORIGIN, 'X-Forwarded-Secret': '' })).toBe(true);
+    const url = `ws://127.0.0.1:${port}/ws`;
+    expect((await testSocketOutcome(url, { headers: {} })).code).toBe(CLOSE_CODES.originRefused);
+    expect((await testSocketOutcome(url, { headers: { Origin: 'https://evil.example' } })).code).toBe(
+      CLOSE_CODES.originRefused,
+    );
+    const wrongSecret = { Origin: TEST_ORIGIN, 'X-Forwarded-Secret': 'wrong-secret' };
+    expect((await testSocketOutcome(url, { headers: wrongSecret })).code).toBe(CLOSE_CODES.proxyRefused);
+    const emptySecret = { Origin: TEST_ORIGIN, 'X-Forwarded-Secret': '' };
+    expect((await testSocketOutcome(url, { headers: emptySecret })).code).toBe(CLOSE_CODES.proxyRefused);
   });
 
   test('plain HTTP: health check and 404 elsewhere', async () => {

@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
-import { configurationDefault, configurationFromEnvironment } from '../../../src/config/server_configuration.ts';
+import { configurationFromEnvironment } from '../../../src/config/configuration_load.ts';
+import { configurationDefault } from '../../../src/config/server_configuration.ts';
 import { CHAT_TEXT_WIRE_MAXIMUM } from '../../../src/shared/chat_text_policy.ts';
 
 describe('server configuration', () => {
@@ -23,12 +24,16 @@ describe('server configuration', () => {
   test('internal test rooms through the proxy are off by default', () => {
     expect(configurationDefault().internalTestRoomsViaProxy).toBe(false);
     expect(configurationFromEnvironment({}).internalTestRoomsViaProxy).toBe(false);
-    expect(configurationFromEnvironment({ INTERNAL_TEST_ROOMS_VIA_PROXY: '1' }).internalTestRoomsViaProxy).toBe(false);
+    expect(() => configurationFromEnvironment({ INTERNAL_TEST_ROOMS_VIA_PROXY: 'maybe' })).toThrow(
+      'INTERNAL_TEST_ROOMS_VIA_PROXY must be true or false',
+    );
   });
 
   test('INTERNAL_TEST_ROOMS_VIA_PROXY=true enables internal test rooms through the proxy', () => {
-    expect(configurationFromEnvironment({ INTERNAL_TEST_ROOMS_VIA_PROXY: 'true' }).internalTestRoomsViaProxy).toBe(
-      true,
+    const environment = { INTERNAL_TEST_ROOMS: 'true', INTERNAL_TEST_ROOMS_VIA_PROXY: 'true' };
+    expect(configurationFromEnvironment(environment).internalTestRoomsViaProxy).toBe(true);
+    expect(() => configurationFromEnvironment({ INTERNAL_TEST_ROOMS_VIA_PROXY: 'true' })).toThrow(
+      'INTERNAL_TEST_ROOMS_VIA_PROXY=true needs INTERNAL_TEST_ROOMS=true',
     );
   });
 
