@@ -56,19 +56,25 @@ The first frame must be `hello` within 5 s:
 { "t": "hello", "protocol": "aiworlded-collab", "version": 1, "client": "AiWorldEd/0.1", "name": "Henry" }
 ```
 
-Reply: `{"t":"welcome","protocol":"aiworlded-collab","version":1,"user":7,"name":"Henry","via":"proxy","limits":{...}}`.
+Reply: `{"t":"welcome","protocol":"aiworlded-collab","version":1,"user":7,"name":"Henry","via":"proxy","features":["room.subscribe"],"limits":{...}}`.
 Display names are at most 12 characters (trimmed, no control characters). A longer hello name is
 cut to 12; a missing or invalid one becomes `User N` (`N` = user id modulo 10^7).
 `via` is `proxy` when the request carried the correct `X-Forwarded-Secret`, otherwise `direct`.
 `limits` reports the effective limits (payload, chunk, window, snapshot/asset sizes, ids per
-message, ops per edit, messages per second, rooms per IP, users per room, locks per user).
+message, ops per edit, messages per second, rooms per IP, users per room, locks per user, presence
+rate, `roomListMaximum` and `roomListPushIntervalMs`).
+`features` lists optional protocol features (`PROTOCOL_FEATURES`). Clients must check it before using a
+feature: relays from before the feature list (no `features` field) support none of them, so a client
+falls back to `room.list` polling there.
 
 ### Client → server
 
 | Type                | Fields                                                                                                   | Notes                                                                                                                                                                                                                   |
 | ------------------- | -------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `ping`              |                                                                                                          | → `pong`                                                                                                                                                                                                                |
-| `room.list`         |                                                                                                          | → `room.list {rooms:[{id,name,private,users,maxUsers}]}`. Private rooms are flagged and reveal nothing else.                                                                                                            |
+| `room.list`         |                                                                                                          | → `room.list {rooms:[{id,name,private,users,maxUsers,owner}]}`. `owner` is the owner's display name. Private rooms are flagged and reveal nothing else.                                                                 |
+| `room.subscribe`    |                                                                                                          | Feature `room.subscribe`. → `room.subscribed {rooms, intervalMs}` (full list), then `room.list.update` pushes until unsubscribed or disconnected. Error `subscription_limit` when the relay has too many subscribers.   |
+| `room.unsubscribe`  |                                                                                                          | → `room.unsubscribed`. Not an error without a subscription.                                                                                                                                                             |
 | `room.create`       | `name`, `private`, `password?`, `maxUsers?` (clamped to 32, default 16), `internalTest?`, `displayName?` | → `room.created {room, you, name, color}`. Creator becomes owner. One room per connection.                                                                                                                              |
 | `room.join`         | `room`, `discardLocalWork: true`, `password?`, `displayName?`                                            | → `room.joined {room, you, owner, members, locks}`; members are `{user, name, owner, color}`. `discardLocalWork` must be literally `true`: joining always discards local work.                                          |
 | `room.leave`        |                                                                                                          | → `room.left`. If the owner leaves, the room closes.                                                                                                                                                                    |
@@ -92,6 +98,8 @@ max 256 ops per edit; `d` is opaque JSON (max depth 32, max 200k nodes) relayed 
 | Type                                                                                                                     | Fields                                                |
 | ------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------- |
 | `welcome`, `pong`, `room.list`, `room.created`, `room.joined`, `room.left {reason}`                                      | replies                                               |
+| `room.subscribed {rooms, intervalMs}`, `room.unsubscribed`                                                               | replies to `room.subscribe` / `room.unsubscribe`      |
+| `room.list.update {rooms, removed}`                                                                                      | live list: new or changed entries, removed room ids   |
 | `member.joined {user, name, color}`, `member.left {user}`                                                                | membership                                            |
 | `locks {by, add?, remove?}`                                                                                              | lock changes of another user                          |
 | `lock.result`                                                                                                            | reply to `lock.acquire` / `lock.release`              |
@@ -228,6 +236,7 @@ warn the user that they are offline and should save locally. Re-joining any room
 | Handshake / idle | 5 s / 60 s (with ping/pong)                                                            |
 | Snapshot / asset | 256 MiB / 64 MiB, 4 MiB window, 8 streams per recipient, 60 s snapshot timeout         |
 | Room list        | 200 entries                                                                            |
+| Room list pushes | 1000 subscribers, at most one update per 500 ms per subscriber, low priority           |
 | Presence         | 10 frames/s per member (burst 20), latest-only per sender per recipient, 116 bytes max |
 
 Other measures: versioned hello handshake; strict schemas; only allowed `Origin`s
@@ -277,11 +286,23 @@ to off and must never be set on a public relay. Tests use the dummy secret in
 from `./.env` (chmod 600, never committed; see `.env.example`). Publish the container port only
 on a private interface the proxy can reach, and let the proxy forward only the WebSocket path.
 
+### Live room list
+
+While a client's room browser is open it sends `room.subscribe`; it sends `room.unsubscribe` when the
+browser closes (a dropped socket unsubscribes too). Any change to the list (room created or closed,
+member count changed) marks every subscriber dirty. Each subscriber then gets one `room.list.update`
+with only the entries that are new or changed and the ids that disappeared, at most once per
+`roomListPushIntervalMs` (changes in between are coalesced). The list is capped at `roomListMaximum`
+entries. Pushes have lower priority than edits and streams: a push is only handed to the socket when the
+recipient's outbound queue is empty and its socket buffer is below the presence high water mark;
+otherwise it waits another interval and is recomputed. Internal test rooms are never pushed to proxied
+subscribers, even when `INTERNAL_TEST_ROOMS_VIA_PROXY` is set.
+
 ## Client integration checklist (AiWorldEd)
 
 - Copy or import `src/shared/*` (protocol constants/types, binary frames, presence frames, password policy + generator, name rules).
 - Connect to `wss://aiworlded.00labs.net/ws` (Origin must be allowed), send `hello`, read `welcome.limits`.
-- Room browser: `room.list`; create dialog with name (≤128) and private toggle; prefill the password with
+- Room browser: `room.subscribe` while open when `welcome.features` has `room.subscribe`, else `room.list`; create dialog with name (≤128) and private toggle; prefill the password with
   `passwordGenerate()` and show `passwordPolicyEvaluate()` issues live.
 - Joining: confirm "discard local work", send `room.join {discardLocalWork:true}`, load the snapshot
   stream, buffer `edits` until snapshot `stream.end`, then apply them.

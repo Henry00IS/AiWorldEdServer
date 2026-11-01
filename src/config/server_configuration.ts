@@ -40,6 +40,8 @@ export interface ServerConfiguration {
   joinFailuresPerRoomPerMinute: number;
   passwordHashConcurrency: number;
   roomListMaximum: number;
+  roomListSubscribersMaximum: number;
+  roomListPushIntervalMs: number;
   presencePerSecond: number;
   presenceBurst: number;
   presenceHighWaterBytes: number;
@@ -90,6 +92,8 @@ const CONFIGURATION_ROOM_LIMITS_DEFAULT = {
   joinFailuresPerRoomPerMinute: 30,
   passwordHashConcurrency: 4,
   roomListMaximum: 200,
+  roomListSubscribersMaximum: 1000,
+  roomListPushIntervalMs: 500,
   presencePerSecond: 10,
   presenceBurst: 20,
   presenceHighWaterBytes: 64 * 1024,

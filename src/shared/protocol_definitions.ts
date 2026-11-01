@@ -61,6 +61,8 @@ export type ClientMessage =
   | { t: 'hello'; protocol: typeof PROTOCOL_ID; version: number; client: string; name?: string }
   | { t: 'ping'; r?: number }
   | { t: 'room.list'; r?: number }
+  | { t: 'room.subscribe'; r?: number }
+  | { t: 'room.unsubscribe'; r?: number }
   | {
       t: 'room.create';
       r?: number;
@@ -85,6 +87,14 @@ export type ClientMessage =
 /** Union of client message type names. */
 export type ClientMessageType = ClientMessage['t'];
 
+/**
+ * Features announced in `welcome.features`. Clients must check for a feature
+ * before using it, so they keep working with older relays.
+ */
+export const PROTOCOL_FEATURES = ['room.subscribe'] as const;
+/** Union of protocol feature names. */
+export type ProtocolFeature = (typeof PROTOCOL_FEATURES)[number];
+
 /** Public room listing entry. */
 export interface RoomListEntry {
   id: string;
@@ -92,6 +102,19 @@ export interface RoomListEntry {
   private: boolean;
   users: number;
   maxUsers: number;
+  /** Display name of the room owner. */
+  owner: string;
+}
+
+/**
+ * Pushed to sessions subscribed with `room.subscribe`: rooms that appeared or
+ * changed (`rooms`) and ids of rooms that disappeared from the list
+ * (`removed`).
+ */
+export interface RoomListUpdateMessage {
+  t: 'room.list.update';
+  rooms: RoomListEntry[];
+  removed: string[];
 }
 
 /** Member listing entry. */
@@ -127,4 +150,5 @@ export type ErrorCode =
   | 'lock_limit'
   | 'not_locked'
   | 'stream_invalid'
+  | 'subscription_limit'
   | 'busy';

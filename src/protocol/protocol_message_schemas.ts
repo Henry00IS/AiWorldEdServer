@@ -66,6 +66,8 @@ export const CLIENT_MESSAGE_SCHEMAS: Readonly<Record<ClientMessageType, Schema>>
   },
   ping: messageSchema('ping'),
   'room.list': messageSchema('room.list'),
+  'room.subscribe': messageSchema('room.subscribe'),
+  'room.unsubscribe': messageSchema('room.unsubscribe'),
   'room.create': messageSchema(
     'room.create',
     { name: { type: 'string', min: 1, max: 512 }, private: { type: 'bool' } },

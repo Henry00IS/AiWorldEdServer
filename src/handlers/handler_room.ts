@@ -97,6 +97,7 @@ function roomCreateCommit(
   core.registry.reservationCommit(room);
   session.room = room;
   session.synced = true;
+  core.roomListSubscriptions.changed();
   sessionSend(session, {
     t: 'room.created',
     r: message.r,
@@ -325,6 +326,7 @@ async function roomJoinPasswordCheck(
  */
 function roomMemberAdd(core: ServerCore, session: ConnectionSession, room: Room, requestId: number | undefined): void {
   room.memberAdd(session);
+  core.roomListSubscriptions.changed();
   session.room = room;
   session.synced = false;
   session.awaitingSnapshotBegin = true;
@@ -390,6 +392,7 @@ export function roomMembershipEnd(
   if (!room) return;
   if (room.owner === session) roomClose(core, room);
   else roomMemberRemove(room, session);
+  core.roomListSubscriptions.changed();
   sessionSend(session, {
     t: 'room.left',
     reason: room.owner === session ? 'closed' : reason,

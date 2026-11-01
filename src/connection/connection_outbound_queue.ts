@@ -95,12 +95,12 @@ export class ConnectionOutboundQueue {
    * Sends a low-priority frame right away only if nothing is queued and the
    * socket buffer is below a threshold. The frame never enters the queue.
    *
-   * @param data Frame bytes.
+   * @param data Frame bytes or text.
    * @param highWaterBytes Socket buffer level at or above which the frame is
    *   refused.
    * @returns True when the frame was handed to the socket.
    */
-  sendIfIdle(data: Uint8Array, highWaterBytes: number): boolean {
+  sendIfIdle(data: string | Uint8Array, highWaterBytes: number): boolean {
     if (this.overflowed || this.length() > 0 || this.socket.getBufferedAmount() >= highWaterBytes) return false;
     this.socket.send(data);
     return true;

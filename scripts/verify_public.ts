@@ -90,6 +90,23 @@ async function clientOpen(): Promise<VerifyClient> {
   };
 }
 
+/**
+ * Reads live list pushes until the room is reported removed, checking that no
+ * push ever carries an internal test room.
+ *
+ * @param watcher Subscribed client.
+ * @param roomId Room that must disappear.
+ */
+async function verifySubscriptionRemoval(watcher: VerifyClient, roomId: string): Promise<void> {
+  for (;;) {
+    const update = await watcher.next('room.list.update');
+    if (update.rooms.some((room: { name: string }) => room.name === 'verify internal'))
+      throw new Error('internal test room pushed to a proxied subscriber');
+    if (update.removed.includes(roomId)) break;
+  }
+  console.log('live list: room.list.update reported the closed room');
+}
+
 const hello = { t: 'hello', protocol: PROTOCOL_ID, version: PROTOCOL_VERSION, client: 'verify-public/1' };
 const owner = await clientOpen();
 owner.send({ ...hello, name: 'verify-own' });
@@ -108,6 +125,20 @@ joiner.send({ t: 'room.list', r: 2 });
 const list = await joiner.next('room.list');
 if (!list.rooms.some((room: { id: string }) => room.id === created.room.id)) throw new Error('room missing from list');
 console.log(`list: ${list.rooms.length} room(s), ours present`);
+if (list.rooms.find((room: { id: string }) => room.id === created.room.id)?.owner !== 'verify-own')
+  throw new Error('room list entry does not name the owner');
+
+const watcher = await clientOpen();
+watcher.send({ ...hello, name: 'verify-watch' });
+const watcherWelcome = await watcher.next('welcome');
+const subscribeSupported = Array.isArray(watcherWelcome.features) && watcherWelcome.features.includes('room.subscribe');
+if (subscribeSupported) {
+  watcher.send({ t: 'room.subscribe', r: 5 });
+  const subscribed = await watcher.next('room.subscribed');
+  if (!subscribed.rooms.some((room: { id: string }) => room.id === created.room.id))
+    throw new Error('room missing from room.subscribed');
+  console.log(`subscribed: ${subscribed.rooms.length} room(s), push interval ${subscribed.intervalMs} ms`);
+} else console.log('room.subscribe not announced: skipping the live list check');
 
 joiner.send({ t: 'room.join', r: 3, room: created.room.id, discardLocalWork: true });
 await joiner.next('room.joined');
@@ -147,5 +178,7 @@ owner.close();
 const closed = await joiner.next('room.closed');
 console.log(`owner disconnect -> room.closed offline=${closed.offline}`);
 joiner.close();
+if (subscribeSupported) await verifySubscriptionRemoval(watcher, created.room.id);
+watcher.close();
 console.log('PUBLIC VERIFICATION PASSED');
 process.exit(0);

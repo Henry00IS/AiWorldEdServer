@@ -3,7 +3,7 @@
  * world data.
  */
 import type { ConnectionSession } from '../connection/connection_session.ts';
-import type { RoomMemberEntry, StreamKind } from '../shared/protocol_definitions.ts';
+import type { RoomListEntry, RoomMemberEntry, StreamKind } from '../shared/protocol_definitions.ts';
 import { RoomLockTable } from './room_lock_table.ts';
 
 /** One owner-to-member stream that is currently in flight. */
@@ -143,8 +143,15 @@ export class Room {
    *
    * @returns Public description used in list and join replies.
    */
-  describe(): { id: string; name: string; private: boolean; users: number; maxUsers: number } {
-    return { id: this.id, name: this.name, private: this.isPrivate, users: this.members.size, maxUsers: this.maxUsers };
+  describe(): RoomListEntry {
+    return {
+      id: this.id,
+      name: this.name,
+      private: this.isPrivate,
+      users: this.members.size,
+      maxUsers: this.maxUsers,
+      owner: this.owner.name,
+    };
   }
 
   /**

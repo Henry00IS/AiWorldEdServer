@@ -28,11 +28,14 @@ import { LimiterKeyCounter } from '../network/limiter_key_counter.ts';
 import { LimiterTokenBucket } from '../network/limiter_token_bucket.ts';
 import { protocolMessageDecode } from '../protocol/protocol_message_decoder.ts';
 import { PROTOCOL_CAPS } from '../protocol/protocol_message_schemas.ts';
+import { RoomListSubscriptions } from '../rooms/room_list_subscriptions.ts';
 import { RoomRegistry } from '../rooms/room_registry.ts';
+import { handlerRoomSubscribe, handlerRoomUnsubscribe } from '../handlers/handler_room_subscription.ts';
 import { displayNameFallback, displayNameNormalize, DISPLAY_NAME_LENGTH_MAXIMUM } from '../shared/room_name_policy.ts';
 import {
   BINARY_FRAME_KIND_PRESENCE,
   CLOSE_CODES,
+  PROTOCOL_FEATURES,
   PROTOCOL_ID,
   PROTOCOL_VERSION,
   type ClientMessage,
@@ -41,7 +44,17 @@ import {
 /** Messages routed by the content dispatcher rather than the session dispatcher. */
 type ContentMessage = Exclude<
   ClientMessage,
-  { t: 'ping' | 'room.list' | 'room.create' | 'room.join' | 'room.leave' | 'hello' }
+  {
+    t:
+      | 'ping'
+      | 'room.list'
+      | 'room.subscribe'
+      | 'room.unsubscribe'
+      | 'room.create'
+      | 'room.join'
+      | 'room.leave'
+      | 'hello';
+  }
 >;
 
 /** Session fields that start from configuration defaults. */
@@ -92,6 +105,8 @@ function welcomeLimits(config: ServerConfiguration): object {
     usersPerRoom: config.usersPerRoomMaximum,
     locksPerUser: config.locksPerUser,
     presencePerSecond: config.presencePerSecond,
+    roomListMaximum: config.roomListMaximum,
+    roomListPushIntervalMs: config.roomListPushIntervalMs,
   };
 }
 
@@ -120,6 +135,7 @@ function displayNameFromHello(rawName: string | undefined, user: number): string
 /** Relay state shared by every handler. */
 export class ServerCore {
   readonly registry: RoomRegistry;
+  readonly roomListSubscriptions: RoomListSubscriptions;
   readonly sessions = new Map<number, ConnectionSession>();
   readonly connectionsPerIpKey: LimiterKeyCounter;
   readonly joinFailuresPerIp: LimiterFailureWindow;
@@ -135,6 +151,13 @@ export class ServerCore {
    */
   constructor(readonly config: ServerConfiguration) {
     this.registry = new RoomRegistry(config.roomsPerIp, config.roomsTotal);
+    this.roomListSubscriptions = new RoomListSubscriptions({
+      rooms: () => this.registry.all(),
+      subscribersMaximum: config.roomListSubscribersMaximum,
+      roomListMaximum: config.roomListMaximum,
+      pushIntervalMs: config.roomListPushIntervalMs,
+      lowPriorityHighWaterBytes: config.presenceHighWaterBytes,
+    });
     this.connectionsPerIpKey = new LimiterKeyCounter(config.connectionsPerIp);
     this.joinFailuresPerIp = new LimiterFailureWindow(config.joinFailuresPerIpPerMinute, 60_000);
     this.joinFailuresPerRoom = new LimiterFailureWindow(config.joinFailuresPerRoomPerMinute, 60_000);
@@ -205,6 +228,7 @@ export class ServerCore {
     if (session.closed) return;
     session.closed = true;
     if (session.handshakeTimer) clearTimeout(session.handshakeTimer);
+    this.roomListSubscriptions.unsubscribe(session);
     roomMembershipEnd(this, session, 'disconnected');
     session.outbound.clear();
     this.sessions.delete(session.user);
@@ -214,6 +238,7 @@ export class ServerCore {
   /** Closes every connection and stops timers. */
   shutdown(): void {
     clearInterval(this.pruneTimer);
+    this.roomListSubscriptions.stop();
     for (const session of [...this.sessions.values()]) session.close(CLOSE_CODES.shuttingDown, 'server shutting down');
   }
 
@@ -325,6 +350,7 @@ export class ServerCore {
       user: session.user,
       name: session.name,
       via: session.via,
+      features: [...PROTOCOL_FEATURES],
       limits: welcomeLimits(this.config),
     };
   }
@@ -341,6 +367,10 @@ export class ServerCore {
         return sessionSend(session, { t: 'pong', ...(message.r === undefined ? {} : { r: message.r }) });
       case 'room.list':
         return handlerRoomList(this, session, message);
+      case 'room.subscribe':
+        return handlerRoomSubscribe(this, session, message);
+      case 'room.unsubscribe':
+        return handlerRoomUnsubscribe(this, session, message);
       case 'room.create':
         return void handlerRoomCreate(this, session, message);
       case 'room.join':
