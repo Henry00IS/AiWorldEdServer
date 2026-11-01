@@ -4,6 +4,7 @@
  * method is atomic.
  */
 import { LimiterSharedBudget } from '../network/limiter_shared_budget.ts';
+import { RoomLeaseTable } from './room_lease_table.ts';
 import { RoomSharedLockTable } from './room_shared_lock_table.ts';
 
 /**
@@ -43,11 +44,14 @@ export class RoomLockTable {
    * @param locksPerUserMaximum Most locks one user may hold.
    * @param locksPerRoomMaximum Most locks the whole room may hold.
    * @param locksServerBudget Lock budget shared by every room of the relay.
+   * @param leases Edit lease of each member; every lock belongs to the holder's
+   *   single running lease.
    */
   constructor(
     private readonly locksPerUserMaximum: number,
     private readonly locksPerRoomMaximum: number,
     private readonly locksServerBudget: LimiterSharedBudget = new LimiterSharedBudget(Number.MAX_SAFE_INTEGER),
+    readonly leases: RoomLeaseTable = new RoomLeaseTable(),
   ) {}
 
   /**
@@ -71,10 +75,12 @@ export class RoomLockTable {
     const plan = this.acquirePlan(user, requested, sharedWanted, replace);
     const delta = plan.added.length - plan.removed.length + plan.sharedAdded.length - plan.sharedRemoved.length;
     if (!this.withinLimits(this.countFor(user) + delta, delta)) return { ok: false, reason: 'lock_limit' };
+    const lease = this.leases.of(user);
     this.release(user, plan.removed);
     this.sharedRelease(user, plan.sharedRemoved);
     this.grant(user, plan.added);
     this.sharedGrant(user, plan.sharedAdded);
+    if (lease !== undefined && this.leases.of(user) === undefined) this.leases.adopt(user, lease);
     return { ok: true, added: plan.added, removed: plan.removed };
   }
 
@@ -191,7 +197,7 @@ export class RoomLockTable {
 
   /**
    * Releases the given ids (or every lock when omitted) that the user holds,
-   * exclusive and shared.
+   * exclusive and shared. The user's lease ends once nothing is left.
    *
    * @param user User id.
    * @param ids Ids to release, or undefined for all.
@@ -200,20 +206,31 @@ export class RoomLockTable {
   release(user: number, ids?: readonly string[]): string[] {
     this.sharedRelease(user, ids);
     const held = this.objectIdsByHolder.get(user);
-    if (!held) return [];
-    const released = (ids ?? [...held]).filter((id) => held.has(id));
+    const released = held ? (ids ?? [...held]).filter((id) => held.has(id)) : [];
     for (const id of released) {
-      held.delete(id);
+      held?.delete(id);
       this.holderByObjectId.delete(id);
     }
-    if (held.size === 0) this.objectIdsByHolder.delete(user);
+    if (held?.size === 0) this.objectIdsByHolder.delete(user);
     this.locksServerBudget.release(released.length);
+    if (this.countFor(user) === 0) this.leases.end(user);
     return released;
+  }
+
+  /**
+   * Returns the ids a user holds exclusively.
+   *
+   * @param user User id.
+   * @returns Read-only view of the user's exclusive ids.
+   */
+  exclusiveOf(user: number): ReadonlySet<string> {
+    return this.heldSet(user);
   }
 
   /** Drops every lock of a closing room and returns them to the server budget. */
   releaseEverything(): void {
     this.locksServerBudget.release(this.holderByObjectId.size + this.shared.countTotal());
+    this.leases.clear();
     this.shared.clear();
     this.holderByObjectId.clear();
     this.objectIdsByHolder.clear();

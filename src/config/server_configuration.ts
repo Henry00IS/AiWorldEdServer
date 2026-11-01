@@ -7,7 +7,7 @@ import {
   CHAT_TEXT_LENGTH_MAXIMUM,
   CHAT_TEXT_LINES_MAXIMUM,
 } from '../shared/chat_text_policy.ts';
-import { PROTOCOL_WEBSOCKET_PATH } from '../shared/protocol_definitions.ts';
+import { LOCK_LEASE_MS, PROTOCOL_WEBSOCKET_PATH } from '../shared/protocol_definitions.ts';
 
 /** Every tunable limit and setting of the relay. */
 export interface ServerConfiguration {
@@ -86,6 +86,50 @@ export interface ServerConfiguration {
   verifyQueueMessagesMaximum: number;
   /** Bytes of lock and edit messages held per member while its query is open. */
   verifyQueueBytesMaximum: number;
+  /** Edit lease lifetime without a renewal or an edit (relay monotonic clock). */
+  lockLeaseMs: number;
+  /** Longest a lease may live on renewals alone, without any accepted edit. */
+  lockLeaseIdleMaximumMs: number;
+  /** Longest one lease (one operation) may live at all. */
+  lockLeaseTotalMaximumMs: number;
+  /** How often the relay sweeps for expired leases. */
+  lockLeaseSweepMs: number;
+  /** New leases (operations) one member may start per second. */
+  leasesPerSecond: number;
+  /** Burst of new leases one member may start. */
+  leaseBurst: number;
+  /** Lease renewals one member may send per second. */
+  leaseRenewsPerSecond: number;
+  /** Burst of lease renewals of one member. */
+  leaseRenewBurst: number;
+  /** One-shot edit messages one member may send per second. */
+  oneShotEditsPerSecond: number;
+  /** Burst of one-shot edit messages of one member. */
+  oneShotEditBurst: number;
+  /** One-shot edit messages a whole room may send per second. */
+  oneShotEditsPerRoomPerSecond: number;
+  /** Burst of one-shot edit messages of a whole room. */
+  oneShotEditRoomBurst: number;
+  /** Live preview edit messages one member may send per second. */
+  liveEditsPerSecond: number;
+  /** Burst of live preview edit messages of one member. */
+  liveEditBurst: number;
+  /** Created plus deleted ids one member may send per second. */
+  bulkIdsPerSecond: number;
+  /** Burst of created plus deleted ids of one member. */
+  bulkIdBurst: number;
+  /** Selection presence messages one member may send per second. */
+  selectsPerSecond: number;
+  /** Burst of selection presence messages of one member. */
+  selectBurst: number;
+  /** Abuse score points that decay per second. */
+  abuseDecayPerSecond: number;
+  /** Abuse score at which lock, edit and select messages are refused. */
+  abuseThrottleScore: number;
+  /** Abuse score at which the connection is closed with code 4007. */
+  abuseDisconnectScore: number;
+  /** How long an address may not rejoin the room it was closed for abuse in. */
+  abuseRoomCooldownMs: number;
 }
 
 /**
@@ -157,6 +201,37 @@ const CONFIGURATION_ROOM_LIMITS_DEFAULT = {
 } satisfies Partial<ServerConfiguration>;
 
 /**
+ * Default edit lease, edit rate and abuse limits. Tuned against real tool
+ * timings: a drag streams 30 previews per second and renews every 1.5 s, the
+ * editor commits at most every 250 ms plus once per command, and an undo key
+ * held down is sent one step at a time.
+ */
+const CONFIGURATION_EDIT_LIMITS_DEFAULT = {
+  lockLeaseMs: LOCK_LEASE_MS,
+  lockLeaseIdleMaximumMs: 60_000,
+  lockLeaseTotalMaximumMs: 600_000,
+  lockLeaseSweepMs: 500,
+  leasesPerSecond: 10,
+  leaseBurst: 20,
+  leaseRenewsPerSecond: 4,
+  leaseRenewBurst: 8,
+  oneShotEditsPerSecond: 20,
+  oneShotEditBurst: 60,
+  oneShotEditsPerRoomPerSecond: 200,
+  oneShotEditRoomBurst: 400,
+  liveEditsPerSecond: 60,
+  liveEditBurst: 120,
+  bulkIdsPerSecond: 10_000,
+  bulkIdBurst: 250_000,
+  selectsPerSecond: 10,
+  selectBurst: 20,
+  abuseDecayPerSecond: 1,
+  abuseThrottleScore: 20,
+  abuseDisconnectScore: 60,
+  abuseRoomCooldownMs: 60_000,
+} satisfies Partial<ServerConfiguration>;
+
+/**
  * Builds the default configuration.
  *
  * @returns Configuration with production defaults and no forwarded secret.
@@ -172,6 +247,7 @@ export function configurationDefault(): ServerConfiguration {
     internalTestRoomsViaProxy: false,
     ...CONFIGURATION_CONNECTION_LIMITS_DEFAULT,
     ...CONFIGURATION_ROOM_LIMITS_DEFAULT,
+    ...CONFIGURATION_EDIT_LIMITS_DEFAULT,
   };
 }
 

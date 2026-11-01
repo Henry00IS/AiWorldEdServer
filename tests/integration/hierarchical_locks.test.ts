@@ -74,7 +74,6 @@ describe('hierarchical locks', () => {
   test('reparenting into a container another member holds is rejected', async () => {
     const { owner, joiner } = await roomPair();
     await owner.request({ t: 'lock.acquire', ids: ['group'] }, 'lock.result');
-    await joiner.request({ t: 'lock.acquire', ids: ['cube'] }, 'lock.result');
     joiner.send({ t: 'edit', seq: 1, ops: [{ k: 'reparent', ids: ['cube'], d: {}, p: ['group', 'world'] }] });
     expect(await joiner.next('edit.rejected')).toMatchObject({ seq: 1, reason: 'lock_conflict', ids: ['group'] });
     joiner.send({ t: 'edit', seq: 2, ops: [{ k: 'create', ids: ['new1'], d: {}, p: ['group'] }] });
@@ -82,14 +81,12 @@ describe('hierarchical locks', () => {
     expect(owner.has('edits')).toBe(false);
   });
 
-  test('an accepted reparent shares the new parent chain with the sender', async () => {
+  test('an accepted one-shot reparent is verified by the owner but leaves no lock behind', async () => {
     const { owner, joiner } = await roomPair();
-    await joiner.request({ t: 'lock.acquire', ids: ['cube'] }, 'lock.result');
     joiner.send({ t: 'edit', seq: 1, ops: [{ k: 'reparent', ids: ['cube'], d: {}, p: ['group'] }] });
     expect(await verifyAnswer(owner)).toMatchObject({ ids: ['group'], anc: [] });
     expect((await owner.next('edits')).list[0].ops[0].p).toEqual(['group']);
-    const refused = await owner.request({ t: 'lock.acquire', ids: ['group'] }, 'lock.result');
-    expect(refused).toMatchObject({ ok: false, conflicts: [{ id: 'group', by: joiner.user, shared: true }] });
+    expect(await owner.request({ t: 'lock.acquire', ids: ['group'] }, 'lock.result')).toMatchObject({ ok: true });
   });
 
   test('creating inside a container created in the same edit is accepted', async () => {

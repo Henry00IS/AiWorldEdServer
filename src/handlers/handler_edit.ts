@@ -1,32 +1,31 @@
-/** Edit validation against locks and relay to the other members. */
+/**
+ * Edit validation and relay. One-shot edits need no lock (last writer wins in
+ * relay order) and are refused only where another member runs an operation;
+ * edits of a running operation must stay inside its lease. Every accepted edit
+ * is acknowledged to its sender inside the same ordered edit stream, so a
+ * client knows exactly which remote edits came before its own.
+ */
 import { sessionSend, type ConnectionSession } from '../connection/connection_session.ts';
 import type { Room } from '../rooms/room.ts';
 import { roomBroadcastLocks } from '../rooms/room_broadcast.ts';
 import type { ServerCore } from '../server/server_core.ts';
 import type { ClientMessage, EditOperation, VerifyDenial } from '../shared/protocol_definitions.ts';
+import { abuseRecord, abuseThrottled } from './handler_abuse.ts';
+import { editLockCheck, type EditLockPlan, type EditRejection } from './handler_edit_rules.ts';
 import { sessionSyncedRoom } from './handler_lock.ts';
 import { verifyAsk, verifyNeeded, type VerifyClaim } from './handler_verify.ts';
 
+export { editLockCheck } from './handler_edit_rules.ts';
+
 type EditMessage = Extract<ClientMessage, { t: 'edit' }>;
 
-/** Lock effects of an accepted edit. */
-interface EditLockPlan {
-  created: string[];
-  deleted: string[];
-  shared: string[];
-}
-
-/** Rejection of an edit. */
-interface EditRejection {
-  reason: 'not_locked' | 'lock_conflict' | 'lock_limit' | 'lock_unverified';
-  ids: string[];
-}
+/** Refusal reasons decided before the lock rules. */
+type EditGateReason = 'lease_stale' | 'rate_limited' | 'throttled';
 
 /**
- * Accepts an edit when the sender holds every lock it needs, then queues it for
- * every other member (coalesced per recipient) and applies lock effects. When a
- * member's parent chains would give it shared locks it does not have yet, the
- * room owner must confirm the chains first.
+ * Accepts an edit that passes the lease, rate and lock rules, relays it to the
+ * other members and acknowledges it to the sender. When a member's parent
+ * chains are not confirmed yet, the room owner must confirm them first.
  *
  * @param core Relay core.
  * @param session Sender.
@@ -35,7 +34,9 @@ interface EditRejection {
 export function handlerEdit(core: ServerCore, session: ConnectionSession, message: EditMessage): void {
   const room = sessionSyncedRoom(session, undefined);
   if (!room) return;
-  const plan = editPlan(room, session, message);
+  const gate = editGate(core, room, session, message);
+  if (gate) return editReject(session, message.seq, { reason: gate, ids: [] }, null);
+  const plan = editPlan(core, room, session, message);
   if (plan === null) return;
   if (!verifyNeeded(room, session, plan.shared)) return editAccept(room, session, message, plan);
   const claim = editClaim(message.ops);
@@ -43,29 +44,95 @@ export function handlerEdit(core: ServerCore, session: ConnectionSession, messag
   verifyAsk(core, room, session, claim, (outcome) => {
     if (outcome !== 'ok') return editReject(session, message.seq, { reason: 'lock_unverified', ids: [] }, outcome);
     if (session.room !== room || !session.synced) return;
-    const recheckedPlan = editPlan(room, session, message);
+    if (message.lease !== undefined && room.locks.leases.of(session.user)?.id !== message.lease)
+      return editReject(session, message.seq, { reason: 'lease_stale', ids: [] }, null);
+    const recheckedPlan = editPlan(core, room, session, message);
     if (recheckedPlan !== null) editAccept(room, session, message, recheckedPlan);
   });
 }
 
 /**
- * Checks an edit against the locks and refuses it when it does not pass.
+ * Applies throttling, the lease tag and the rate limits.
  *
+ * @param core Relay core.
+ * @param room Room.
+ * @param session Sender.
+ * @param message Edit batch.
+ * @returns Refusal reason, or null.
+ */
+function editGate(
+  core: ServerCore,
+  room: Room,
+  session: ConnectionSession,
+  message: EditMessage,
+): EditGateReason | null {
+  if (abuseThrottled(core, session)) return 'throttled';
+  const running = room.locks.leases.of(session.user);
+  if (message.lease !== undefined && running?.id !== message.lease) {
+    const neverIssued = message.lease > room.locks.leases.lastId(session.user);
+    abuseRecord(core, session, neverIssued ? 1 : 0, 'edit with a lease never issued');
+    return 'lease_stale';
+  }
+  if (editRateAllowed(room, session, message, running !== undefined)) return null;
+  abuseRecord(core, session, 1, 'edit flood');
+  return 'rate_limited';
+}
+
+/**
+ * Takes the rate tokens of an edit: live previews of a running operation use
+ * the live bucket, anything else the member's and the room's one-shot buckets;
+ * created and deleted ids also take from the bulk bucket.
+ *
+ * @param room Room.
+ * @param session Sender.
+ * @param message Edit batch.
+ * @param leased Whether the sender runs an operation.
+ * @returns True when the edit is within the limits.
+ */
+function editRateAllowed(room: Room, session: ConnectionSession, message: EditMessage, leased: boolean): boolean {
+  const { limits } = session;
+  const bulk = editBulkCount(message.ops);
+  if (bulk > 0 && !limits.bulkIdsBucket.take(bulk)) return false;
+  if (leased) return limits.liveBucket.take();
+  return limits.oneShotBucket.take() && room.oneShotBucket.take();
+}
+
+/**
+ * Counts the ids an edit creates or deletes.
+ *
+ * @param operations Operations of the batch.
+ * @returns Number of created plus deleted ids.
+ */
+function editBulkCount(operations: readonly EditOperation[]): number {
+  let count = 0;
+  for (const operation of operations)
+    if (operation.k === 'create' || operation.k === 'delete') count += operation.ids.length;
+  return count;
+}
+
+/**
+ * Checks an edit against the lock rules and refuses it when it does not pass.
+ * Edits outside the sender's own running operation count as misuse.
+ *
+ * @param core Relay core.
  * @param room Room.
  * @param session Sender.
  * @param message Edit batch.
  * @returns Lock effects, or null when the edit was refused.
  */
-function editPlan(room: Room, session: ConnectionSession, message: EditMessage): EditLockPlan | null {
+function editPlan(core: ServerCore, room: Room, session: ConnectionSession, message: EditMessage): EditLockPlan | null {
   const plan: EditLockPlan = { created: [], deleted: [], shared: [] };
   const rejection = editLockCheck(room, session.user, message.ops, plan);
   if (rejection === null) return plan;
+  if (rejection.reason === 'outside_lease') abuseRecord(core, session, 1, 'edit outside the running operation');
   editReject(session, message.seq, rejection, null);
   return null;
 }
 
 /**
- * Relays an accepted edit and applies its lock effects.
+ * Relays an accepted edit, acknowledges it and applies its lock effects:
+ * objects created during an operation join its lease, deleted objects leave the
+ * sender's locks and the operation counts as progressing.
  *
  * @param room Room.
  * @param session Sender.
@@ -74,10 +141,15 @@ function editPlan(room: Room, session: ConnectionSession, message: EditMessage):
  */
 function editAccept(room: Room, session: ConnectionSession, message: EditMessage, plan: EditLockPlan): void {
   editRelay(room, session, message);
-  room.locks.grant(session.user, plan.created);
-  room.locks.sharedGrant(session.user, plan.shared);
+  const leased = room.locks.leases.of(session.user) !== undefined;
+  const added = leased ? plan.created : [];
+  room.locks.grant(session.user, added);
+  const lease = room.locks.leases.of(session.user);
   const released = room.locks.release(session.user, plan.deleted);
-  roomBroadcastLocks(room, session, plan.created, released);
+  if (lease !== undefined && room.locks.leases.of(session.user) === undefined)
+    room.locks.leases.adopt(session.user, lease);
+  room.locks.leases.progress(session.user);
+  roomBroadcastLocks(room, session, added, released);
 }
 
 /**
@@ -137,136 +209,10 @@ function editChainSame(left: readonly string[], right: readonly string[]): boole
 }
 
 /**
- * Checks every operation in order. Ids created earlier in the same batch count
- * as held.
- *
- * @param room Room.
- * @param user Sender.
- * @param operations Operations of the batch.
- * @param plan Filled with created, deleted and newly shared ids.
- * @returns Null when acceptable, otherwise the rejection.
- */
-export function editLockCheck(
-  room: Room,
-  user: number,
-  operations: readonly EditOperation[],
-  plan: EditLockPlan,
-): EditRejection | null {
-  const createdInBatch = new Set<string>();
-  for (const operation of operations) {
-    const rejection = editCheckOperation(room, user, operation, createdInBatch, plan);
-    if (rejection) return rejection;
-    if (operation.k === 'delete') plan.deleted.push(...operation.ids);
-  }
-  plan.created.push(...[...createdInBatch].filter((id) => room.locks.holderOf(id) !== user));
-  plan.shared = room.locks.sharedMissing(
-    user,
-    plan.shared.filter((id) => !createdInBatch.has(id)),
-  );
-  const added = plan.created.length + plan.shared.length;
-  if (!room.locks.withinLimits(room.locks.countFor(user) + added, added)) return { reason: 'lock_limit', ids: [] };
-  return null;
-}
-
-/**
- * Checks one operation: its target ids and, for creates and reparents, the new
- * parent chain.
- *
- * @param room Room.
- * @param user Sender.
- * @param operation Operation.
- * @param createdInBatch Ids created earlier in the batch.
- * @param plan Collects the parent chain ids to share.
- * @returns Rejection or null.
- */
-function editCheckOperation(
-  room: Room,
-  user: number,
-  operation: EditOperation,
-  createdInBatch: Set<string>,
-  plan: EditLockPlan,
-): EditRejection | null {
-  const rejection =
-    operation.k === 'create'
-      ? editCheckCreate(room, user, operation.ids, createdInBatch)
-      : editCheckLocked(room, user, operation.ids, createdInBatch);
-  if (rejection || operation.p === undefined || (operation.k !== 'create' && operation.k !== 'reparent'))
-    return rejection;
-  return editCheckParents(room, user, operation.p, createdInBatch, plan);
-}
-
-/**
- * Refuses moving or creating an object inside a container another member
- * exclusively holds (directly or further up the chain).
- *
- * @param room Room.
- * @param user Sender.
- * @param chain New parent chain, parent first.
- * @param createdInBatch Ids created earlier in the batch.
- * @param plan Collects the chain ids to share.
- * @returns Rejection or null.
- */
-function editCheckParents(
-  room: Room,
-  user: number,
-  chain: readonly string[],
-  createdInBatch: ReadonlySet<string>,
-  plan: EditLockPlan,
-): EditRejection | null {
-  const conflicts = room.locks.conflictsFor(
-    user,
-    chain.filter((id) => !createdInBatch.has(id)),
-  );
-  if (conflicts.length > 0) return { reason: 'lock_conflict', ids: conflicts.map((conflict) => conflict.id) };
-  plan.shared.push(...chain);
-  return null;
-}
-
-/**
- * New ids must not be locked or shared by anybody else; they become locked by
- * the creator.
- *
- * @param room Room.
- * @param user Creator.
- * @param ids New object ids.
- * @param createdInBatch Collects created ids.
- * @returns Rejection or null.
- */
-function editCheckCreate(
-  room: Room,
-  user: number,
-  ids: readonly string[],
-  createdInBatch: Set<string>,
-): EditRejection | null {
-  const conflicts = [...room.locks.conflictsFor(user, ids), ...room.locks.conflictsShared(user, ids, [])];
-  if (conflicts.length > 0) return { reason: 'lock_conflict', ids: conflicts.map((conflict) => conflict.id) };
-  for (const id of ids) createdInBatch.add(id);
-  return null;
-}
-
-/**
- * Every id must be locked by the sender (or created earlier in the batch).
- *
- * @param room Room.
- * @param user Sender.
- * @param ids Target ids.
- * @param createdInBatch Ids created earlier in the batch.
- * @returns Rejection or null.
- */
-function editCheckLocked(
-  room: Room,
-  user: number,
-  ids: readonly string[],
-  createdInBatch: Set<string>,
-): EditRejection | null {
-  const missing = room.locks.missingFor(user, ids).filter((id) => !createdInBatch.has(id));
-  return missing.length > 0 ? { reason: 'not_locked', ids: missing } : null;
-}
-
-/**
- * Serializes the edit entry once and queues it for each other member. Edits
- * from the owner are skipped for members whose snapshot has not begun yet,
- * because the snapshot will already contain them.
+ * Serializes the edit entry once and queues it for each other member, plus a
+ * bare acknowledgement for the sender in the same ordered stream. Edits from
+ * the owner are skipped for members whose snapshot has not begun yet, because
+ * the snapshot will already contain them.
  *
  * @param room Room.
  * @param session Sender.
@@ -280,4 +226,5 @@ function editRelay(room: Room, session: ConnectionSession, message: EditMessage)
     if (fromOwner && member.awaitingSnapshotBegin) continue;
     member.outbound.pushEdit(entry);
   }
+  session.outbound.pushEdit(JSON.stringify({ from: session.user, seq: message.seq }));
 }

@@ -14,7 +14,12 @@ import { Room } from '../../../src/rooms/room.ts';
  * @returns Fake session.
  */
 function session(user: number): ConnectionSession {
-  return { user, ipKey: 'ip', name: `u${user}` } as unknown as ConnectionSession;
+  return {
+    user,
+    ipKey: 'ip',
+    name: `u${user}`,
+    protocol: { version: 2, caps: new Set(['select']), client: 'test' },
+  } as unknown as ConnectionSession;
 }
 
 /**
@@ -72,4 +77,30 @@ test('a chain through a container created in the batch must repeat its chain', (
   expect(editClaim([created, { k: 'reparent', ids: ['y'], d: {}, p: ['box'] }] as never)).toBeNull();
   const rootBox = { k: 'create', ids: ['box'], d: [{}] };
   expect(editClaim([rootBox, { k: 'reparent', ids: ['y'], d: {}, p: ['box'] }] as never)).toEqual({ ids: [], anc: [] });
+});
+
+test('a running lease limits edits to its own ids and objects created in the batch', () => {
+  const room = roomFake();
+  room.locks.leases.begin(2, 1);
+  expect(room.locks.acquire(2, ['cube'], true).ok).toBe(true);
+  const plan = { created: [] as string[], deleted: [], shared: [] };
+  const operations = [
+    { k: 'create', ids: ['copy'], d: [{}] },
+    { k: 'transform', ids: ['cube', 'copy'], d: {} },
+  ];
+  expect(editLockCheck(room, 2, operations as never, plan)).toBeNull();
+  const outside = editLockCheck(room, 2, [{ k: 'transform', ids: ['other'], d: {} }] as never, plan);
+  expect(outside).toEqual({ reason: 'outside_lease', ids: ['other'] });
+});
+
+test('a one-shot edit is refused only on ids another member leases', () => {
+  const room = roomFake();
+  room.locks.leases.begin(1, 1);
+  expect(room.locks.acquire(1, ['cube'], true, ['group']).ok).toBe(true);
+  const plan = { created: [], deleted: [], shared: [] };
+  expect(editLockCheck(room, 2, [{ k: 'property', ids: ['group'], d: {} }] as never, plan)).toBeNull();
+  const busy = editLockCheck(room, 2, [{ k: 'property', ids: ['cube'], d: {} }] as never, plan);
+  expect(busy).toEqual({ reason: 'lock_conflict', ids: ['cube'] });
+  const deletion = editLockCheck(room, 2, [{ k: 'delete', ids: ['group'] }] as never, plan);
+  expect(deletion).toEqual({ reason: 'lock_conflict', ids: ['group'] });
 });

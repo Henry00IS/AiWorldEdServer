@@ -22,6 +22,7 @@ function sessionFake() {
     closed: false,
     chatPending: [],
     presenceHighWaterBytes: 100,
+    protocol: { version: 2, caps: new Set(['select']), client: 'test' },
   } as unknown as ConnectionSession;
   outbound.idleListener = () => chatFlush(session);
   return { session, socket, sent };

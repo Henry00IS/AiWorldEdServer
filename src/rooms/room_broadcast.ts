@@ -17,6 +17,23 @@ export function roomBroadcast(room: Room, message: object, exceptUser?: number):
 }
 
 /**
+ * Serializes a message once and queues it for every member except one that
+ * negotiated the given capability.
+ *
+ * @param room Room to broadcast in.
+ * @param capability Capability recipients must have.
+ * @param message Message object.
+ * @param exceptUser User id to skip, if any.
+ */
+export function roomBroadcastCapable(room: Room, capability: string, message: object, exceptUser?: number): void {
+  const serialized = JSON.stringify(message);
+  for (const member of room.members.values()) {
+    if (member.user !== exceptUser && !member.closed && member.protocol.caps.has(capability))
+      member.outbound.pushText(serialized);
+  }
+}
+
+/**
  * Broadcasts a lock change of one user to everyone else in the room.
  *
  * @param room Room.

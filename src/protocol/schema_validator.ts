@@ -12,7 +12,8 @@ export type Schema =
   | { type: 'enum'; values: readonly string[] }
   | { type: 'array'; items: Schema; min: number; max: number }
   | { type: 'object'; required: Record<string, Schema>; optional?: Record<string, Schema> }
-  | { type: 'opaque'; maxDepth: number; maxNodes: number };
+  | { type: 'opaque'; maxDepth: number; maxNodes: number }
+  | { type: 'extension'; maxKeys: number; key: RegExp; maxDepth: number; maxNodes: number };
 
 /**
  * Validates a value against a schema.
@@ -40,6 +41,8 @@ export function schemaValidate(schema: Schema, value: unknown, path = '$'): stri
       return schemaValidateObject(schema, value, path);
     case 'opaque':
       return schemaValidateOpaque(schema, value, path);
+    case 'extension':
+      return schemaValidateExtension(schema, value, path);
   }
 }
 
@@ -73,6 +76,31 @@ function schemaValidateOpaque(
   return schemaOpaqueWithinBounds(value, schema.maxDepth, { remaining: schema.maxNodes })
     ? null
     : `${path}: opaque too deep or large`;
+}
+
+/**
+ * Validates an extension object: the one place where unknown keys are allowed.
+ * Keys must be well-formed and the whole object stays within its bounds;
+ * receivers ignore keys they do not know.
+ *
+ * @param schema Extension schema.
+ * @param value Candidate value.
+ * @param path Error path.
+ * @returns Null when valid, otherwise an error description.
+ */
+function schemaValidateExtension(
+  schema: Extract<Schema, { type: 'extension' }>,
+  value: unknown,
+  path: string,
+): string | null {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return `${path}: object`;
+  const keys = Object.keys(value);
+  if (keys.length > schema.maxKeys) return `${path}: too many keys`;
+  const badKey = keys.find((key) => key.length > 32 || !schema.key.test(key));
+  if (badKey !== undefined) return `${path}: bad key`;
+  return schemaOpaqueWithinBounds(value, schema.maxDepth, { remaining: schema.maxNodes })
+    ? null
+    : `${path}: extension too deep or large`;
 }
 
 /**

@@ -2,12 +2,26 @@
  * One collaboration room: owner, members, locks and in-flight streams. Holds no
  * world data.
  */
-import type { ConnectionSession } from '../connection/connection_session.ts';
+import type { ConnectionProtocol, ConnectionSession } from '../connection/connection_session.ts';
 import type { RoomListEntry, RoomMemberEntry, StreamKind } from '../shared/protocol_definitions.ts';
 import type { LimiterSharedBudget } from '../network/limiter_shared_budget.ts';
 import { LimiterTokenBucket } from '../network/limiter_token_bucket.ts';
 import { displayNameKey } from '../shared/room_name_policy.ts';
+import { RoomLeaseTable, ROOM_LEASE_TIMINGS_DEFAULT, type RoomLeaseTimings } from './room_lease_table.ts';
 import { RoomLockTable } from './room_lock_table.ts';
+
+/** Most abuse flags a room keeps for the owner's kick decisions. */
+export const ROOM_ABUSE_FLAGS_MAXIMUM = 64;
+/** Most addresses a room keeps on its rejoin cooldown list. */
+export const ROOM_JOIN_COOLDOWNS_MAXIMUM = 256;
+
+/** A member the relay throttled or closed for abuse, kept for the owner. */
+export interface RoomAbuseFlag {
+  readonly user: number;
+  readonly name: string;
+  readonly reason: string;
+  readonly closed: boolean;
+}
 
 /** One owner-to-member stream that is currently in flight. */
 export interface RoomStream {
@@ -37,6 +51,12 @@ export interface RoomOptions {
   verifyPerSecond?: number;
   /** Burst of owner queries for the whole room (default 100). */
   verifyBurst?: number;
+  /** Edit lease timings. */
+  leaseTimings?: RoomLeaseTimings;
+  /** One-shot edit messages per second for the whole room (default 200). */
+  oneShotPerSecond?: number;
+  /** Burst of one-shot edit messages for the whole room (default 400). */
+  oneShotBurst?: number;
 }
 
 /** Live room state. */
@@ -49,6 +69,11 @@ export class Room {
   readonly maxUsers: number;
   readonly owner: ConnectionSession;
   readonly ownerIpKey: string;
+  /**
+   * Protocol the room was created with (the owner's negotiated version,
+   * capabilities and editor build). Joiners must speak the same version.
+   */
+  readonly protocol: ConnectionProtocol;
   readonly members = new Map<number, ConnectionSession>();
   private readonly colorSlots = new Map<number, number>();
   readonly locks: RoomLockTable;
@@ -67,6 +92,15 @@ export class Room {
   readonly verifyWaiting = new Map<number, ConnectionSession>();
   /** Limits the owner queries of the whole room. */
   readonly verifyBucket: LimiterTokenBucket;
+  /** Limits the one-shot edit messages of the whole room. */
+  readonly oneShotBucket: LimiterTokenBucket;
+  /** Members flagged for abuse (oldest dropped first), for a later kick feature. */
+  readonly abuseFlags: RoomAbuseFlag[] = [];
+  /**
+   * Address keys closed for abuse here, with the monotonic time they may
+   * rejoin.
+   */
+  readonly joinCooldowns = new Map<string, number>();
   private verifySequence = 0;
   closed = false;
 
@@ -84,8 +118,15 @@ export class Room {
     this.maxUsers = options.maxUsers;
     this.owner = options.owner;
     this.ownerIpKey = options.owner.ipKey;
-    this.locks = new RoomLockTable(options.locksPerUser, options.locksPerRoom, options.locksServerBudget);
+    this.protocol = options.owner.protocol;
+    this.locks = new RoomLockTable(
+      options.locksPerUser,
+      options.locksPerRoom,
+      options.locksServerBudget,
+      new RoomLeaseTable(options.leaseTimings ?? ROOM_LEASE_TIMINGS_DEFAULT),
+    );
     this.verifyBucket = new LimiterTokenBucket(options.verifyPerSecond ?? 50, options.verifyBurst ?? 100);
+    this.oneShotBucket = new LimiterTokenBucket(options.oneShotPerSecond ?? 200, options.oneShotBurst ?? 400);
     this.memberAdd(options.owner);
   }
 
@@ -110,6 +151,45 @@ export class Room {
   memberDelete(user: number): void {
     this.members.delete(user);
     this.colorSlots.delete(user);
+    this.locks.leases.forget(user);
+  }
+
+  /**
+   * Records an abuse flag, dropping the oldest beyond the cap.
+   *
+   * @param flag Flag to keep.
+   */
+  abuseFlag(flag: RoomAbuseFlag): void {
+    this.abuseFlags.push(flag);
+    if (this.abuseFlags.length > ROOM_ABUSE_FLAGS_MAXIMUM) this.abuseFlags.shift();
+  }
+
+  /**
+   * Keeps an address out of the room until a monotonic time.
+   *
+   * @param ipKey Address key.
+   * @param untilMs Monotonic time it may rejoin.
+   */
+  joinCooldownSet(ipKey: string, untilMs: number): void {
+    this.joinCooldowns.delete(ipKey);
+    if (this.joinCooldowns.size >= ROOM_JOIN_COOLDOWNS_MAXIMUM)
+      this.joinCooldowns.delete(this.joinCooldowns.keys().next().value as string);
+    this.joinCooldowns.set(ipKey, untilMs);
+  }
+
+  /**
+   * Reports whether an address is still cooling down after an abuse close.
+   *
+   * @param ipKey Address key.
+   * @param nowMs Monotonic time.
+   * @returns True while the address may not rejoin.
+   */
+  joinCoolingDown(ipKey: string, nowMs: number): boolean {
+    const until = this.joinCooldowns.get(ipKey);
+    if (until === undefined) return false;
+    if (nowMs < until) return true;
+    this.joinCooldowns.delete(ipKey);
+    return false;
   }
 
   /**
@@ -193,6 +273,8 @@ export class Room {
       users: this.members.size,
       maxUsers: this.maxUsers,
       owner: this.owner.name,
+      protocol: this.protocol.version,
+      editor: this.protocol.client,
     };
   }
 

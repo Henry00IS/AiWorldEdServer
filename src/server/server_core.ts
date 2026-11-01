@@ -6,12 +6,21 @@ import type { ServerConfiguration } from '../config/server_configuration.ts';
 import { ConnectionOutboundQueue, type OutboundSocket } from '../connection/connection_outbound_queue.ts';
 import { ConnectionVerifyState, type ConnectionVerifyHeldMessage } from '../connection/connection_verify_state.ts';
 import { handlerVerifyResult, verifyHoldOrRun } from '../handlers/handler_verify.ts';
-import { sessionSend, type ConnectionSession, type ConnectionUpgradeData } from '../connection/connection_session.ts';
+import {
+  sessionSend,
+  type ConnectionEditLimits,
+  type ConnectionSession,
+  type ConnectionUpgradeData,
+} from '../connection/connection_session.ts';
 import { handlerEdit } from '../handlers/handler_edit.ts';
 import { chatFlush, handlerChat } from '../handlers/handler_chat.ts';
 import { handlerNameSet } from '../handlers/handler_name.ts';
 import { handlerPresence, presenceFlush } from '../handlers/handler_presence.ts';
-import { handlerLockAcquire, handlerLockRelease } from '../handlers/handler_lock.ts';
+import { handlerLockAcquire, handlerLockRelease, handlerLockRenew, leasesSweep } from '../handlers/handler_lock.ts';
+import { handlerSelect } from '../handlers/handler_select.ts';
+import { helloNegotiate, helloRefuse } from '../handlers/handler_hello.ts';
+import { PROTOCOL_VERSION_MAXIMUM, PROTOCOL_VERSION_MINIMUM } from '../shared/protocol_versioning.ts';
+import { LimiterAbuseCarry, type LimiterAbuseScore } from '../network/limiter_abuse_score.ts';
 import {
   handlerRoomCreate,
   handlerRoomJoin,
@@ -42,7 +51,6 @@ import {
   BINARY_FRAME_KIND_PRESENCE,
   CLOSE_CODES,
   PROTOCOL_ID,
-  PROTOCOL_VERSION,
   type ClientMessage,
 } from '../shared/protocol_definitions.ts';
 
@@ -64,7 +72,26 @@ type ContentMessage = Exclude<
 >;
 
 /** Session fields that start from configuration defaults. */
-type SessionInitialState = Omit<ConnectionSession, 'user' | 'clientIp' | 'ipKey' | 'via' | 'outbound' | 'close'>;
+type SessionInitialState = Omit<
+  ConnectionSession,
+  'user' | 'clientIp' | 'ipKey' | 'via' | 'outbound' | 'close' | 'limits'
+>;
+
+/**
+ * Builds the presence limiter and buffers of a new session.
+ *
+ * @param config Effective configuration.
+ * @returns Fresh presence state.
+ */
+function sessionPresenceState(
+  config: ServerConfiguration,
+): Pick<SessionInitialState, 'presenceBucket' | 'presencePending' | 'presenceHighWaterBytes'> {
+  return {
+    presenceBucket: new LimiterTokenBucket(config.presencePerSecond, config.presenceBurst),
+    presencePending: new Map(),
+    presenceHighWaterBytes: config.presenceHighWaterBytes,
+  };
+}
 
 /**
  * Builds the rate limiters and initial flags of a new session.
@@ -76,14 +103,13 @@ function sessionInitialState(config: ServerConfiguration): SessionInitialState {
   return {
     messageBucket: new LimiterTokenBucket(config.messagesPerSecond, config.messageBurst),
     byteBucket: new LimiterTokenBucket(config.bytesPerSecond, config.byteBurst),
-    presenceBucket: new LimiterTokenBucket(config.presencePerSecond, config.presenceBurst),
-    presencePending: new Map(),
-    presenceHighWaterBytes: config.presenceHighWaterBytes,
+    ...sessionPresenceState(config),
     chatPending: [],
     chatLastAt: Number.NEGATIVE_INFINITY,
     name: '',
     nameChosen: '',
     helloDone: false,
+    protocol: { version: 0, caps: new Set(), client: '' },
     closed: false,
     room: null,
     synced: false,
@@ -111,6 +137,25 @@ function sessionVerifyState(config: ServerConfiguration): ConnectionVerifyState 
 }
 
 /**
+ * Builds the edit, lease and selection limits of a new session.
+ *
+ * @param config Effective configuration.
+ * @param abuse Abuse score carried over from the address.
+ * @returns Fresh limits.
+ */
+function sessionEditLimits(config: ServerConfiguration, abuse: LimiterAbuseScore): ConnectionEditLimits {
+  return {
+    leaseBucket: new LimiterTokenBucket(config.leasesPerSecond, config.leaseBurst),
+    renewBucket: new LimiterTokenBucket(config.leaseRenewsPerSecond, config.leaseRenewBurst),
+    oneShotBucket: new LimiterTokenBucket(config.oneShotEditsPerSecond, config.oneShotEditBurst),
+    liveBucket: new LimiterTokenBucket(config.liveEditsPerSecond, config.liveEditBurst),
+    bulkIdsBucket: new LimiterTokenBucket(config.bulkIdsPerSecond, config.bulkIdBurst),
+    selectBucket: new LimiterTokenBucket(config.selectsPerSecond, config.selectBurst),
+    abuse,
+  };
+}
+
+/**
  * Lists the effective limits announced in the welcome message.
  *
  * @param config Effective configuration.
@@ -131,12 +176,42 @@ function welcomeLimits(config: ServerConfiguration): object {
     usersPerRoom: config.usersPerRoomMaximum,
     locksPerUser: config.locksPerUser,
     presencePerSecond: config.presencePerSecond,
+    ...welcomeLimitsRooms(config),
+  };
+}
+
+/**
+ * Lists the lease, room list and chat limits announced in the welcome message.
+ *
+ * @param config Effective configuration.
+ * @returns Limits object fields.
+ */
+function welcomeLimitsRooms(config: ServerConfiguration): object {
+  return {
+    lockLeaseMs: config.lockLeaseMs,
     roomListMaximum: config.roomListMaximum,
     roomListPushIntervalMs: config.roomListPushIntervalMs,
     chatIntervalMs: config.chatIntervalMs,
     chatTextLength: config.chatTextLengthMaximum,
     chatTextLines: config.chatTextLinesMaximum,
   };
+}
+
+/**
+ * Creates the room list subscription hub.
+ *
+ * @param config Effective configuration.
+ * @param registry Room registry it lists.
+ * @returns Subscription hub.
+ */
+function roomListSubscriptionsCreate(config: ServerConfiguration, registry: RoomRegistry): RoomListSubscriptions {
+  return new RoomListSubscriptions({
+    rooms: () => registry.all(),
+    subscribersMaximum: config.roomListSubscribersMaximum,
+    roomListMaximum: config.roomListMaximum,
+    pushIntervalMs: config.roomListPushIntervalMs,
+    lowPriorityHighWaterBytes: config.presenceHighWaterBytes,
+  });
 }
 
 /** Socket surface the core needs from the transport. */
@@ -186,7 +261,9 @@ export class ServerCore {
   readonly outboundBacklogServerBudget: LimiterSharedBudget;
   passwordHashesInFlight = 0;
   private nextUserId = 1;
+  readonly abuseCarry: LimiterAbuseCarry;
   private readonly pruneTimer: ReturnType<typeof setInterval>;
+  private readonly leaseTimer: ReturnType<typeof setInterval>;
 
   /**
    * Creates the relay core with its registry and limiters.
@@ -195,13 +272,7 @@ export class ServerCore {
    */
   constructor(readonly config: ServerConfiguration) {
     this.registry = new RoomRegistry(config.roomsPerIp, config.roomsTotal);
-    this.roomListSubscriptions = new RoomListSubscriptions({
-      rooms: () => this.registry.all(),
-      subscribersMaximum: config.roomListSubscribersMaximum,
-      roomListMaximum: config.roomListMaximum,
-      pushIntervalMs: config.roomListPushIntervalMs,
-      lowPriorityHighWaterBytes: config.presenceHighWaterBytes,
-    });
+    this.roomListSubscriptions = roomListSubscriptionsCreate(config, this.registry);
     this.connectionsPerIpKey = new LimiterKeyCounter(config.connectionsPerIp);
     this.passwordWorkPerIpKey = new LimiterKeyCounter(config.passwordHashConcurrencyPerIp);
     this.roomEntriesPerIpKey = new LimiterKeyedTokenBucket(
@@ -212,7 +283,9 @@ export class ServerCore {
     this.joinFailuresPerRoom = new LimiterFailureWindow(config.joinFailuresPerRoomPerMinute, 60_000);
     this.locksServerBudget = new LimiterSharedBudget(config.locksTotal);
     this.outboundBacklogServerBudget = new LimiterSharedBudget(config.outboundBacklogBytesTotal);
+    this.abuseCarry = new LimiterAbuseCarry(config.abuseDecayPerSecond);
     this.pruneTimer = setInterval(() => this.limitersPrune(), 60_000);
+    this.leaseTimer = setInterval(() => leasesSweep(this), config.lockLeaseSweepMs);
   }
 
   /**
@@ -281,6 +354,7 @@ export class ServerCore {
     if (session.handshakeTimer) clearTimeout(session.handshakeTimer);
     this.roomListSubscriptions.unsubscribe(session);
     roomMembershipEnd(this, session, 'disconnected');
+    this.abuseCarry.sessionClosed(session.ipKey, session.limits.abuse);
     session.outbound.clear();
     this.sessions.delete(session.user);
     this.connectionsPerIpKey.release(session.ipKey);
@@ -289,6 +363,7 @@ export class ServerCore {
   /** Closes every connection and stops timers. */
   shutdown(): void {
     clearInterval(this.pruneTimer);
+    clearInterval(this.leaseTimer);
     this.roomListSubscriptions.stop();
     for (const session of [...this.sessions.values()]) session.close(CLOSE_CODES.shuttingDown, 'server shutting down');
   }
@@ -304,6 +379,23 @@ export class ServerCore {
   }
 
   /**
+   * Creates the outbound queue of a newly opened socket.
+   *
+   * @param socket Transport socket.
+   * @param slowConsumer Called when the client cannot keep up.
+   * @returns Outbound queue.
+   */
+  private outboundCreate(socket: CoreSocket, slowConsumer: () => void): ConnectionOutboundQueue {
+    return new ConnectionOutboundQueue(
+      socket,
+      this.config.outboundQueueBytesMaximum,
+      this.config.socketBufferHighWaterBytes,
+      slowConsumer,
+      this.outboundBacklogServerBudget,
+    );
+  }
+
+  /**
    * Creates the session object for a newly opened socket.
    *
    * @param socket Transport socket.
@@ -313,13 +405,7 @@ export class ServerCore {
   private sessionCreate(socket: CoreSocket, data: ConnectionUpgradeData): ConnectionSession {
     const config = this.config;
     let session: ConnectionSession;
-    const outbound = new ConnectionOutboundQueue(
-      socket,
-      config.outboundQueueBytesMaximum,
-      config.socketBufferHighWaterBytes,
-      () => session.close(CLOSE_CODES.slowConsumer, 'slow consumer'),
-      this.outboundBacklogServerBudget,
-    );
+    const outbound = this.outboundCreate(socket, () => session.close(CLOSE_CODES.slowConsumer, 'slow consumer'));
     session = {
       user: this.userIdNext(),
       clientIp: data.clientIp,
@@ -328,6 +414,7 @@ export class ServerCore {
       outbound,
       close: (code, reason) => socket.close(code, reason),
       ...sessionInitialState(config),
+      limits: sessionEditLimits(config, this.abuseCarry.sessionScore(data.ipKey, config.abuseThrottleScore / 2)),
     };
     outbound.idleListener = () => sessionIdle(session);
     return session;
@@ -379,8 +466,9 @@ export class ServerCore {
    */
   private handshake(session: ConnectionSession, message: ClientMessage): void {
     if (message.t !== 'hello') return this.violation(session, 'expected hello');
-    if (message.version !== PROTOCOL_VERSION)
-      return this.violation(session, `unsupported version, server speaks ${PROTOCOL_VERSION}`);
+    const negotiated = helloNegotiate(message);
+    if (!negotiated.ok) return helloRefuse(session, negotiated.refusal);
+    session.protocol = negotiated.protocol;
     session.name = displayNameFromHello(message.name, session.user);
     session.nameChosen = session.name;
     session.helloDone = true;
@@ -399,7 +487,9 @@ export class ServerCore {
     return {
       t: 'welcome',
       protocol: PROTOCOL_ID,
-      version: PROTOCOL_VERSION,
+      version: session.protocol.version,
+      versions: { min: PROTOCOL_VERSION_MINIMUM, max: PROTOCOL_VERSION_MAXIMUM },
+      caps: [...session.protocol.caps],
       user: session.user,
       name: session.name,
       via: session.via,
@@ -450,8 +540,25 @@ export class ServerCore {
       case 'lock.release':
       case 'edit':
         return verifyHoldOrRun(this, session, message, bytes);
+      case 'lock.renew':
+        return handlerLockRenew(this, session, message);
+      case 'select':
+        return handlerSelect(this, session, message);
       case 'verify.result':
         return handlerVerifyResult(this, session, message, bytes);
+      default:
+        return this.dispatchTransfer(session, message);
+    }
+  }
+
+  /**
+   * Routes a validated chat, asset or stream message to its handler.
+   *
+   * @param session Sender.
+   * @param message Validated message.
+   */
+  private dispatchTransfer(session: ConnectionSession, message: ContentMessage): void {
+    switch (message.t) {
       case 'chat':
         return handlerChat(this, session, message);
       case 'asset.request':
@@ -489,5 +596,6 @@ export class ServerCore {
     this.joinFailuresPerIp.prune();
     this.joinFailuresPerRoom.prune();
     this.roomEntriesPerIpKey.prune();
+    this.abuseCarry.prune();
   }
 }

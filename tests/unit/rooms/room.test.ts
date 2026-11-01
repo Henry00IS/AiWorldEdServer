@@ -9,7 +9,12 @@ import { Room } from '../../../src/rooms/room.ts';
  * @returns Fake session.
  */
 function sessionFake(user: number): ConnectionSession {
-  return { user, ipKey: 'ip', name: `u${user}` } as unknown as ConnectionSession;
+  return {
+    user,
+    ipKey: 'ip',
+    name: `u${user}`,
+    protocol: { version: 2, caps: new Set(['select']), client: 'test' },
+  } as unknown as ConnectionSession;
 }
 
 test('color slots: lowest free slot, unique among members, reused after leaving', () => {

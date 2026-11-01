@@ -5,8 +5,11 @@
 
 /** Protocol identifier that must be sent in the hello message. */
 export const PROTOCOL_ID = 'aiworlded-collab';
-/** Current protocol version. */
-export const PROTOCOL_VERSION = 1;
+/**
+ * Current protocol version: the version this build speaks when it creates a
+ * room. See `protocol_versioning.ts` for the supported range.
+ */
+export const PROTOCOL_VERSION = 2;
 /** WebSocket path served by the relay. */
 export const PROTOCOL_WEBSOCKET_PATH = '/ws';
 
@@ -30,14 +33,25 @@ export const CLOSE_CODES = {
   slowConsumer: 4004,
   serverFull: 4005,
   shuttingDown: 4006,
+  abuse: 4007,
+  protocolUnsupported: 4008,
 } as const;
 
-/** Edit operation kinds that require the sender to hold locks on every id. */
-export const EDIT_KINDS_LOCKED = ['transform', 'geometry', 'property', 'texture', 'reparent', 'delete'] as const;
+/**
+ * Edit operation kinds a running operation streams as live previews of a drag
+ * or tool. Sent without a lease (a typed value) they are one-shot edits.
+ */
+export const EDIT_KINDS_LEASED = ['transform'] as const;
+/**
+ * One-shot edit kinds: field updates, reparents and deletes that need no lock.
+ * The relay refuses them only while another member's edit lease covers a
+ * target.
+ */
+export const EDIT_KINDS_ONE_SHOT = ['geometry', 'property', 'texture', 'reparent', 'delete'] as const;
 /** Edit operation kinds that introduce new ids. */
 export const EDIT_KINDS_CREATING = ['create'] as const;
 /** Every edit operation kind. */
-export const EDIT_KINDS = [...EDIT_KINDS_LOCKED, ...EDIT_KINDS_CREATING] as const;
+export const EDIT_KINDS = [...EDIT_KINDS_LEASED, ...EDIT_KINDS_ONE_SHOT, ...EDIT_KINDS_CREATING] as const;
 /** Union of edit operation kinds. */
 export type EditKind = (typeof EDIT_KINDS)[number];
 
@@ -47,10 +61,30 @@ export const STREAM_KINDS = ['snapshot', 'asset'] as const;
 export type StreamKind = (typeof STREAM_KINDS)[number];
 
 /**
+ * How long an edit lease lives without renewal. Any accepted edit or
+ * `lock.renew` of the holder renews it; once it runs out the relay releases
+ * every lock of the holder and broadcasts `locks` with `expired: true`.
+ */
+export const LOCK_LEASE_MS = 5000;
+/**
+ * Leases: a member holds at most one edit lease (one running operation, which
+ * may cover many objects). `lock.acquire` names the lease with a number that
+ * grows per connection; a different number while a lease is active is refused
+ * with `lease_busy` unless `replace` ends the old operation first, and the same
+ * number adds ids to the running operation. Live previews carry the lease
+ * number and are refused with `lease_stale` once it ended. While a lease is
+ * active, edits may only touch its ids (`outside_lease`).
+ */
+/** How often a client renews its lease while an operation is still running. */
+export const LOCK_RENEW_INTERVAL_MS = 1500;
+/** Most object ids one `select` presence message may list. */
+export const SELECT_IDS_MAXIMUM = 256;
+
+/**
  * One edit operation; `d` is opaque editor data relayed verbatim. `p` lists the
  * new parent chain of a `create` or `reparent` (parent first, up to the root):
- * the relay refuses the edit when another member exclusively holds any of them
- * and gives the sender a shared lock on them.
+ * the relay refuses the edit when another member exclusively holds any of
+ * them.
  */
 export interface EditOperation {
   k: EditKind;
@@ -87,11 +121,36 @@ export interface VerifyQueryMessage {
 }
 
 /**
+ * Selection presence relayed to the other members: the top-level ids member
+ * `by` has selected. Selection never locks anything and the relay keeps no
+ * copy; members resend their selection when somebody joins.
+ */
+export interface SelectedMessage {
+  t: 'selected';
+  by: number;
+  ids: string[];
+}
+
+/**
  * Messages a client may send. `r` is an optional request id echoed in replies
  * and errors.
  */
 export type ClientMessage =
-  | { t: 'hello'; protocol: typeof PROTOCOL_ID; version: number; client: string; name?: string }
+  | {
+      t: 'hello';
+      protocol: typeof PROTOCOL_ID;
+      /** Newest version the client speaks. */
+      version: number;
+      /** Oldest version the client speaks (defaults to `version`). */
+      minVersion?: number;
+      /** Editor name and build, e.g. `AiWorldEd/0.3.1+a4ac32c`. */
+      client: string;
+      name?: string;
+      /** Optional features the client understands. */
+      caps?: string[];
+      /** Extension object: unknown keys are ignored (see Protocol evolution). */
+      x?: Record<string, unknown>;
+    }
   | { t: 'ping'; r?: number }
   | { t: 'room.list'; r?: number }
   | { t: 'room.subscribe'; r?: number }
@@ -105,14 +164,18 @@ export type ClientMessage =
       internalTest?: boolean;
       maxUsers?: number;
       displayName?: string;
+      /** Extension object: unknown keys are ignored (see Protocol evolution). */
+      x?: Record<string, unknown>;
     }
   | { t: 'room.join'; r?: number; room: string; password?: string; discardLocalWork: true; displayName?: string }
   | { t: 'room.leave'; r?: number }
   | { t: 'name.set'; r?: number; name: string }
   | { t: 'chat'; r?: number; text: string }
-  | { t: 'lock.acquire'; r?: number; ids: string[]; replace?: boolean; shared?: string[] }
+  | { t: 'lock.acquire'; r?: number; lease: number; ids: string[]; replace?: boolean; shared?: string[] }
   | { t: 'lock.release'; r?: number; ids?: string[] }
-  | { t: 'edit'; seq: number; ops: EditOperation[] }
+  | { t: 'lock.renew'; lease: number }
+  | { t: 'select'; ids: string[] }
+  | { t: 'edit'; seq: number; ops: EditOperation[]; lease?: number }
   | { t: 'verify.result'; q: number; v: VerifyVerdict }
   | { t: 'asset.request'; r?: number; name: string }
   | { t: 'asset.missing'; to: number; name: string }
@@ -132,6 +195,10 @@ export interface RoomListEntry {
   maxUsers: number;
   /** Display name of the room owner. */
   owner: string;
+  /** Protocol version the room was created with; joiners must speak it. */
+  protocol: number;
+  /** Editor name and build of the creator, from its hello `client`. */
+  editor: string;
 }
 
 /**
@@ -178,12 +245,19 @@ export type ErrorCode =
   | 'lock_limit'
   | 'not_locked'
   | 'lock_unverified'
+  | 'lease_busy'
+  | 'lease_stale'
+  | 'outside_lease'
+  | 'rate_limited'
+  | 'throttled'
   | 'stream_invalid'
   | 'subscription_limit'
   | 'name_locked'
   | 'invalid_chat'
   | 'chat_rate_limited'
-  | 'busy';
+  | 'busy'
+  | 'protocol_unsupported'
+  | 'protocol_mismatch';
 
 /**
  * One chat message as members receive it. `id` grows per room, `at` is the

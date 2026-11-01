@@ -6,7 +6,7 @@
 import { afterAll, afterEach, beforeAll, describe, expect, test } from 'bun:test';
 import { collabServerStart, type CollabServer } from '../../src/server/server_collab.ts';
 import { binaryFrameEncode } from '../../src/shared/binary_frame.ts';
-import { CLOSE_CODES, PROTOCOL_ID } from '../../src/shared/protocol_definitions.ts';
+import { CLOSE_CODES, PROTOCOL_ID, PROTOCOL_VERSION } from '../../src/shared/protocol_definitions.ts';
 import { passwordGenerate } from '../../src/shared/password_generator.ts';
 import { TestClient, testConnectionRefused, type TestMessage } from '../support/test_client.ts';
 import { roomCreate, snapshotSend, streamReceive, testRoomJoinSynced } from '../support/test_room.ts';
@@ -147,7 +147,12 @@ afterAll(async () => {
 describe('handshake and gatekeeping', () => {
   test('hello yields welcome with limits; direct connections report via=direct', async () => {
     const client = await connect({ name: '  Tester  ' });
-    expect(client.welcome).toMatchObject({ protocol: PROTOCOL_ID, version: 1, via: 'direct', name: 'Tester' });
+    expect(client.welcome).toMatchObject({
+      protocol: PROTOCOL_ID,
+      version: PROTOCOL_VERSION,
+      via: 'direct',
+      name: 'Tester',
+    });
     expect(client.welcome.limits.roomsPerIp).toBe(8);
     expect(client.welcome.limits.presencePerSecond).toBe(10);
     client.send({ t: 'ping', r: 5 });
@@ -171,7 +176,7 @@ describe('handshake and gatekeeping', () => {
     ['garbage text', 'GET / HTTP/1.1'],
     ['unknown type', JSON.stringify({ t: 'proxy.connect', host: 'example.com' })],
     ['message before hello', JSON.stringify({ t: 'room.list' })],
-    ['wrong version', JSON.stringify({ t: 'hello', protocol: PROTOCOL_ID, version: 2, client: 'x' })],
+    ['version out of range', JSON.stringify({ t: 'hello', protocol: PROTOCOL_ID, version: 70000, client: 'x' })],
     ['binary before hello', new Uint8Array([1, 2, 3])],
   ])('protocol violation closes the socket: %s', async (_label, payload) => {
     const client = await connect({ hello: false });
@@ -362,23 +367,33 @@ describe('locks and edits', () => {
     expect(await owner.request({ t: 'lock.acquire', ids: ['x1'] }, 'lock.result')).toMatchObject({ ok: true });
   });
 
-  test('edits require locks and are relayed in order to everybody else', async () => {
+  test('one-shot edits need no lock, are relayed in order and acknowledged in the edit stream', async () => {
     const owner = await connect();
     const roomId = await roomCreate(owner);
     const { joiner: first } = await joinSynced(owner, roomId);
     const { joiner: second } = await joinSynced(owner, roomId);
-    first.send({ t: 'edit', seq: 1, ops: [{ k: 'transform', ids: ['cube'], d: { p: [1, 0, 0] } }] });
-    expect(await first.next('edit.rejected')).toMatchObject({ seq: 1, reason: 'not_locked', ids: ['cube'] });
-    await first.request({ t: 'lock.acquire', ids: ['cube'] }, 'lock.result');
-    for (let seq = 2; seq <= 6; seq++)
-      first.send({ t: 'edit', seq, ops: [{ k: 'transform', ids: ['cube'], d: { p: [seq, 0, 0] } }] });
+    for (let seq = 1; seq <= 5; seq++)
+      first.send({ t: 'edit', seq, ops: [{ k: 'property', ids: ['cube'], d: { f: { name: `n${seq}` } } }] });
     for (const recipient of [owner, second]) {
-      expect(await editSequencesReceive(recipient, first.user, 5)).toEqual([2, 3, 4, 5, 6]);
+      expect(await editSequencesReceive(recipient, first.user, 5)).toEqual([1, 2, 3, 4, 5]);
     }
-    expect(first.has('edits')).toBe(false);
+    const acks = await editSequencesReceive(first, first.user, 5);
+    expect(acks).toEqual([1, 2, 3, 4, 5]);
   });
 
-  test('create grants locks to the creator and delete releases them', async () => {
+  test('a one-shot edit is refused only while another member leases the object', async () => {
+    const owner = await connect();
+    const roomId = await roomCreate(owner);
+    const { joiner } = await joinSynced(owner, roomId);
+    await owner.request({ t: 'lock.acquire', ids: ['cube'] }, 'lock.result');
+    joiner.send({ t: 'edit', seq: 1, ops: [{ k: 'property', ids: ['cube'], d: { f: { name: 'x' } } }] });
+    expect(await joiner.next('edit.rejected')).toMatchObject({ seq: 1, reason: 'lock_conflict', ids: ['cube'] });
+    await owner.request({ t: 'lock.release' }, 'lock.result');
+    joiner.send({ t: 'edit', seq: 2, ops: [{ k: 'property', ids: ['cube'], d: { f: { name: 'x' } } }] });
+    expect(await editSequencesReceive(owner, joiner.user, 1)).toEqual([2]);
+  });
+
+  test('creates are not locked; a delete is refused while another member works on or inside it', async () => {
     const owner = await connect();
     const roomId = await roomCreate(owner);
     const { joiner } = await joinSynced(owner, roomId);
@@ -391,14 +406,14 @@ describe('locks and edits', () => {
       ],
     });
     expect((await owner.next('edits')).list[0].ops.length).toBe(2);
-    expect(await owner.request({ t: 'lock.acquire', ids: ['new1'] }, 'lock.result')).toMatchObject({
-      ok: false,
-      code: 'lock_conflict',
+    expect(await owner.request({ t: 'lock.acquire', ids: ['child'], shared: ['new1'] }, 'lock.result')).toMatchObject({
+      ok: true,
     });
     joiner.send({ t: 'edit', seq: 2, ops: [{ k: 'delete', ids: ['new1'] }] });
-    await owner.next('edits');
-    await owner.next('locks', (message) => message.by === joiner.user && message.remove?.includes('new1'));
-    expect(await owner.request({ t: 'lock.acquire', ids: ['new1'] }, 'lock.result')).toMatchObject({ ok: true });
+    expect(await joiner.next('edit.rejected')).toMatchObject({ seq: 2, reason: 'lock_conflict', ids: ['new1'] });
+    await owner.request({ t: 'lock.release' }, 'lock.result');
+    joiner.send({ t: 'edit', seq: 3, ops: [{ k: 'delete', ids: ['new1'] }] });
+    expect(await editSequencesReceive(owner, joiner.user, 1)).toEqual([3]);
   });
 
   test('members cannot lock or edit before their snapshot finished', async () => {

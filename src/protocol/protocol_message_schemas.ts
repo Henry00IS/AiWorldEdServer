@@ -1,11 +1,18 @@
-/** Closed schemas for every client message of protocol version 1. */
+/** Closed schemas for every client message of protocol version 2. */
 import {
   EDIT_KINDS,
   PROTOCOL_ID,
+  SELECT_IDS_MAXIMUM,
   STREAM_KINDS,
   VERIFY_VERDICTS,
   type ClientMessageType,
 } from '../shared/protocol_definitions.ts';
+import {
+  PROTOCOL_CAPABILITIES_MAXIMUM,
+  PROTOCOL_CAPABILITY_LENGTH_MAXIMUM,
+  PROTOCOL_CAPABILITY_PATTERN,
+  PROTOCOL_VERSION_LIMIT,
+} from '../shared/protocol_versioning.ts';
 import { CHAT_TEXT_WIRE_MAXIMUM } from '../shared/chat_text_policy.ts';
 import type { Schema } from './schema_validator.ts';
 
@@ -22,6 +29,7 @@ export const PROTOCOL_CAPS = {
 
 const SCHEMA_REQUEST_ID: Schema = { type: 'int', min: 0, max: 0x7fffffff };
 const SCHEMA_USER_ID: Schema = { type: 'int', min: 1, max: 0xffffffff };
+const SCHEMA_LEASE_ID: Schema = { type: 'int', min: 1, max: Number.MAX_SAFE_INTEGER };
 const SCHEMA_STREAM_ID: Schema = { type: 'int', min: 1, max: 0xffffffff };
 const SCHEMA_OBJECT_ID: Schema = { type: 'string', min: 1, max: 64, pattern: /^[A-Za-z0-9_.:-]+$/ };
 const SCHEMA_OBJECT_IDS: Schema = { type: 'array', items: SCHEMA_OBJECT_ID, min: 1, max: PROTOCOL_CAPS.idsPerMessage };
@@ -31,6 +39,24 @@ const SCHEMA_ASSET_NAME: Schema = {
   min: 1,
   max: PROTOCOL_CAPS.assetNameMaximum,
   pattern: /^[^\p{Cc}]+$/u,
+};
+const SCHEMA_PROTOCOL_VERSION: Schema = { type: 'int', min: 1, max: PROTOCOL_VERSION_LIMIT };
+const SCHEMA_CAPABILITIES: Schema = {
+  type: 'array',
+  items: { type: 'string', min: 1, max: PROTOCOL_CAPABILITY_LENGTH_MAXIMUM, pattern: PROTOCOL_CAPABILITY_PATTERN },
+  min: 0,
+  max: PROTOCOL_CAPABILITIES_MAXIMUM,
+};
+/**
+ * Extension object: the only place where unknown keys are accepted (and
+ * ignored).
+ */
+const SCHEMA_EXTENSION: Schema = {
+  type: 'extension',
+  maxKeys: 16,
+  key: PROTOCOL_CAPABILITY_PATTERN,
+  maxDepth: 4,
+  maxNodes: 256,
 };
 const SCHEMA_DISPLAY_NAME: Schema = { type: 'string', min: 1, max: 64 };
 const SCHEMA_EDIT_OPERATION: Schema = {
@@ -69,10 +95,15 @@ export const CLIENT_MESSAGE_SCHEMAS: Readonly<Record<ClientMessageType, Schema>>
     required: {
       t: { type: 'literal', value: 'hello' },
       protocol: { type: 'literal', value: PROTOCOL_ID },
-      version: { type: 'int', min: 1, max: 1000 },
+      version: SCHEMA_PROTOCOL_VERSION,
       client: { type: 'string', min: 1, max: 64, pattern: /^[\x20-\x7e]+$/ },
     },
-    optional: { name: { type: 'string', min: 1, max: 64 } },
+    optional: {
+      name: { type: 'string', min: 1, max: 64 },
+      minVersion: SCHEMA_PROTOCOL_VERSION,
+      caps: SCHEMA_CAPABILITIES,
+      x: SCHEMA_EXTENSION,
+    },
   },
   ping: messageSchema('ping'),
   'room.list': messageSchema('room.list'),
@@ -86,6 +117,7 @@ export const CLIENT_MESSAGE_SCHEMAS: Readonly<Record<ClientMessageType, Schema>>
       internalTest: { type: 'bool' },
       maxUsers: { type: 'int', min: 2, max: 1000 },
       displayName: SCHEMA_DISPLAY_NAME,
+      x: SCHEMA_EXTENSION,
     },
   ),
   'room.join': messageSchema(
@@ -98,10 +130,18 @@ export const CLIENT_MESSAGE_SCHEMAS: Readonly<Record<ClientMessageType, Schema>>
   chat: messageSchema('chat', { text: { type: 'string', min: 1, max: CHAT_TEXT_WIRE_MAXIMUM } }),
   'lock.acquire': messageSchema(
     'lock.acquire',
-    { ids: SCHEMA_OBJECT_IDS },
+    { lease: SCHEMA_LEASE_ID, ids: SCHEMA_OBJECT_IDS },
     { replace: { type: 'bool' }, shared: SCHEMA_OBJECT_IDS },
   ),
   'lock.release': messageSchema('lock.release', {}, { ids: SCHEMA_OBJECT_IDS }),
+  'lock.renew': { type: 'object', required: { t: { type: 'literal', value: 'lock.renew' }, lease: SCHEMA_LEASE_ID } },
+  select: {
+    type: 'object',
+    required: {
+      t: { type: 'literal', value: 'select' },
+      ids: { type: 'array', items: SCHEMA_OBJECT_ID, min: 0, max: SELECT_IDS_MAXIMUM },
+    },
+  },
   edit: {
     type: 'object',
     required: {
@@ -109,6 +149,7 @@ export const CLIENT_MESSAGE_SCHEMAS: Readonly<Record<ClientMessageType, Schema>>
       seq: { type: 'int', min: 0, max: Number.MAX_SAFE_INTEGER },
       ops: { type: 'array', items: SCHEMA_EDIT_OPERATION, min: 1, max: PROTOCOL_CAPS.opsPerEdit },
     },
+    optional: { lease: SCHEMA_LEASE_ID },
   },
   'verify.result': {
     type: 'object',

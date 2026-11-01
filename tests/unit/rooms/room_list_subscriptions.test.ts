@@ -102,9 +102,18 @@ function sessionRecorded(user: number, via: 'direct' | 'proxy' = 'direct'): Sess
     pushText: (data: string) => received.push(JSON.parse(data)),
     sendIfIdle: (data: string) => (busy.value ? false : (received.push(JSON.parse(data)), true)),
   };
-  const session = { user, via, closed: false, outbound } as unknown as ConnectionSession;
+  const session = {
+    user,
+    via,
+    closed: false,
+    outbound,
+    protocol: { version: 2, caps: new Set(['select']), client: 'test' },
+  } as unknown as ConnectionSession;
   return { session, received, busy };
 }
+
+/** Listing fields shared by every fake room. */
+const ROOM_FAKE_ENTRY = { private: false, maxUsers: 8, owner: 'Henry', protocol: 2, editor: 'AiWorldEd/test' } as const;
 
 /**
  * Builds a fake room with a mutable description.
@@ -125,7 +134,7 @@ function roomFake(id: string, users = 1, internalTest = false): Room & { users: 
      * @returns Listing entry.
      */
     describe(): RoomListEntry {
-      return { id, name: `room ${id}`, private: false, users: room.users, maxUsers: 8, owner: 'Henry' };
+      return { ...ROOM_FAKE_ENTRY, id, name: `room ${id}`, users: room.users };
     },
   };
   return room as unknown as Room & { users: number };

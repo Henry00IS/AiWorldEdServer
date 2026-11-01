@@ -26,6 +26,8 @@ export class TestClient {
   closeReason = '';
   user = 0;
   welcome: TestMessage = {};
+  /** Lease number lock requests without one use (the running operation). */
+  lease = 1;
   private waiters: (() => void)[] = [];
 
   /**
@@ -75,6 +77,7 @@ export class TestClient {
       protocol: PROTOCOL_ID,
       version: PROTOCOL_VERSION,
       client: 'aiworlded-tests/1',
+      caps: ['select'],
       ...(name ? { name } : {}),
     });
     this.welcome = await this.next('welcome');
@@ -87,7 +90,34 @@ export class TestClient {
    * @param message Object to send as JSON.
    */
   send(message: object): void {
-    this.socket.send(JSON.stringify(message));
+    this.socket.send(JSON.stringify(this.leaseFill(message)));
+    const typed = message as { t?: string; ids?: unknown };
+    if (typed.t === 'lock.release' && typed.ids === undefined) this.leaseNext();
+  }
+
+  /**
+   * Gives lock requests without a lease number the client's current lease, so
+   * consecutive requests extend one operation like an editor drag does; a full
+   * release ends it and the next request starts a new one.
+   *
+   * @param message Outgoing message.
+   * @returns Message with a lease number where one is needed.
+   */
+  private leaseFill(message: object): object {
+    const typed = message as { t?: string; lease?: number };
+    if ((typed.t === 'lock.acquire' || typed.t === 'lock.renew') && typed.lease === undefined)
+      return { ...message, lease: this.lease };
+    return message;
+  }
+
+  /**
+   * Starts a new operation: later lock requests use a fresh lease number.
+   *
+   * @returns The new lease number.
+   */
+  leaseNext(): number {
+    this.lease += 1;
+    return this.lease;
   }
 
   /**

@@ -6,8 +6,8 @@ const limits = { perSecond: 1, burst: 2, heldMessagesMaximum: 2, heldBytesMaximu
 test('held messages come back in order and free their bytes', () => {
   const state = new ConnectionVerifyState(limits);
   expect(state.hold({ t: 'lock.release' }, 60)).toBe(true);
-  expect(state.hold({ t: 'lock.acquire', ids: ['a'] }, 41)).toBe(false);
-  expect(state.hold({ t: 'lock.acquire', ids: ['a'] }, 40)).toBe(true);
+  expect(state.hold({ t: 'lock.acquire', lease: 1, ids: ['a'] }, 41)).toBe(false);
+  expect(state.hold({ t: 'lock.acquire', lease: 1, ids: ['a'] }, 40)).toBe(true);
   expect(state.hold({ t: 'lock.release' }, 1)).toBe(false);
   expect(state.next()).toEqual({ t: 'lock.release' });
   expect(state.hold({ t: 'lock.release' }, 60)).toBe(true);

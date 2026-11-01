@@ -1,6 +1,7 @@
 /** Room list, create, join and leave, plus membership teardown. */
 import { sessionSend, sessionSendError, type ConnectionSession } from '../connection/connection_session.ts';
-import { Room } from '../rooms/room.ts';
+import { protocolMismatchMessage } from '../shared/protocol_versioning.ts';
+import { Room, type RoomOptions } from '../rooms/room.ts';
 import { roomBroadcast, roomBroadcastLocks } from '../rooms/room_broadcast.ts';
 import type { ServerCore } from '../server/server_core.ts';
 import { passwordPolicyEvaluate } from '../shared/password_policy.ts';
@@ -163,12 +164,32 @@ function roomInstantiate(
     internalTest: message.internalTest === true,
     maxUsers: Math.min(message.maxUsers ?? core.config.usersPerRoomDefault, core.config.usersPerRoomMaximum),
     owner: session,
-    locksPerUser: core.config.locksPerUser,
-    locksPerRoom: core.config.locksPerRoom,
-    locksServerBudget: core.locksServerBudget,
-    verifyPerSecond: core.config.verifyPerRoomPerSecond,
-    verifyBurst: core.config.verifyPerRoomBurst,
+    ...roomEditOptions(core),
   });
+}
+
+/**
+ * Lists the lock, verification, lease and one-shot edit limits of new rooms.
+ *
+ * @param core Relay core.
+ * @returns Room option fields.
+ */
+function roomEditOptions(core: ServerCore): Pick<RoomOptions, 'locksPerUser' | 'locksPerRoom'> & Partial<RoomOptions> {
+  const config = core.config;
+  return {
+    locksPerUser: config.locksPerUser,
+    locksPerRoom: config.locksPerRoom,
+    locksServerBudget: core.locksServerBudget,
+    verifyPerSecond: config.verifyPerRoomPerSecond,
+    verifyBurst: config.verifyPerRoomBurst,
+    leaseTimings: {
+      leaseMs: config.lockLeaseMs,
+      idleMaximumMs: config.lockLeaseIdleMaximumMs,
+      totalMaximumMs: config.lockLeaseTotalMaximumMs,
+    },
+    oneShotPerSecond: config.oneShotEditsPerRoomPerSecond,
+    oneShotBurst: config.oneShotEditRoomBurst,
+  };
 }
 
 /**
@@ -242,14 +263,14 @@ export async function handlerRoomJoin(
   if (!core.roomEntriesPerIpKey.take(session.ipKey)) return sessionSendError(session, 'too_many_attempts', message.r);
   const room = core.registry.get(message.room);
   const rejection = roomJoinRejection(core, session, room);
-  if (rejection || !room) return sessionSendError(session, rejection ?? 'room_not_found', message.r);
+  if (rejection || !room) return roomJoinRefuse(session, room, rejection ?? 'room_not_found', message.r);
   const displayName = displayNameRejection(message.displayName);
   if (displayName) return sessionSendError(session, displayName.code, message.r, displayName.details);
   if (room.passwordHash !== null) {
     const verdict = await roomJoinPasswordCheck(core, session, room, message.password);
     if (verdict !== 'ok') return verdict === 'gone' ? undefined : sessionSendError(session, verdict, message.r);
     const lateRejection = roomJoinRejection(core, session, room);
-    if (lateRejection) return sessionSendError(session, lateRejection, message.r);
+    if (lateRejection) return roomJoinRefuse(session, room, lateRejection, message.r);
   }
   sessionDisplayNameApply(session, message.displayName);
   roomMemberAdd(core, session, room, message.r);
@@ -294,8 +315,27 @@ function roomJoinRejection(core: ServerCore, session: ConnectionSession, room: R
   if (session.pendingAsyncOperation) return 'busy';
   if (!room || room.closed || (room.internalTest && !internalTestRoomsAccessible(core, session)))
     return 'room_not_found';
+  if (room.protocol.version !== session.protocol.version) return 'protocol_mismatch';
   if (room.members.size >= room.maxUsers) return 'room_full';
+  if (room.joinCoolingDown(session.ipKey, performance.now())) return 'too_many_attempts';
   return null;
+}
+
+/**
+ * Sends a join refusal; a protocol mismatch also carries both versions and a
+ * message the editor can show as is.
+ *
+ * @param session Joiner.
+ * @param room Room asked for, if it exists.
+ * @param code Error code.
+ * @param requestId Request id to echo.
+ */
+function roomJoinRefuse(session: ConnectionSession, room: Room | undefined, code: string, requestId?: number): void {
+  if (code !== 'protocol_mismatch' || !room) return sessionSendError(session, code, requestId);
+  const roomProtocol = room.protocol.version;
+  const yourProtocol = session.protocol.version;
+  const message = protocolMismatchMessage(roomProtocol, yourProtocol);
+  sessionSendError(session, code, requestId, { roomProtocol, yourProtocol, message });
 }
 
 /**

@@ -4,7 +4,7 @@ Collaborative level editing relay for [AiWorldEd](https://github.com/Henry00IS/A
 A small, fast Bun + TypeScript WebSocket service. It **never holds the world**:
 it only negotiates between the room owner (who has the project on disk) and the
 other users, relays edits through short-lived per-recipient queues, and enforces
-selection locks.
+short-lived edit leases (selection never locks).
 
 Contributors and agents: read [AGENTS.md](AGENTS.md) for the code standards and
 server rules before changing anything.
@@ -41,22 +41,41 @@ accepts them, then they are dropped. Each edit is serialized once and the same
 string is shared by all recipient queues. Consecutive queued edits are sent as one
 `edits` frame ("replicate these N edits").
 
-## Protocol (version 1)
+## Protocol (version 2)
 
 Text frames are JSON objects with a `t` type. Every client message is checked against
 a strict schema: unknown types, unknown fields, wrong types, out-of-range values or
 `__proto__` tricks close the connection with `4001`. Binary frames are only used for
 stream chunks and presence. An optional `r` (int 0..2^31-1) on requests is echoed back in replies and errors.
+Version 1 (selection locks) is no longer served; see [Protocol evolution](#protocol-evolution).
 
 ### Handshake
 
 The first frame must be `hello` within 5 s:
 
 ```json
-{ "t": "hello", "protocol": "aiworlded-collab", "version": 1, "client": "AiWorldEd/0.1", "name": "Henry" }
+{
+  "t": "hello",
+  "protocol": "aiworlded-collab",
+  "version": 2,
+  "minVersion": 2,
+  "client": "AiWorldEd/0.1",
+  "name": "Henry",
+  "caps": ["select"],
+  "x": {}
+}
 ```
 
-Reply: `{"t":"welcome","protocol":"aiworlded-collab","version":1,"user":7,"name":"Henry","via":"proxy","limits":{...}}`.
+`version` is the newest protocol version the editor speaks, `minVersion` (default `version`) the oldest.
+`client` is the editor build (printable ASCII, ≤64); the relay records it on rooms the editor creates.
+`caps` lists optional features the editor supports; `x` is an extension object (see Protocol evolution).
+
+Reply: `{"t":"welcome","protocol":"aiworlded-collab","version":2,"versions":{"min":2,"max":2},"caps":["select"],"user":7,"name":"Henry","via":"proxy","limits":{...}}`.
+`version` is the negotiated version (the newest both sides speak), `versions` the relay's range and
+`caps` the agreed capabilities (the editor's list intersected with the relay's; unknown ones are ignored).
+Without a common version the relay sends
+`error {code:'protocol_unsupported', versions:{min,max}, message}` and closes with `4008`; `message` says
+whether the editor or the server needs an update.
 Display names are at most 12 characters (trimmed, no control characters). A longer hello name is
 cut to 12; a missing or invalid one becomes `User N` (`N` = user id modulo 10^7).
 `via` is `proxy` when the request carried the correct `X-Forwarded-Secret`, otherwise `direct`.
@@ -64,32 +83,34 @@ cut to 12; a missing or invalid one becomes `User N` (`N` = user id modulo 10^7)
 message, ops per edit, messages per second, rooms per IP, room entries per IP per minute, users per room, locks per user, presence
 rate, `roomListMaximum`, `roomListPushIntervalMs`, and the chat limits `chatIntervalMs`, `chatTextLength`
 and `chatTextLines`).
-Every relay supports the live room list (`room.subscribe`); there is no feature negotiation.
+Every relay supports the live room list (`room.subscribe`). Optional features added later are capability flags.
 
 ### Client → server
 
-| Type                | Fields                                                                                                   | Notes                                                                                                                                                                                                                                   |
-| ------------------- | -------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `ping`              |                                                                                                          | → `pong`                                                                                                                                                                                                                                |
-| `room.list`         |                                                                                                          | → `room.list {rooms:[{id,name,private,users,maxUsers,owner}]}`. `owner` is the owner's display name. Private rooms are flagged and reveal nothing else.                                                                                 |
-| `room.subscribe`    |                                                                                                          | → `room.subscribed {rooms, intervalMs}` (full list), then `room.list.update` pushes until unsubscribed or disconnected. Error `subscription_limit` when the relay has too many subscribers.                                             |
-| `room.unsubscribe`  |                                                                                                          | → `room.unsubscribed`. Not an error without a subscription.                                                                                                                                                                             |
-| `room.create`       | `name`, `private`, `password?`, `maxUsers?` (clamped to 32, default 16), `internalTest?`, `displayName?` | → `room.created {room, you, name, color}`. Creator becomes owner. One room per connection.                                                                                                                                              |
-| `room.join`         | `room`, `discardLocalWork: true`, `password?`, `displayName?`                                            | → `room.joined {room, you, name, color, owner, members, locks}` (`name` is the joiner's final, unique name); members are `{user, name, owner, color}`. `discardLocalWork` must be literally `true`: joining always discards local work. |
-| `room.leave`        |                                                                                                          | → `room.left`. If the owner leaves, the room closes.                                                                                                                                                                                    |
-| `name.set`          | `name`                                                                                                   | Outside a room → `name.changed {name}`. Inside a room → error `name_locked`: a member's name is fixed until it leaves.                                                                                                                  |
-| `chat`              | `text` (≤8192 UTF-16 units on the wire)                                                                  | Room members only. → `chat.sent {id, from, name, color, text, at}`; others get `chat` with the same fields. See Chat.                                                                                                                   |
-| `lock.acquire`      | `ids[]`, `replace?`, `shared?[]`                                                                         | All-or-nothing. → `lock.result {ok:true, add, remove}` or `{ok:false, code:'lock_conflict', conflicts:[{id,by}]}` / `lock_limit`. `replace:true` atomically swaps the whole selection (releases held ids not in `ids`).                 |
-| `verify.result`     | `q`, `v: ok\|invalid\|deleted`                                                                           | Owner only: answer to a relay `verify` query (see Owner verification). Does not count against the owner's rate limits.                                                                                                                  |
-| `lock.release`      | `ids?`                                                                                                   | Omit `ids` to release everything.                                                                                                                                                                                                       |
-| `edit`              | `seq`, `ops:[{k, ids, d?}]`                                                                              | See edit rules. Rejection: `edit.rejected {seq, reason, ids}`; no ack on success.                                                                                                                                                       |
-| `asset.request`     | `name`                                                                                                   | Member asks the owner for an asset (relayed as `asset.request {from, name}`).                                                                                                                                                           |
-| `asset.missing`     | `to`, `name`                                                                                             | Owner answers that an asset does not exist.                                                                                                                                                                                             |
-| `stream.begin`      | `to`, `stream`, `kind: snapshot\|asset`, `size`, `name?`, `mime?`                                        | Owner only. `name` is required for assets.                                                                                                                                                                                              |
-| _(binary chunk)_    | see below                                                                                                | Owner only.                                                                                                                                                                                                                             |
-| _(binary presence)_ | see below                                                                                                | Synced members only. Low priority, latest-only.                                                                                                                                                                                         |
-| `stream.end`        | `to`, `stream`                                                                                           | Must follow exactly `size` bytes.                                                                                                                                                                                                       |
-| `stream.abort`      | `to`, `stream`, `reason?`                                                                                |                                                                                                                                                                                                                                         |
+| Type                | Fields                                                                                                   | Notes                                                                                                                                                                                                                                                                                                                                   |
+| ------------------- | -------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ping`              |                                                                                                          | → `pong`                                                                                                                                                                                                                                                                                                                                |
+| `room.list`         |                                                                                                          | → `room.list {rooms:[{id,name,private,users,maxUsers,owner,protocol,editor}]}`. `owner` is the owner's display name; `protocol` and `editor` are the version and editor build the room was created with.                                                                                                                                |
+| `room.subscribe`    |                                                                                                          | → `room.subscribed {rooms, intervalMs}` (full list), then `room.list.update` pushes until unsubscribed or disconnected. Error `subscription_limit` when the relay has too many subscribers.                                                                                                                                             |
+| `room.unsubscribe`  |                                                                                                          | → `room.unsubscribed`. Not an error without a subscription.                                                                                                                                                                                                                                                                             |
+| `room.create`       | `name`, `private`, `password?`, `maxUsers?` (clamped to 32, default 16), `internalTest?`, `displayName?` | → `room.created {room, you, name, color}`. Creator becomes owner. One room per connection.                                                                                                                                                                                                                                              |
+| `room.join`         | `room`, `discardLocalWork: true`, `password?`, `displayName?`                                            | → `room.joined {room, you, name, color, owner, members, locks}` (`name` is the joiner's final, unique name); members are `{user, name, owner, color}`. `discardLocalWork` must be literally `true`: joining always discards local work. A room of another protocol version → `protocol_mismatch {roomProtocol, yourProtocol, message}`. |
+| `room.leave`        |                                                                                                          | → `room.left`. If the owner leaves, the room closes.                                                                                                                                                                                                                                                                                    |
+| `name.set`          | `name`                                                                                                   | Outside a room → `name.changed {name}`. Inside a room → error `name_locked`: a member's name is fixed until it leaves.                                                                                                                                                                                                                  |
+| `chat`              | `text` (≤8192 UTF-16 units on the wire)                                                                  | Room members only. → `chat.sent {id, from, name, color, text, at}`; others get `chat` with the same fields. See Chat.                                                                                                                                                                                                                   |
+| `select`            | `ids[]` (≤256, may be empty)                                                                             | Never locks. Relayed as `selected {by, ids}` to members with the `select` capability. 10/s (burst 20) per member; floods are dropped.                                                                                                                                                                                                   |
+| `lock.acquire`      | `lease`, `ids[]`, `replace?`, `shared?[]`                                                                | Starts (or extends) the member's one edit operation. All-or-nothing. → `lock.result {ok:true, add, remove}` or `{ok:false, code}` with `lock_conflict {conflicts:[{id,by,shared?}]}`, `lock_limit`, `lock_unverified {why}`, `lease_busy`, `lease_stale`, `rate_limited`, `throttled`. See Edit leases.                                 |
+| `verify.result`     | `q`, `v: ok\|invalid\|deleted`                                                                           | Owner only: answer to a relay `verify` query (see Owner verification). Does not count against the owner's rate limits.                                                                                                                                                                                                                  |
+| `lock.release`      | `ids?`                                                                                                   | Omit `ids` to end the operation; the lease ends once nothing is held.                                                                                                                                                                                                                                                                   |
+| `lock.renew`        | `lease` (no `r`)                                                                                         | Keepalive of the running lease while input is active. 4/s (burst 8); more counts as misuse. No reply.                                                                                                                                                                                                                                   |
+| `edit`              | `seq`, `lease?`, `ops:[{k, ids, d?, p?}]`                                                                | See Edit leases. Accepted edits come back in the sender's own `edits` stream as `{from:you, seq}` (the ack); rejection: `edit.rejected {seq, reason, ids}`.                                                                                                                                                                             |
+| `asset.request`     | `name`                                                                                                   | Member asks the owner for an asset (relayed as `asset.request {from, name}`).                                                                                                                                                                                                                                                           |
+| `asset.missing`     | `to`, `name`                                                                                             | Owner answers that an asset does not exist.                                                                                                                                                                                                                                                                                             |
+| `stream.begin`      | `to`, `stream`, `kind: snapshot\|asset`, `size`, `name?`, `mime?`                                        | Owner only. `name` is required for assets.                                                                                                                                                                                                                                                                                              |
+| _(binary chunk)_    | see below                                                                                                | Owner only.                                                                                                                                                                                                                                                                                                                             |
+| _(binary presence)_ | see below                                                                                                | Synced members only. Low priority, latest-only.                                                                                                                                                                                                                                                                                         |
+| `stream.end`        | `to`, `stream`                                                                                           | Must follow exactly `size` bytes.                                                                                                                                                                                                                                                                                                       |
+| `stream.abort`      | `to`, `stream`, `reason?`                                                                                |                                                                                                                                                                                                                                                                                                                                         |
 
 Object ids: 1–64 chars of `[A-Za-z0-9_.:-]`, max 4096 per message. Room ids: 16 chars base64url.
 Edit kinds: `transform`, `geometry`, `property`, `texture`, `reparent`, `delete`, `create`;
@@ -97,24 +118,25 @@ max 256 ops per edit; `d` is opaque JSON (max depth 32, max 200k nodes) relayed 
 
 ### Server → client
 
-| Type                                                                                                                     | Fields                                                         |
-| ------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------- |
-| `welcome`, `pong`, `room.list`, `room.created`, `room.joined`, `room.left {reason}`                                      | replies                                                        |
-| `room.subscribed {rooms, intervalMs}`, `room.unsubscribed`                                                               | replies to `room.subscribe` / `room.unsubscribe`               |
-| `room.list.update {rooms, removed}`                                                                                      | live list: new or changed entries, removed room ids            |
-| `member.joined {user, name, color}`, `member.left {user}`                                                                | membership                                                     |
-| `chat {id, from, name, color, text, at}`                                                                                 | chat message of another member                                 |
-| `locks {by, add?, remove?}`                                                                                              | lock changes of another user                                   |
-| `lock.result`                                                                                                            | reply to `lock.acquire` / `lock.release`                       |
-| `edits {list:[{from, seq, ops}]}`                                                                                        | relayed edits, in order per sender                             |
-| `edit.rejected {seq, reason, ids, why?}`                                                                                 | `not_locked`, `lock_conflict`, `lock_limit`, `lock_unverified` |
-| `verify {q, ids, anc}`                                                                                                   | owner only: confirm a member's claim, answer `verify.result`   |
-| `snapshot.request {for}`                                                                                                 | owner only: send the world to user `for`                       |
-| `stream.begin {from, stream, kind, size, name?, mime?}`, binary chunks, `stream.end {from, stream}`, `stream.abort {from | to, stream, reason}`                                           | streams |
-| `stream.credit {to, stream, delivered}`                                                                                  | owner only: bytes of a stream handed to the recipient          |
-| `asset.request {from, name}` (owner), `asset.missing {from, name}`                                                       | assets                                                         |
-| `room.closed {reason:'owner_left', offline:true, message}`                                                               | the owner left: you are now offline, save locally              |
-| `error {code, r?, ...}`                                                                                                  | see error codes                                                |
+| Type                                                                                                                     | Fields                                                                                                                               |
+| ------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `welcome`, `pong`, `room.list`, `room.created`, `room.joined`, `room.left {reason}`                                      | replies                                                                                                                              |
+| `room.subscribed {rooms, intervalMs}`, `room.unsubscribed`                                                               | replies to `room.subscribe` / `room.unsubscribe`                                                                                     |
+| `room.list.update {rooms, removed}`                                                                                      | live list: new or changed entries, removed room ids                                                                                  |
+| `member.joined {user, name, color}`, `member.left {user}`                                                                | membership                                                                                                                           |
+| `chat {id, from, name, color, text, at}`                                                                                 | chat message of another member                                                                                                       |
+| `locks {by, add?, remove?, expired?}`                                                                                    | lock changes of another user; `expired:true` (sent to the holder too) when a lease timed out: revert previews to the committed state |
+| `selected {by, ids}`                                                                                                     | selection of another member (`select` capability only)                                                                               |
+| `lock.result`                                                                                                            | reply to `lock.acquire` / `lock.release`                                                                                             |
+| `edits {list:[{from, seq, ops}]}`                                                                                        | relayed edits in relay order; own edits are acked as `{from:you, seq}` without ops                                                   |
+| `edit.rejected {seq, reason, ids, why?}`                                                                                 | `lock_conflict`, `lock_limit`, `lock_unverified`, `outside_lease`, `lease_stale`, `rate_limited`, `throttled`                        |
+| `verify {q, ids, anc}`                                                                                                   | owner only: confirm a member's claim, answer `verify.result`                                                                         |
+| `snapshot.request {for}`                                                                                                 | owner only: send the world to user `for`                                                                                             |
+| `stream.begin {from, stream, kind, size, name?, mime?}`, binary chunks, `stream.end {from, stream}`, `stream.abort {from | to, stream, reason}`                                                                                                                 | streams |
+| `stream.credit {to, stream, delivered}`                                                                                  | owner only: bytes of a stream handed to the recipient                                                                                |
+| `asset.request {from, name}` (owner), `asset.missing {from, name}`                                                       | assets                                                                                                                               |
+| `room.closed {reason:'owner_left', offline:true, message}`                                                               | the owner left: you are now offline, save locally                                                                                    |
+| `error {code, r?, ...}`                                                                                                  | see error codes                                                                                                                      |
 
 `displayName` on create and join replaces the hello name for this room; an invalid one is rejected with
 `invalid_name {reason, field: "displayName"}`. `color` is a color slot: the lowest slot no current member
@@ -124,7 +146,8 @@ Error codes: `not_in_room`, `not_synced`, `not_owner`, `already_in_room`, `busy`
 `password_required`, `password_not_allowed`, `weak_password {issues}`, `wrong_password`,
 `too_many_attempts`, `room_not_found`, `room_full`, `room_limit_ip`, `room_limit_server`,
 `internal_test_forbidden`, `stream_invalid {detail}`, `name_locked`, `invalid_chat {reason}`
-(`empty`, `too_long`, `too_many_lines`), `chat_rate_limited {retryAfterMs}`.
+(`empty`, `too_long`, `too_many_lines`), `chat_rate_limited {retryAfterMs}`,
+`protocol_unsupported {versions, message}`, `protocol_mismatch {roomProtocol, yourProtocol, message}`.
 
 Display names are unique per room: a joiner whose name (compared NFKC-normalized and case-insensitively)
 is already used gets the lowest free number appended (`Henry`, `Henry2`, `Henry3`, ...), shortening the
@@ -150,7 +173,9 @@ recipient falls further behind, its oldest waiting message is dropped. Clients m
 plain text only (no HTML, markdown or links).
 
 Close codes: `4001` protocol violation, `4002` rate limited, `4003` handshake timeout,
-`4004` slow consumer (outbound queue overflow), `4005` reserved, `4006` shutting down.
+`4004` slow consumer (outbound queue overflow), `4005` reserved, `4006` shutting down,
+`4007` abuse (repeated protocol misuse; the address may not enter rooms for 60 s),
+`4008` protocol unsupported (no common version; preceded by `error protocol_unsupported`).
 Connection-limit rejections happen at the upgrade as HTTP 429 (403 for Origin/secret).
 `1009` is used by Bun for frames above the payload limit.
 
@@ -217,28 +242,58 @@ streams per recipient. Snapshot ≤ 256 MiB, asset ≤ 64 MiB.
 Assets (textures etc.) are then fetched on demand: member `asset.request` → owner streams
 `kind:'asset'` (or `asset.missing`). The owner may also push assets unasked.
 
-### Locks and edit rules
+### Selection, edit leases and edit rules
 
-- A lock is exclusive per object id; `lock.acquire` is atomic (all or nothing) and the rejection
-  lists the conflicting ids and their holders. Deselecting = `lock.release` (or `lock.acquire` with `replace`).
-- All locks of a user are released on leave/disconnect and broadcast as `locks {by, remove}`.
-- `transform`, `geometry`, `property`, `texture`, `reparent`, `delete` require the sender to hold
-  every id in the op (for `reparent`: the moved ids; include descendants for `delete`).
-- `create` requires that nobody else holds the new ids; afterwards the creator holds them.
-- Ids created earlier in the same `edit` count as held. Each `edit` is validated as a whole.
-- After a relayed `delete` the deleted ids' locks are released.
-- The owner follows the same lock rules.
+Modelled on Google Sheets: anybody may select anything, and only a running edit holds a lock.
+
+- **Selection never locks.** `select {ids}` is presence only; other members draw it as a coloured
+  outline with the member's name. A lease holder is drawn distinctly.
+- **One operation per member.** A drag, gizmo, tool or Edit Mode drag sends `lock.acquire {lease, ids,
+shared}` when it starts and `lock.release` when it commits or is cancelled. `lease` is a number the
+  member picks, growing per connection. Sending the running lease number again extends the operation
+  (more objects); a higher number while one runs is refused with `lease_busy` unless `replace:true`
+  ends the old operation in the same step; a number not above the last one is `lease_stale`.
+  A lease covers at most `idsPerMessage` (4096) ids per request and `locksPerUser` in total.
+- **Leases expire.** The relay sweeps every 500 ms. A lease ends 5 s after the last `lock.renew` or
+  accepted edit, 60 s after the last accepted edit even when renewed (renewals only bridge a held
+  mouse or key), and after 600 s in total. Expiry broadcasts `locks {by, remove, expired:true}` to
+  the whole room, the holder included: everybody reverts that member's previews to the committed state.
+- **Edits inside a lease.** While a member runs an operation every `edit` must carry its `lease`
+  and touch only ids it holds (ids created earlier in the same edit and objects it creates count);
+  anything else is `outside_lease`. A `lease` that is not the running one is `lease_stale`.
+- **One-shot edits need no lock.** Without a running operation, `transform`, `geometry`, `property`,
+  `texture`, `reparent` and `delete` ops are id-addressed and last-writer-wins in relay order. They
+  are refused (`lock_conflict`) only when another member's lease covers a target exclusively
+  ("Bob is dragging this"); a `delete` is also refused when a target is shared by another lease
+  (somebody edits inside it). `create` requires that nobody else holds the new ids.
+- Each `edit` is validated as a whole. Objects created during an operation join its lease; deleted
+  ids leave the sender's locks while the lease stays. The owner follows the same rules.
+- Accepted edits are acked in the sender's own `edits` stream as `{from:you, seq}`, so the editor
+  knows its relay order. All locks of a member are released on leave or disconnect.
+
+### Abuse detection
+
+Honest use never trips this: races between members are answered with refusals that score nothing.
+Protocol misuse scores points per member that decay by 1 per second: `lease_busy`, a `lease_stale`
+lease number that was never issued, `outside_lease`, more than 10 new leases/s (burst 20), more than
+4 renewals/s (burst 8) and edit floods each score 1. At 20 points the member is throttled (lease
+requests and edits answer `throttled`) and flagged; at 60 it is closed with `4007`, flagged for the
+kick feature and its address (IPv6 per /64) may not enter rooms for 60 s. A new connection from the
+same address starts with up to half the throttle score of the last one, so reconnect loops gain
+nothing. One-shot edits are limited to 20/s (burst 60) per member and 200/s (burst 400) per room,
+live previews to 60/s (burst 120), and created plus deleted ids to 10 000/s (burst 250 000), so a
+giant paste or delete passes as one op but cannot repeat endlessly. Only monotonic clocks are used.
 
 ### Hierarchical (shared) locks
 
-The relay does not know the scene hierarchy, so the editor sends it: a selection locks every
-selected object with its whole subtree exclusively (`ids`) and the ancestors of each selected
+The relay does not know the scene hierarchy, so the editor sends it: an operation leases every
+edited object with its whole subtree exclusively (`ids`) and the ancestors of each edited
 object as `shared`. Several members may share an id (siblings stay editable side by side), but
 an exclusive request is refused while another member shares the id (conflict entry
 `{id, by, shared:true}`, meaning `by` edits something inside it) and a shared request is refused
-while another member holds the id exclusively. `replace:true` replaces both kinds; release, leave
-and disconnect free both; both count against the lock limits. `locks` broadcasts and `room.joined`
-list exclusive locks only.
+while another member holds the id exclusively. `replace:true` replaces both kinds; release, leave,
+expiry and disconnect free both; both count against the lock limits. `locks` broadcasts and
+`room.joined` list exclusive locks only.
 
 `create` and `reparent` ops may carry `p`, the new parent chain (parent first). The edit is
 rejected with `lock_conflict` when another member holds any of those ids exclusively (ids created
@@ -279,6 +334,38 @@ When the owner disconnects or leaves, every member gets
 warn the user that they are offline and should save locally. Re-joining any room requires
 `discardLocalWork:true`, i.e. the client must discard the local project first (it is an online project).
 
+## Protocol evolution
+
+The protocol has to stay stable for years across many editor builds, so changes follow these rules
+(`src/shared/protocol_versioning.ts`, `src/shared/protocol_golden_vectors.ts`):
+
+- **Versions.** `version` is a 16-bit integer. The editor sends its range (`minVersion`..`version`),
+  the relay picks the newest common version or refuses with `protocol_unsupported` + `4008`. Rooms
+  record the version and editor build they were created with and only members that negotiated the
+  same version may join, so a relay can later host rooms of several versions side by side.
+- **Capabilities first.** Optional additions get a capability flag (lowercase, `[a-z0-9.-]`, ≤32
+  chars, ≤32 flags) instead of a version bump. The relay only sends capability-gated messages and
+  fields to members that announced the flag; unknown flags are ignored. Bump the version only for
+  changes an old peer cannot ignore (changed meaning, removed messages, new required fields).
+- **Strict schemas, one escape hatch.** Every client message is a closed schema; unknown fields close
+  the connection. The only place unknown keys are accepted is an extension object `x` (on `hello` and
+  `room.create`; ≤16 keys, depth 4, 256 nodes), and receivers ignore keys they do not know.
+- **Message types are an enum.** An unknown client message type is a protocol violation (`4001`).
+  Clients must ignore unknown server message types and unknown fields in server messages; the relay
+  only sends new ones behind a version or capability, so this never hides an error.
+- **Fixed widths.** Versions 16-bit, user ids and stream ids 32-bit unsigned, request ids 31-bit,
+  `seq` and lease numbers up to 2^53-1, object ids 1–64 chars of `[A-Za-z0-9_.:-]`, room ids 16 chars.
+  Integers are integers on the wire (no floats where an int suffices); binary frames are big endian.
+- **Generic field ops.** Field-level edits are path + value (`d.f`), so new object fields need no
+  protocol change.
+- **Deprecation.** A version is deprecated by announcing it in this README and the editor release
+  notes at least one editor release before the relay stops accepting it; the relay keeps accepting a
+  deprecated version for at least 90 days. Removing a version raises `PROTOCOL_VERSION_MINIMUM`, and
+  old editors get `protocol_unsupported` with an update message instead of a silent failure.
+- **Golden vectors.** Every version has recorded client frames (with the verdict they must get),
+  server frames and binary frames. Relay and editor replay them in CI. Vectors of a released
+  version are frozen: never edit or remove one, only add.
+
 ## Passwords
 
 - Policy (`src/shared/password_policy.ts`, shared with the client): 8–128 chars, at least one
@@ -313,8 +400,12 @@ warn the user that they are offline and should save locally. Re-joining any room
 | Presence         | 10 frames/s per member (burst 20), latest-only per sender per recipient, 116 bytes max                |
 | Chat             | 1 message per 5 s per session, 2000 code points, 20 lines, 64 waiting per recipient, no history       |
 | Owner verify     | 5 s timeout, 10/s (burst 20) per member, 50/s (burst 100) per room, 64 msgs / 4 MiB held per member   |
+| Edit leases      | 1 running per member, 5 s without renew/progress, 60 s idle, 600 s total; 10 new/s, 4 renews/s        |
+| Edits            | one-shot 20/s per member, 200/s per room; live 60/s; created + deleted ids 10 000/s (burst 250 000)   |
+| Selection        | 256 ids, 10/s (burst 20) per member, excess dropped                                                   |
+| Abuse score      | decays 1/s; throttle at 20, close 4007 at 60 + 60 s room cooldown per address                         |
 
-Other measures: versioned hello handshake; strict schemas; only allowed `Origin`s
+Other measures: versioned hello handshake with capability negotiation; strict schemas; only allowed `Origin`s
 (`https://henry00is.github.io`, `http://localhost:*`, `http://127.0.0.1:*`, `http://[::1]:*`,
 `views://main_ui`; override with `ALLOWED_ORIGINS`); only `/ws` upgrades; no compression
 (no zip bombs, low CPU); only the owner can stream and only to members of its room; a joiner
@@ -377,17 +468,27 @@ subscribers, even when `INTERNAL_TEST_ROOMS_VIA_PROXY` is set.
 ## Client integration checklist (AiWorldEd)
 
 - Copy or import `src/shared/*` (protocol constants/types, binary frames, presence frames, password policy + generator, name rules).
-- Connect to `wss://aiworlded.00labs.net/ws` (Origin must be allowed), send `hello`, read `welcome.limits`.
+- Connect to `wss://aiworlded.00labs.net/ws` (Origin must be allowed), send `hello {version, minVersion, client, caps}`,
+  read `welcome.version`, `welcome.caps` and `welcome.limits`; show `protocol_unsupported.message` and stop reconnecting on `4008`.
+- Room browser: show each room's `protocol` and `editor`; grey out rooms of another protocol version and show
+  `protocol_mismatch.message` if a join is refused.
 - Room browser: `room.subscribe` while open (`room.list` for a one-off read); create dialog with name (≤128) and private toggle; prefill the password with
   `passwordGenerate()` and show `passwordPolicyEvaluate()` issues live.
 - Joining: confirm "discard local work", send `room.join {discardLocalWork:true}`, load the snapshot
   stream, buffer `edits` until snapshot `stream.end`, then apply them.
 - Owner: answer `snapshot.request` (serialize + `stream.begin` synchronously), stream chunks respecting
   `stream.credit`; answer `asset.request` with an asset stream or `asset.missing`.
-- Selection → `lock.acquire {replace:true}`; on `lock_conflict` show who holds what; deselect → `lock.release`.
-  Render `locks` events as remote selections.
+- Selection → `select {ids}` (debounced); render `selected` as coloured outlines with names and `locks`
+  holders distinctly. Selecting never locks.
+- Operation start (drag, gizmo, tool, Edit Mode drag) → `lock.acquire {lease, ids, shared, replace:true}`;
+  `lock.renew` every 1.5 s while input is active; commit or cancel → `lock.release`. On a refusal or
+  `locks {expired:true}` for yourself, cancel the tool cleanly (revert the preview, keep the selection) and
+  name the holder. One operation at a time.
+- One-shot edits (typed values, delete, reparent) go without a lease; `lock_conflict` means somebody is
+  dragging that object.
 - Owner: answer every `verify` with `verify.result` from the live scene. Members: on `lock_unverified` retry
   briefly, then tell the user the owner did not confirm.
 - Send edits batched per frame/operation with increasing `seq`; handle `edit.rejected` by reverting locally.
 - On `room.closed {offline:true}` show the offline warning and offer "save locally".
-- Handle close codes (4002 back off, 4004 reconnect & rejoin, 4006 server restart).
+- Handle close codes (4002 back off, 4004 reconnect & rejoin, 4006 server restart, 4007 do not reconnect for
+  60 s, 4008 update needed).
