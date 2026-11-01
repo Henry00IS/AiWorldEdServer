@@ -1,5 +1,6 @@
 /** Closed schemas for every client message of protocol version 1. */
 import { EDIT_KINDS, PROTOCOL_ID, STREAM_KINDS, type ClientMessageType } from '../shared/protocol_definitions.ts';
+import { CHAT_TEXT_WIRE_MAXIMUM } from '../shared/chat_text_policy.ts';
 import type { Schema } from './schema_validator.ts';
 
 /** Absolute protocol caps (configuration may be stricter, never looser). */
@@ -87,6 +88,8 @@ export const CLIENT_MESSAGE_SCHEMAS: Readonly<Record<ClientMessageType, Schema>>
     { password: { type: 'string', min: 1, max: PROTOCOL_CAPS.passwordInputMaximum }, displayName: SCHEMA_DISPLAY_NAME },
   ),
   'room.leave': messageSchema('room.leave'),
+  'name.set': messageSchema('name.set', { name: SCHEMA_DISPLAY_NAME }),
+  chat: messageSchema('chat', { text: { type: 'string', min: 1, max: CHAT_TEXT_WIRE_MAXIMUM } }),
   'lock.acquire': messageSchema(
     'lock.acquire',
     { ids: SCHEMA_OBJECT_IDS },

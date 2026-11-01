@@ -62,30 +62,33 @@ cut to 12; a missing or invalid one becomes `User N` (`N` = user id modulo 10^7)
 `via` is `proxy` when the request carried the correct `X-Forwarded-Secret`, otherwise `direct`.
 `limits` reports the effective limits (payload, chunk, window, snapshot/asset sizes, ids per
 message, ops per edit, messages per second, rooms per IP, room entries per IP per minute, users per room, locks per user, presence
-rate, `roomListMaximum` and `roomListPushIntervalMs`).
+rate, `roomListMaximum`, `roomListPushIntervalMs`, and the chat limits `chatIntervalMs`, `chatTextLength`
+and `chatTextLines`).
 Every relay supports the live room list (`room.subscribe`); there is no feature negotiation.
 
 ### Client → server
 
-| Type                | Fields                                                                                                   | Notes                                                                                                                                                                                                                   |
-| ------------------- | -------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `ping`              |                                                                                                          | → `pong`                                                                                                                                                                                                                |
-| `room.list`         |                                                                                                          | → `room.list {rooms:[{id,name,private,users,maxUsers,owner}]}`. `owner` is the owner's display name. Private rooms are flagged and reveal nothing else.                                                                 |
-| `room.subscribe`    |                                                                                                          | → `room.subscribed {rooms, intervalMs}` (full list), then `room.list.update` pushes until unsubscribed or disconnected. Error `subscription_limit` when the relay has too many subscribers.                             |
-| `room.unsubscribe`  |                                                                                                          | → `room.unsubscribed`. Not an error without a subscription.                                                                                                                                                             |
-| `room.create`       | `name`, `private`, `password?`, `maxUsers?` (clamped to 32, default 16), `internalTest?`, `displayName?` | → `room.created {room, you, name, color}`. Creator becomes owner. One room per connection.                                                                                                                              |
-| `room.join`         | `room`, `discardLocalWork: true`, `password?`, `displayName?`                                            | → `room.joined {room, you, owner, members, locks}`; members are `{user, name, owner, color}`. `discardLocalWork` must be literally `true`: joining always discards local work.                                          |
-| `room.leave`        |                                                                                                          | → `room.left`. If the owner leaves, the room closes.                                                                                                                                                                    |
-| `lock.acquire`      | `ids[]`, `replace?`, `shared?[]`                                                                         | All-or-nothing. → `lock.result {ok:true, add, remove}` or `{ok:false, code:'lock_conflict', conflicts:[{id,by}]}` / `lock_limit`. `replace:true` atomically swaps the whole selection (releases held ids not in `ids`). |
-| `lock.release`      | `ids?`                                                                                                   | Omit `ids` to release everything.                                                                                                                                                                                       |
-| `edit`              | `seq`, `ops:[{k, ids, d?}]`                                                                              | See edit rules. Rejection: `edit.rejected {seq, reason, ids}`; no ack on success.                                                                                                                                       |
-| `asset.request`     | `name`                                                                                                   | Member asks the owner for an asset (relayed as `asset.request {from, name}`).                                                                                                                                           |
-| `asset.missing`     | `to`, `name`                                                                                             | Owner answers that an asset does not exist.                                                                                                                                                                             |
-| `stream.begin`      | `to`, `stream`, `kind: snapshot\|asset`, `size`, `name?`, `mime?`                                        | Owner only. `name` is required for assets.                                                                                                                                                                              |
-| _(binary chunk)_    | see below                                                                                                | Owner only.                                                                                                                                                                                                             |
-| _(binary presence)_ | see below                                                                                                | Synced members only. Low priority, latest-only.                                                                                                                                                                         |
-| `stream.end`        | `to`, `stream`                                                                                           | Must follow exactly `size` bytes.                                                                                                                                                                                       |
-| `stream.abort`      | `to`, `stream`, `reason?`                                                                                |                                                                                                                                                                                                                         |
+| Type                | Fields                                                                                                   | Notes                                                                                                                                                                                                                                   |
+| ------------------- | -------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ping`              |                                                                                                          | → `pong`                                                                                                                                                                                                                                |
+| `room.list`         |                                                                                                          | → `room.list {rooms:[{id,name,private,users,maxUsers,owner}]}`. `owner` is the owner's display name. Private rooms are flagged and reveal nothing else.                                                                                 |
+| `room.subscribe`    |                                                                                                          | → `room.subscribed {rooms, intervalMs}` (full list), then `room.list.update` pushes until unsubscribed or disconnected. Error `subscription_limit` when the relay has too many subscribers.                                             |
+| `room.unsubscribe`  |                                                                                                          | → `room.unsubscribed`. Not an error without a subscription.                                                                                                                                                                             |
+| `room.create`       | `name`, `private`, `password?`, `maxUsers?` (clamped to 32, default 16), `internalTest?`, `displayName?` | → `room.created {room, you, name, color}`. Creator becomes owner. One room per connection.                                                                                                                                              |
+| `room.join`         | `room`, `discardLocalWork: true`, `password?`, `displayName?`                                            | → `room.joined {room, you, name, color, owner, members, locks}` (`name` is the joiner's final, unique name); members are `{user, name, owner, color}`. `discardLocalWork` must be literally `true`: joining always discards local work. |
+| `room.leave`        |                                                                                                          | → `room.left`. If the owner leaves, the room closes.                                                                                                                                                                                    |
+| `name.set`          | `name`                                                                                                   | Outside a room → `name.changed {name}`. Inside a room → error `name_locked`: a member's name is fixed until it leaves.                                                                                                                  |
+| `chat`              | `text` (≤8192 UTF-16 units on the wire)                                                                  | Room members only. → `chat.sent {id, from, name, color, text, at}`; others get `chat` with the same fields. See Chat.                                                                                                                   |
+| `lock.acquire`      | `ids[]`, `replace?`, `shared?[]`                                                                         | All-or-nothing. → `lock.result {ok:true, add, remove}` or `{ok:false, code:'lock_conflict', conflicts:[{id,by}]}` / `lock_limit`. `replace:true` atomically swaps the whole selection (releases held ids not in `ids`).                 |
+| `lock.release`      | `ids?`                                                                                                   | Omit `ids` to release everything.                                                                                                                                                                                                       |
+| `edit`              | `seq`, `ops:[{k, ids, d?}]`                                                                              | See edit rules. Rejection: `edit.rejected {seq, reason, ids}`; no ack on success.                                                                                                                                                       |
+| `asset.request`     | `name`                                                                                                   | Member asks the owner for an asset (relayed as `asset.request {from, name}`).                                                                                                                                                           |
+| `asset.missing`     | `to`, `name`                                                                                             | Owner answers that an asset does not exist.                                                                                                                                                                                             |
+| `stream.begin`      | `to`, `stream`, `kind: snapshot\|asset`, `size`, `name?`, `mime?`                                        | Owner only. `name` is required for assets.                                                                                                                                                                                              |
+| _(binary chunk)_    | see below                                                                                                | Owner only.                                                                                                                                                                                                                             |
+| _(binary presence)_ | see below                                                                                                | Synced members only. Low priority, latest-only.                                                                                                                                                                                         |
+| `stream.end`        | `to`, `stream`                                                                                           | Must follow exactly `size` bytes.                                                                                                                                                                                                       |
+| `stream.abort`      | `to`, `stream`, `reason?`                                                                                |                                                                                                                                                                                                                                         |
 
 Object ids: 1–64 chars of `[A-Za-z0-9_.:-]`, max 4096 per message. Room ids: 16 chars base64url.
 Edit kinds: `transform`, `geometry`, `property`, `texture`, `reparent`, `delete`, `create`;
@@ -99,6 +102,7 @@ max 256 ops per edit; `d` is opaque JSON (max depth 32, max 200k nodes) relayed 
 | `room.subscribed {rooms, intervalMs}`, `room.unsubscribed`                                                               | replies to `room.subscribe` / `room.unsubscribe`      |
 | `room.list.update {rooms, removed}`                                                                                      | live list: new or changed entries, removed room ids   |
 | `member.joined {user, name, color}`, `member.left {user}`                                                                | membership                                            |
+| `chat {id, from, name, color, text, at}`                                                                                 | chat message of another member                        |
 | `locks {by, add?, remove?}`                                                                                              | lock changes of another user                          |
 | `lock.result`                                                                                                            | reply to `lock.acquire` / `lock.release`              |
 | `edits {list:[{from, seq, ops}]}`                                                                                        | relayed edits, in order per sender                    |
@@ -117,7 +121,31 @@ of the room holds (owner 0), freed when the member leaves. Clients map slots to 
 Error codes: `not_in_room`, `not_synced`, `not_owner`, `already_in_room`, `busy`, `invalid_name`,
 `password_required`, `password_not_allowed`, `weak_password {issues}`, `wrong_password`,
 `too_many_attempts`, `room_not_found`, `room_full`, `room_limit_ip`, `room_limit_server`,
-`internal_test_forbidden`, `stream_invalid {detail}`.
+`internal_test_forbidden`, `stream_invalid {detail}`, `name_locked`, `invalid_chat {reason}`
+(`empty`, `too_long`, `too_many_lines`), `chat_rate_limited {retryAfterMs}`.
+
+Display names are unique per room: a joiner whose name (compared NFKC-normalized and case-insensitively)
+is already used gets the lowest free number appended (`Henry`, `Henry2`, `Henry3`, ...), shortening the
+name so it stays within 12 characters. The final name comes back in `room.joined.name` and is used in
+`member.joined`, member lists and chat. It stays fixed until the member leaves.
+
+### Chat
+
+`chat {text}` sends one message to the room. The relay normalizes the text with `chatTextNormalize`
+(`src/shared/chat_text_policy.ts`, shared with the client): NFC, `\r\n`/`\r`/U+2028/U+2029 become `\n`,
+control characters other than `\n`, bidi and other format characters (zero width spaces, overrides,
+isolates, tags), private-use and lone surrogate code points and blank-looking fillers are removed, a zero
+width joiner survives only between emoji, combining marks are capped at 4 per character, tabs become
+spaces, trailing spaces and runs of blank lines are trimmed. The result must be non-empty, at most
+`chatTextLength` (2000) code points and at most `chatTextLines` (20) lines, else `invalid_chat {reason}`.
+Each session may send one message per `chatIntervalMs` (5 s); a faster one gets
+`chat_rate_limited {retryAfterMs}` and does not count. Members get `{id, from, name, color, text, at}`:
+`id` grows per room, `at` is the relay clock (epoch ms). The relay keeps no history: a message reaches
+only the members in the room when it was sent, and leaving drops anything still waiting. Delivery has
+lower priority than edits and streams: each recipient keeps a FIFO of at most `chatPendingPerRecipient`
+(64) messages that drains only while its outbound queue is empty (ahead of presence); when a slow
+recipient falls further behind, its oldest waiting message is dropped. Clients must render chat as
+plain text only (no HTML, markdown or links).
 
 Close codes: `4001` protocol violation, `4002` rate limited, `4003` handshake timeout,
 `4004` slow consumer (outbound queue overflow), `4005` reserved, `4006` shutting down.
@@ -254,6 +282,7 @@ warn the user that they are offline and should save locally. Re-joining any room
 | Room list        | 200 entries                                                                                           |
 | Room list pushes | 1000 subscribers, at most one update per 500 ms per subscriber, low priority                          |
 | Presence         | 10 frames/s per member (burst 20), latest-only per sender per recipient, 116 bytes max                |
+| Chat             | 1 message per 5 s per session, 2000 code points, 20 lines, 64 waiting per recipient, no history       |
 
 Other measures: versioned hello handshake; strict schemas; only allowed `Origin`s
 (`https://henry00is.github.io`, `http://localhost:*`, `http://127.0.0.1:*`, `http://[::1]:*`,

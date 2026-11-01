@@ -1,7 +1,17 @@
 import { describe, expect, test } from 'bun:test';
 import { configurationDefault, configurationFromEnvironment } from '../../../src/config/server_configuration.ts';
+import { CHAT_TEXT_WIRE_MAXIMUM } from '../../../src/shared/chat_text_policy.ts';
 
 describe('server configuration', () => {
+  test('chat allows one 2000 code point, 20 line message per 5 s and 64 waiting per recipient', () => {
+    const defaults = configurationDefault();
+    expect(defaults.chatIntervalMs).toBe(5000);
+    expect(defaults.chatTextLengthMaximum).toBe(2000);
+    expect(defaults.chatTextLinesMaximum).toBe(20);
+    expect(defaults.chatPendingPerRecipient).toBe(64);
+    expect(defaults.chatTextLengthMaximum * 2).toBeLessThanOrEqual(CHAT_TEXT_WIRE_MAXIMUM);
+  });
+
   test('internal test rooms through the proxy are off by default', () => {
     expect(configurationDefault().internalTestRoomsViaProxy).toBe(false);
     expect(configurationFromEnvironment({}).internalTestRoomsViaProxy).toBe(false);

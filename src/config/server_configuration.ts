@@ -2,6 +2,11 @@
  * Server configuration with production defaults, overridable from the
  * environment['']
  */
+import {
+  CHAT_SEND_INTERVAL_MS,
+  CHAT_TEXT_LENGTH_MAXIMUM,
+  CHAT_TEXT_LINES_MAXIMUM,
+} from '../shared/chat_text_policy.ts';
 import { PROTOCOL_WEBSOCKET_PATH } from '../shared/protocol_definitions.ts';
 
 /** Every tunable limit and setting of the relay. */
@@ -50,6 +55,17 @@ export interface ServerConfiguration {
   presencePerSecond: number;
   presenceBurst: number;
   presenceHighWaterBytes: number;
+  /** Minimum time between two chat messages of one session. */
+  chatIntervalMs: number;
+  /** Maximum chat message length in code points (at most the protocol cap). */
+  chatTextLengthMaximum: number;
+  /** Maximum lines per chat message (at most the protocol cap). */
+  chatTextLinesMaximum: number;
+  /**
+   * Chat messages held per recipient while edits and streams go first; the
+   * oldest is dropped when a slow recipient falls further behind.
+   */
+  chatPendingPerRecipient: number;
 }
 
 /**
@@ -107,6 +123,10 @@ const CONFIGURATION_ROOM_LIMITS_DEFAULT = {
   presencePerSecond: 10,
   presenceBurst: 20,
   presenceHighWaterBytes: 64 * 1024,
+  chatIntervalMs: CHAT_SEND_INTERVAL_MS,
+  chatTextLengthMaximum: CHAT_TEXT_LENGTH_MAXIMUM,
+  chatTextLinesMaximum: CHAT_TEXT_LINES_MAXIMUM,
+  chatPendingPerRecipient: 64,
 } satisfies Partial<ServerConfiguration>;
 
 /**

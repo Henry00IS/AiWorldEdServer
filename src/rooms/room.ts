@@ -5,6 +5,7 @@
 import type { ConnectionSession } from '../connection/connection_session.ts';
 import type { RoomListEntry, RoomMemberEntry, StreamKind } from '../shared/protocol_definitions.ts';
 import type { LimiterSharedBudget } from '../network/limiter_shared_budget.ts';
+import { displayNameKey } from '../shared/room_name_policy.ts';
 import { RoomLockTable } from './room_lock_table.ts';
 
 /** One owner-to-member stream that is currently in flight. */
@@ -52,6 +53,8 @@ export class Room {
    * finish syncing.
    */
   readonly presenceLatest = new Map<number, Uint8Array>();
+  /** Id of the last chat message sent in the room (chat itself is not kept). */
+  chatSequence = 0;
   closed = false;
 
   /**
@@ -93,6 +96,17 @@ export class Room {
   memberDelete(user: number): void {
     this.members.delete(user);
     this.colorSlots.delete(user);
+  }
+
+  /**
+   * Lists the comparison keys of the members' display names.
+   *
+   * @returns Keys from {@link displayNameKey}.
+   */
+  memberNameKeys(): Set<string> {
+    const keys = new Set<string>();
+    for (const member of this.members.values()) keys.add(displayNameKey(member.name));
+    return keys;
   }
 
   /**

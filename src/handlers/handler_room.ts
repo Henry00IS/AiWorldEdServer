@@ -5,7 +5,8 @@ import { roomBroadcast, roomBroadcastLocks } from '../rooms/room_broadcast.ts';
 import type { ServerCore } from '../server/server_core.ts';
 import { passwordPolicyEvaluate } from '../shared/password_policy.ts';
 import type { ClientMessage } from '../shared/protocol_definitions.ts';
-import { displayNameNormalize, roomNameNormalize } from '../shared/room_name_policy.ts';
+import { displayNameNormalize, displayNameUnique, roomNameNormalize } from '../shared/room_name_policy.ts';
+import { chatPurge } from './handler_chat.ts';
 import { presencePurge } from './handler_presence.ts';
 
 type RoomCreateMessage = Extract<ClientMessage, { t: 'room.create' }>;
@@ -273,7 +274,8 @@ function displayNameRejection(rawName: string | undefined): { code: string; deta
  */
 function sessionDisplayNameApply(session: ConnectionSession, rawName: string | undefined): void {
   const name = rawName === undefined ? null : displayNameNormalize(rawName);
-  if (name?.ok) session.name = name.name;
+  if (name?.ok) session.nameChosen = name.name;
+  session.name = session.nameChosen;
 }
 
 /**
@@ -322,8 +324,8 @@ async function roomJoinPasswordCheck(
 }
 
 /**
- * Adds a verified joiner, informs everyone and requests a snapshot from the
- * owner.
+ * Adds a verified joiner under a display name no other member uses ("Henry"
+ * becomes "Henry2"), informs everyone and requests a snapshot from the owner.
  *
  * @param core Relay core.
  * @param session Joiner.
@@ -331,6 +333,7 @@ async function roomJoinPasswordCheck(
  * @param requestId Request id to echo.
  */
 function roomMemberAdd(core: ServerCore, session: ConnectionSession, room: Room, requestId: number | undefined): void {
+  session.name = displayNameUnique(session.nameChosen, room.memberNameKeys());
   room.memberAdd(session);
   core.roomListSubscriptions.changed();
   session.room = room;
@@ -350,7 +353,8 @@ function roomMemberAdd(core: ServerCore, session: ConnectionSession, room: Room,
 }
 
 /**
- * Sends the join confirmation with the room, its members and its locks.
+ * Sends the join confirmation with the room, its members and its locks, and the
+ * joiner's final display name and color.
  *
  * @param session Joiner.
  * @param room Joined room.
@@ -362,6 +366,8 @@ function roomJoinedSend(session: ConnectionSession, room: Room, requestId: numbe
     r: requestId,
     room: room.describe(),
     you: session.user,
+    name: session.name,
+    color: room.colorOf(session.user),
     owner: room.owner.user,
     members: room.memberList(),
     locks: room.locks.listAll(),
@@ -456,4 +462,5 @@ function sessionRoomStateReset(session: ConnectionSession): void {
   session.room = null;
   session.synced = false;
   session.awaitingSnapshotBegin = false;
+  chatPurge(session);
 }

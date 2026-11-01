@@ -86,3 +86,41 @@ function nameHasForbiddenCharacters(rawName: string): boolean {
 export function displayNameFallback(user: number): string {
   return `User ${user % 10_000_000}`;
 }
+
+/**
+ * Returns the key two display names are compared by: compatibility normalized
+ * (fullwidth and styled letters fold to plain ones), zero width joiners removed
+ * and lowercased, so "Henry", "HENRY" and "Ｈｅｎｒｙ" collide.
+ *
+ * @param name Normalized display name.
+ * @returns Comparison key.
+ */
+export function displayNameKey(name: string): string {
+  return name
+    .normalize('NFKC')
+    .replace(/\u200D/gu, '')
+    .toLowerCase();
+}
+
+/**
+ * Returns a display name no other member of a room uses: the name itself when
+ * free, else the name with the lowest free number appended ("Henry2", "Henry3",
+ * ...), shortening the name so the result stays within the length limit.
+ *
+ * @param name Normalized display name.
+ * @param taken Comparison keys ({@link displayNameKey}) of the names in use.
+ * @returns A free display name.
+ */
+export function displayNameUnique(name: string, taken: ReadonlySet<string>): string {
+  if (!taken.has(displayNameKey(name))) return name;
+  const characters = Array.from(name);
+  for (let suffix = 2; ; suffix++) {
+    const digits = String(suffix);
+    const base = characters
+      .slice(0, DISPLAY_NAME_LENGTH_MAXIMUM - digits.length)
+      .join('')
+      .replace(/[\s\u200D]+$/u, '');
+    const candidate = `${base}${digits}`;
+    if (!taken.has(displayNameKey(candidate))) return candidate;
+  }
+}

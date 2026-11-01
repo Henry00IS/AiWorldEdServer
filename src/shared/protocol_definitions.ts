@@ -81,6 +81,8 @@ export type ClientMessage =
     }
   | { t: 'room.join'; r?: number; room: string; password?: string; discardLocalWork: true; displayName?: string }
   | { t: 'room.leave'; r?: number }
+  | { t: 'name.set'; r?: number; name: string }
+  | { t: 'chat'; r?: number; text: string }
   | { t: 'lock.acquire'; r?: number; ids: string[]; replace?: boolean; shared?: string[] }
   | { t: 'lock.release'; r?: number; ids?: string[] }
   | { t: 'edit'; seq: number; ops: EditOperation[] }
@@ -149,4 +151,33 @@ export type ErrorCode =
   | 'not_locked'
   | 'stream_invalid'
   | 'subscription_limit'
+  | 'name_locked'
+  | 'invalid_chat'
+  | 'chat_rate_limited'
   | 'busy';
+
+/**
+ * One chat message as members receive it. `id` grows per room, `at` is the
+ * relay clock in epoch milliseconds and `name` and `color` are the sender's
+ * room name and color slot. The relay keeps no chat history: members only get
+ * messages sent while they are in the room.
+ */
+export interface ChatMessageEntry {
+  id: number;
+  from: number;
+  name: string;
+  color: number;
+  text: string;
+  at: number;
+}
+
+/** Pushed to the other room members for every chat message. */
+export interface ChatMessage extends ChatMessageEntry {
+  t: 'chat';
+}
+
+/** Reply to the sender of a chat message: the message as members got it. */
+export interface ChatSentMessage extends ChatMessageEntry {
+  t: 'chat.sent';
+  r?: number;
+}

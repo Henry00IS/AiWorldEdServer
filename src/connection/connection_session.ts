@@ -24,8 +24,18 @@ export interface ConnectionSession {
   readonly presencePending: Map<number, Uint8Array>;
   /** Socket buffer level above which presence waits. */
   readonly presenceHighWaterBytes: number;
+  /**
+   * Serialized chat messages from other members waiting for an idle outbound
+   * queue, oldest first.
+   */
+  readonly chatPending: string[];
+  /** Time of the last accepted chat message (epoch ms). */
+  chatLastAt: number;
   readonly close: (code: number, reason: string) => void;
+  /** Display name in the current room (unique there), else the chosen name. */
   name: string;
+  /** Display name the user chose; a room may add a number to make it unique. */
+  nameChosen: string;
   helloDone: boolean;
   closed: boolean;
   room: Room | null;

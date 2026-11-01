@@ -6,6 +6,8 @@ import type { ServerConfiguration } from '../config/server_configuration.ts';
 import { ConnectionOutboundQueue, type OutboundSocket } from '../connection/connection_outbound_queue.ts';
 import { sessionSend, type ConnectionSession, type ConnectionUpgradeData } from '../connection/connection_session.ts';
 import { handlerEdit } from '../handlers/handler_edit.ts';
+import { chatFlush, handlerChat } from '../handlers/handler_chat.ts';
+import { handlerNameSet } from '../handlers/handler_name.ts';
 import { handlerPresence, presenceFlush } from '../handlers/handler_presence.ts';
 import { handlerLockAcquire, handlerLockRelease } from '../handlers/handler_lock.ts';
 import {
@@ -54,6 +56,7 @@ type ContentMessage = Exclude<
       | 'room.create'
       | 'room.join'
       | 'room.leave'
+      | 'name.set'
       | 'hello';
   }
 >;
@@ -74,7 +77,10 @@ function sessionInitialState(config: ServerConfiguration): SessionInitialState {
     presenceBucket: new LimiterTokenBucket(config.presencePerSecond, config.presenceBurst),
     presencePending: new Map(),
     presenceHighWaterBytes: config.presenceHighWaterBytes,
+    chatPending: [],
+    chatLastAt: Number.NEGATIVE_INFINITY,
     name: '',
+    nameChosen: '',
     helloDone: false,
     closed: false,
     room: null,
@@ -109,6 +115,9 @@ function welcomeLimits(config: ServerConfiguration): object {
     presencePerSecond: config.presencePerSecond,
     roomListMaximum: config.roomListMaximum,
     roomListPushIntervalMs: config.roomListPushIntervalMs,
+    chatIntervalMs: config.chatIntervalMs,
+    chatTextLength: config.chatTextLengthMaximum,
+    chatTextLines: config.chatTextLinesMaximum,
   };
 }
 
@@ -132,6 +141,17 @@ function displayNameFromHello(rawName: string | undefined, user: number): string
       .join(''),
   );
   return name.ok ? name.name : displayNameFallback(user);
+}
+
+/**
+ * Sends low-priority traffic once a session's outbound queue is empty: chat
+ * first, then presence.
+ *
+ * @param session Session whose queue drained.
+ */
+function sessionIdle(session: ConnectionSession): void {
+  chatFlush(session);
+  presenceFlush(session);
 }
 
 /** Relay state shared by every handler. */
@@ -291,7 +311,7 @@ export class ServerCore {
       close: (code, reason) => socket.close(code, reason),
       ...sessionInitialState(config),
     };
-    outbound.idleListener = () => presenceFlush(session);
+    outbound.idleListener = () => sessionIdle(session);
     return session;
   }
 
@@ -344,6 +364,7 @@ export class ServerCore {
     if (message.version !== PROTOCOL_VERSION)
       return this.violation(session, `unsupported version, server speaks ${PROTOCOL_VERSION}`);
     session.name = displayNameFromHello(message.name, session.user);
+    session.nameChosen = session.name;
     session.helloDone = true;
     if (session.handshakeTimer) clearTimeout(session.handshakeTimer);
     session.handshakeTimer = null;
@@ -374,7 +395,7 @@ export class ServerCore {
    * @param session Sender.
    * @param message Validated message.
    */
-  private dispatch(session: ConnectionSession, message: ClientMessage): void {
+  private dispatch(session: ConnectionSession, message: Exclude<ClientMessage, { t: 'hello' }>): void {
     switch (message.t) {
       case 'ping':
         return sessionSend(session, { t: 'pong', ...(message.r === undefined ? {} : { r: message.r }) });
@@ -390,8 +411,8 @@ export class ServerCore {
         return void handlerRoomJoin(this, session, message);
       case 'room.leave':
         return handlerRoomLeave(this, session, message);
-      case 'hello':
-        return this.violation(session, 'duplicate hello');
+      case 'name.set':
+        return handlerNameSet(session, message);
       default:
         return this.dispatchContent(session, message);
     }
@@ -411,6 +432,8 @@ export class ServerCore {
         return handlerLockRelease(this, session, message);
       case 'edit':
         return handlerEdit(this, session, message);
+      case 'chat':
+        return handlerChat(this, session, message);
       case 'asset.request':
         return handlerAssetRequest(this, session, message);
       case 'asset.missing':
