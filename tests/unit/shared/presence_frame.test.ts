@@ -2,6 +2,10 @@ import { describe, expect, test } from 'bun:test';
 import {
   PRESENCE_CLIENT_FRAME_BYTES_MAXIMUM,
   PRESENCE_ENTRY_BYTES,
+  PRESENCE_CHARACTER_FLAG_GROUNDED,
+  PRESENCE_CHARACTER_FLAG_RUN,
+  PRESENCE_CHARACTER_FLAG_WALL_PUSH,
+  PRESENCE_CHARACTER_FLAGS_MASK,
   PRESENCE_ID_CHARACTER,
   presenceFrameCheck,
   presenceFrameDecode,
@@ -72,6 +76,19 @@ describe('presence frame', () => {
     expect(quaternionAngle(decoded?.entries[0]?.quaternion ?? [], CAMERA.quaternion)).toBeLessThan(0.2);
   });
 
+  test('character motion flags round trip; undefined bits are refused', () => {
+    for (let flags = 0; flags <= PRESENCE_CHARACTER_FLAGS_MASK; flags++) {
+      const frame = presenceFrameEncode([{ ...CHARACTER, fov: flags }]);
+      expect(presenceFrameCheck(frame)).toBe(true);
+      expect(presenceFrameDecode(presenceFrameRelay(frame, 5))?.entries[0]?.fov).toBe(flags);
+    }
+    const all = PRESENCE_CHARACTER_FLAG_GROUNDED | PRESENCE_CHARACTER_FLAG_WALL_PUSH | PRESENCE_CHARACTER_FLAG_RUN;
+    expect(all).toBe(PRESENCE_CHARACTER_FLAGS_MASK);
+    expect(presenceFrameCheck(presenceFrameEncode([{ ...CHARACTER, fov: PRESENCE_CHARACTER_FLAGS_MASK + 1 }]))).toBe(
+      false,
+    );
+  });
+
   test('an empty frame (presence cleared) is valid', () => {
     const decoded = presenceFrameDecode(presenceFrameRelay(presenceFrameEncode([]), 3));
     expect(decoded).toEqual({ sender: 3, entries: [] });
@@ -137,6 +154,7 @@ function framesMalformed(good: Uint8Array): Uint8Array[] {
     frameFloatReplaced(good, 5, 2e6),
     tooMany,
     presenceFrameEncode([CAMERA, CAMERA]),
-    presenceFrameEncode([{ ...CHARACTER, fov: 60 }]),
+    presenceFrameEncode([{ ...CHARACTER, fov: 8 }]),
+    presenceFrameEncode([{ ...CHARACTER, fov: 255 }]),
   ];
 }

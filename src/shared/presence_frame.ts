@@ -8,7 +8,8 @@
  * BE) inserted after the count. Entry (18 bytes): [0] id (camera slot 0..15, or
  * 0xFF for the character), [1..12] position (3 x float32 BE), [13..16]
  * orientation (smallest-three quaternion in 32 bits), [17] vertical field of
- * view in degrees (1..179 for cameras, 0 for the character).
+ * view in degrees (1..179) for cameras, or the motion flags
+ * (PRESENCE_CHARACTER_FLAG_*, other bits zero) for the character.
  */
 import { BINARY_FRAME_KIND_PRESENCE, BINARY_FRAME_MAGIC } from './protocol_definitions.ts';
 
@@ -22,6 +23,15 @@ export const PRESENCE_ENTRIES_MAXIMUM = 6;
 export const PRESENCE_CAMERA_ID_MAXIMUM = 15;
 /** Entry id of the play-mode character. */
 export const PRESENCE_ID_CHARACTER = 0xff;
+/** Character flag: the character stands on the ground. */
+export const PRESENCE_CHARACTER_FLAG_GROUNDED = 1;
+/** Character flag: the character pushes against a wall. */
+export const PRESENCE_CHARACTER_FLAG_WALL_PUSH = 2;
+/** Character flag: the character runs. */
+export const PRESENCE_CHARACTER_FLAG_RUN = 4;
+/** Every defined character flag bit. */
+export const PRESENCE_CHARACTER_FLAGS_MASK =
+  PRESENCE_CHARACTER_FLAG_GROUNDED | PRESENCE_CHARACTER_FLAG_WALL_PUSH | PRESENCE_CHARACTER_FLAG_RUN;
 /** Header bytes of a client frame. */
 export const PRESENCE_CLIENT_HEADER_BYTES = 4;
 /** Header bytes of a relayed frame. */
@@ -56,7 +66,8 @@ export interface PresenceFrame {
 
 /**
  * Validates a client presence frame: exact length, version, unique ids, finite
- * bounded positions and a field of view matching the entry kind.
+ * bounded positions, a field of view for cameras and only defined motion flags
+ * for the character.
  *
  * @param frame Raw binary frame from a client.
  * @returns True when the frame is well formed.
@@ -91,7 +102,11 @@ export function presenceFrameCheck(frame: Uint8Array): boolean {
 function presenceEntryCheck(view: DataView, offset: number): boolean {
   const id = view.getUint8(offset);
   const fov = view.getUint8(offset + 17);
-  if (id === PRESENCE_ID_CHARACTER ? fov !== 0 : id > PRESENCE_CAMERA_ID_MAXIMUM || fov < 1 || fov > 179) return false;
+  const character = id === PRESENCE_ID_CHARACTER;
+  if (
+    character ? (fov & ~PRESENCE_CHARACTER_FLAGS_MASK) !== 0 : id > PRESENCE_CAMERA_ID_MAXIMUM || fov < 1 || fov > 179
+  )
+    return false;
   for (let axis = 0; axis < 3; axis++) {
     const value = view.getFloat32(offset + 1 + axis * 4);
     if (!Number.isFinite(value) || Math.abs(value) > PRESENCE_POSITION_LIMIT) return false;
