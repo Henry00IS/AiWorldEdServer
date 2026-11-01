@@ -9,13 +9,16 @@
     "dev": "bun --watch src/main.ts",
     "test": "bun test",
     "testrun": "bun test",
+    "test:coverage": "bun test --coverage",
     "typecheck": "tsc --noEmit",
     "typecheck:strict": "tsc --project tsconfig.strict.json --noEmit",
+    "typecheck:portable": "tsc --project tsconfig.portable.json --noEmit",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "audit:agents": "bun scripts/audit_agents_compliance.ts",
     "audit:agents:strict": "bun scripts/audit_agents_compliance.ts --strict",
-    "ci": "bun run format:check && bun run typecheck && bun run typecheck:strict && bun run testrun && bun run audit:agents:strict"
+    "ci": "bun run format:check && bun run typecheck && bun run typecheck:strict && bun run testrun && bun run audit:agents:strict",
+    "build:binary": "bun build src/main.ts --compile --minify --sourcemap --outfile dist/aiworlded-relay"
   },
   "devDependencies": {
     "@types/bun": "latest",
