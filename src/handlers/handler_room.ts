@@ -124,6 +124,7 @@ function roomCreateRejection(
 ): { code: string; details?: object } | null {
   if (session.room) return { code: 'already_in_room' };
   if (session.pendingAsyncOperation) return { code: 'busy' };
+  if (!core.roomEntriesPerIpKey.take(session.ipKey)) return { code: 'too_many_attempts' };
   const name = roomNameNormalize(message.name);
   if (!name.ok) return { code: 'invalid_name', details: { reason: name.reason } };
   const displayName = displayNameRejection(message.displayName);
@@ -233,6 +234,7 @@ export async function handlerRoomJoin(
   session: ConnectionSession,
   message: RoomJoinMessage,
 ): Promise<void> {
+  if (!core.roomEntriesPerIpKey.take(session.ipKey)) return sessionSendError(session, 'too_many_attempts', message.r);
   const room = core.registry.get(message.room);
   const rejection = roomJoinRejection(core, session, room);
   if (rejection || !room) return sessionSendError(session, rejection ?? 'room_not_found', message.r);

@@ -25,6 +25,7 @@ import {
 } from '../handlers/handler_stream.ts';
 import { LimiterFailureWindow } from '../network/limiter_failure_window.ts';
 import { LimiterKeyCounter } from '../network/limiter_key_counter.ts';
+import { LimiterKeyedTokenBucket } from '../network/limiter_keyed_token_bucket.ts';
 import { LimiterTokenBucket } from '../network/limiter_token_bucket.ts';
 import { protocolMessageDecode } from '../protocol/protocol_message_decoder.ts';
 import { PROTOCOL_CAPS } from '../protocol/protocol_message_schemas.ts';
@@ -101,6 +102,7 @@ function welcomeLimits(config: ServerConfiguration): object {
     opsPerEdit: PROTOCOL_CAPS.opsPerEdit,
     messagesPerSecond: config.messagesPerSecond,
     roomsPerIp: config.roomsPerIp,
+    roomEntriesPerIpPerMinute: config.roomEntriesPerIpPerMinute,
     usersPerRoom: config.usersPerRoomMaximum,
     locksPerUser: config.locksPerUser,
     presencePerSecond: config.presencePerSecond,
@@ -140,6 +142,7 @@ export class ServerCore {
   readonly joinFailuresPerIp: LimiterFailureWindow;
   readonly joinFailuresPerRoom: LimiterFailureWindow;
   readonly passwordWorkPerIpKey: LimiterKeyCounter;
+  readonly roomEntriesPerIpKey: LimiterKeyedTokenBucket;
   passwordHashesInFlight = 0;
   private nextUserId = 1;
   private readonly pruneTimer: ReturnType<typeof setInterval>;
@@ -160,6 +163,10 @@ export class ServerCore {
     });
     this.connectionsPerIpKey = new LimiterKeyCounter(config.connectionsPerIp);
     this.passwordWorkPerIpKey = new LimiterKeyCounter(config.passwordHashConcurrencyPerIp);
+    this.roomEntriesPerIpKey = new LimiterKeyedTokenBucket(
+      config.roomEntriesPerIpPerMinute / 60,
+      config.roomEntryBurstPerIp,
+    );
     this.joinFailuresPerIp = new LimiterFailureWindow(config.joinFailuresPerIpPerMinute, 60_000);
     this.joinFailuresPerRoom = new LimiterFailureWindow(config.joinFailuresPerRoomPerMinute, 60_000);
     this.pruneTimer = setInterval(() => this.limitersPrune(), 60_000);
@@ -415,5 +422,6 @@ export class ServerCore {
   private limitersPrune(): void {
     this.joinFailuresPerIp.prune();
     this.joinFailuresPerRoom.prune();
+    this.roomEntriesPerIpKey.prune();
   }
 }

@@ -61,7 +61,7 @@ Display names are at most 12 characters (trimmed, no control characters). A long
 cut to 12; a missing or invalid one becomes `User N` (`N` = user id modulo 10^7).
 `via` is `proxy` when the request carried the correct `X-Forwarded-Secret`, otherwise `direct`.
 `limits` reports the effective limits (payload, chunk, window, snapshot/asset sizes, ids per
-message, ops per edit, messages per second, rooms per IP, users per room, locks per user, presence
+message, ops per edit, messages per second, rooms per IP, room entries per IP per minute, users per room, locks per user, presence
 rate, `roomListMaximum` and `roomListPushIntervalMs`).
 Every relay supports the live room list (`room.subscribe`); there is no feature negotiation.
 
@@ -229,6 +229,7 @@ warn the user that they are offline and should save locally. Re-joining any room
 | Bytes in         | 16 MiB/s, burst 32 MiB → close 4002                                                    |
 | Connections      | 24 per IP (IPv6 per /64), 2000 total                                                   |
 | Rooms            | 8 owned per IP, 500 total; 1 room per connection                                       |
+| Room entries     | create + join 30/min per IP (burst 10) → error `too_many_attempts`                     |
 | Users per room   | 16 default, max 32                                                                     |
 | Locks            | 20 000 per user, 100 000 per room                                                      |
 | Outbound queue   | 16 MiB per recipient → close 4004 (slow consumer)                                      |
@@ -267,17 +268,18 @@ to off and must never be set on a public relay. Tests use the dummy secret in
 
 ## Configuration (environment)
 
-| Variable                             | Meaning                                                                                          |
-| ------------------------------------ | ------------------------------------------------------------------------------------------------ |
-| `HOST`, `PORT`                       | Listen address (container: `0.0.0.0:8081`)                                                       |
-| `FORWARDED_SECRET`                   | Secret the reverse proxy sends as `X-Forwarded-Secret` (≥16 chars). Without it, proxied requests are refused. |
-| `WEBSOCKET_PATH`                     | WebSocket path (default `/ws`)  |
-| `ALLOWED_ORIGINS`                    | Comma-separated Origin allow list                                                                |
-| `INTERNAL_TEST_ROOMS`                | `false` disables internal test rooms                                                             |
-| `INTERNAL_TEST_ROOMS_VIA_PROXY`      | dev relay only: `true` allows internal test rooms through the proxy (default off)                |
-| `CONNECTIONS_PER_IP`, `ROOMS_PER_IP` | dev relay only: raise the per-IP limits (defaults 24 and 8)                                      |
-| `BIND_ADDRESS`                       | compose only: host address to publish the port on                                                |
-| `CONTAINER_NAME`, `IMAGE_TAG`        | compose only: dev instance names (defaults `aiworlded-server`, `latest`)                         |
+| Variable                                                    | Meaning                                                                                          |
+| ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| `HOST`, `PORT`                                              | Listen address (container: `0.0.0.0:8081`)                                                       |
+| `FORWARDED_SECRET`                                          | Secret the reverse proxy sends as `X-Forwarded-Secret` (≥16 chars). Without it, proxied requests are refused. |
+| `WEBSOCKET_PATH`                                            | WebSocket path (default `/ws`)  |
+| `ALLOWED_ORIGINS`                                           | Comma-separated Origin allow list                                                                |
+| `INTERNAL_TEST_ROOMS`                                       | `false` disables internal test rooms                                                             |
+| `INTERNAL_TEST_ROOMS_VIA_PROXY`                             | dev relay only: `true` allows internal test rooms through the proxy (default off)                |
+| `CONNECTIONS_PER_IP`, `ROOMS_PER_IP`                        | dev relay only: raise the per-IP limits (defaults 24 and 8)                                      |
+| `ROOM_ENTRIES_PER_IP_PER_MINUTE`, `ROOM_ENTRY_BURST_PER_IP` | dev relay only: raise the room create/join rate per IP (defaults 30/min and 10)                  |
+| `BIND_ADDRESS`                                              | compose only: host address to publish the port on                                                |
+| `CONTAINER_NAME`, `IMAGE_TAG`                               | compose only: dev instance names (defaults `aiworlded-server`, `latest`)                         |
 
 ## Deployment
 

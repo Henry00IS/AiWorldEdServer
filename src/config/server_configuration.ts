@@ -40,6 +40,8 @@ export interface ServerConfiguration {
   joinFailuresPerRoomPerMinute: number;
   passwordHashConcurrency: number;
   passwordHashConcurrencyPerIp: number;
+  roomEntriesPerIpPerMinute: number;
+  roomEntryBurstPerIp: number;
   roomListMaximum: number;
   roomListSubscribersMaximum: number;
   roomListPushIntervalMs: number;
@@ -93,6 +95,8 @@ const CONFIGURATION_ROOM_LIMITS_DEFAULT = {
   joinFailuresPerRoomPerMinute: 30,
   passwordHashConcurrency: 4,
   passwordHashConcurrencyPerIp: 1,
+  roomEntriesPerIpPerMinute: 30,
+  roomEntryBurstPerIp: 10,
   roomListMaximum: 200,
   roomListSubscribersMaximum: 1000,
   roomListPushIntervalMs: 500,
@@ -141,9 +145,20 @@ export function configurationFromEnvironment(environment: Record<string, string 
 }
 
 /**
- * Applies the optional per-IP limit overrides (CONNECTIONS_PER_IP,
- * ROOMS_PER_IP). Meant for the development relay, where every test client
- * shares one address; production leaves them unset.
+ * Optional per-IP limit overrides and the configuration field each one sets.
+ * Meant for the development relay, where every test client shares one address;
+ * production leaves them unset.
+ */
+const CONFIGURATION_PER_IP_LIMIT_VARIABLES = [
+  ['CONNECTIONS_PER_IP', 'connectionsPerIp'],
+  ['ROOMS_PER_IP', 'roomsPerIp'],
+  ['ROOM_ENTRIES_PER_IP_PER_MINUTE', 'roomEntriesPerIpPerMinute'],
+  ['ROOM_ENTRY_BURST_PER_IP', 'roomEntryBurstPerIp'],
+] as const;
+
+/**
+ * Applies the optional per-IP limit overrides listed in
+ * CONFIGURATION_PER_IP_LIMIT_VARIABLES.
  *
  * @param configuration Configuration to update.
  * @param environment Environment variable map.
@@ -152,16 +167,8 @@ function configurationApplyPerIpLimits(
   configuration: ServerConfiguration,
   environment: Record<string, string | undefined>,
 ): void {
-  configuration.connectionsPerIp = configurationParseLimit(
-    'CONNECTIONS_PER_IP',
-    environment['CONNECTIONS_PER_IP'],
-    configuration.connectionsPerIp,
-  );
-  configuration.roomsPerIp = configurationParseLimit(
-    'ROOMS_PER_IP',
-    environment['ROOMS_PER_IP'],
-    configuration.roomsPerIp,
-  );
+  for (const [variableName, field] of CONFIGURATION_PER_IP_LIMIT_VARIABLES)
+    configuration[field] = configurationParseLimit(variableName, environment[variableName], configuration[field]);
 }
 
 /**

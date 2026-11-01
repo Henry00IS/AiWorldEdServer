@@ -23,6 +23,17 @@ describe('server configuration', () => {
     expect(raised.roomsPerIp).toBe(48);
   });
 
+  test('the room entry rate per IP defaults to 30/min (burst 10) and can be raised for the dev relay', () => {
+    const defaults = configurationFromEnvironment({});
+    expect([defaults.roomEntriesPerIpPerMinute, defaults.roomEntryBurstPerIp]).toEqual([30, 10]);
+    const raised = configurationFromEnvironment({
+      ROOM_ENTRIES_PER_IP_PER_MINUTE: '6000',
+      ROOM_ENTRY_BURST_PER_IP: '1000',
+    });
+    expect([raised.roomEntriesPerIpPerMinute, raised.roomEntryBurstPerIp]).toEqual([6000, 1000]);
+    expect(() => configurationFromEnvironment({ ROOM_ENTRY_BURST_PER_IP: '0' })).toThrow('ROOM_ENTRY_BURST_PER_IP');
+  });
+
   test('invalid per-IP limits are rejected', () => {
     expect(() => configurationFromEnvironment({ CONNECTIONS_PER_IP: '0' })).toThrow('CONNECTIONS_PER_IP');
     expect(() => configurationFromEnvironment({ ROOMS_PER_IP: 'many' })).toThrow('ROOMS_PER_IP');
