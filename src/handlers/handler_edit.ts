@@ -135,8 +135,8 @@ function editCheckParents(
 }
 
 /**
- * New ids must not be locked by anybody else; they become locked by the
- * creator.
+ * New ids must not be locked or shared by anybody else; they become locked by
+ * the creator.
  *
  * @param room Room.
  * @param user Creator.
@@ -150,7 +150,7 @@ function editCheckCreate(
   ids: readonly string[],
   createdInBatch: Set<string>,
 ): EditRejection | null {
-  const conflicts = room.locks.conflictsFor(user, ids);
+  const conflicts = [...room.locks.conflictsFor(user, ids), ...room.locks.conflictsShared(user, ids, [])];
   if (conflicts.length > 0) return { reason: 'lock_conflict', ids: conflicts.map((conflict) => conflict.id) };
   for (const id of ids) createdInBatch.add(id);
   return null;
