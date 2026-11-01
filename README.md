@@ -222,22 +222,22 @@ warn the user that they are offline and should save locally. Re-joining any room
 
 ## Abuse resistance and limits
 
-| Limit            | Default                                                                                |
-| ---------------- | -------------------------------------------------------------------------------------- |
-| Max frame        | 1 MiB (binary chunk payload 256 KiB)                                                   |
-| Messages         | 120/s, burst 400 → close 4002                                                          |
-| Bytes in         | 16 MiB/s, burst 32 MiB → close 4002                                                    |
-| Connections      | 24 per IP (IPv6 per /64), 2000 total                                                   |
-| Rooms            | 8 owned per IP, 500 total; 1 room per connection                                       |
-| Room entries     | create + join 30/min per IP (burst 10) → error `too_many_attempts`                     |
-| Users per room   | 16 default, max 32                                                                     |
-| Locks            | 20 000 per user, 100 000 per room, 400 000 per relay                                   |
-| Outbound queue   | 16 MiB per recipient → close 4004 (slow consumer)                                      |
-| Handshake / idle | 5 s / 60 s (with ping/pong)                                                            |
-| Snapshot / asset | 256 MiB / 64 MiB, 4 MiB window, 8 streams per recipient, 60 s snapshot timeout         |
-| Room list        | 200 entries                                                                            |
-| Room list pushes | 1000 subscribers, at most one update per 500 ms per subscriber, low priority           |
-| Presence         | 10 frames/s per member (burst 20), latest-only per sender per recipient, 116 bytes max |
+| Limit            | Default                                                                                               |
+| ---------------- | ----------------------------------------------------------------------------------------------------- |
+| Max frame        | 1 MiB (binary chunk payload 256 KiB)                                                                  |
+| Messages         | 120/s, burst 400 → close 4002                                                                         |
+| Bytes in         | 16 MiB/s, burst 32 MiB → close 4002                                                                   |
+| Connections      | 24 per IP (IPv6 per /64), 2000 total                                                                  |
+| Rooms            | 8 owned per IP, 500 total; 1 room per connection                                                      |
+| Room entries     | create + join 30/min per IP (burst 10) → error `too_many_attempts`                                    |
+| Users per room   | 16 default, max 32                                                                                    |
+| Locks            | 20 000 per user, 100 000 per room, 400 000 per relay                                                  |
+| Outbound queue   | 16 MiB per recipient, 256 MiB backlog (queue + socket buffer) across all → close 4004 (slow consumer) |
+| Handshake / idle | 5 s / 60 s (with ping/pong)                                                                           |
+| Snapshot / asset | 256 MiB / 64 MiB, 4 MiB window, 8 streams per recipient, 60 s snapshot timeout                        |
+| Room list        | 200 entries                                                                                           |
+| Room list pushes | 1000 subscribers, at most one update per 500 ms per subscriber, low priority                          |
+| Presence         | 10 frames/s per member (burst 20), latest-only per sender per recipient, 116 bytes max                |
 
 Other measures: versioned hello handshake; strict schemas; only allowed `Origin`s
 (`https://henry00is.github.io`, `http://localhost:*`, `http://127.0.0.1:*`, `http://[::1]:*`,

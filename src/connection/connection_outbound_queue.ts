@@ -1,8 +1,12 @@
 /**
  * Per-recipient outbound queue. Holds frames only until the socket accepts
  * them, coalesces consecutive edit items into one `edits` frame ("replicate
- * these N edits") and enforces a byte cap so slow consumers cannot grow RAM.
+ * these N edits") and enforces a byte cap so slow consumers cannot grow RAM. A
+ * backed-up queue also charges its bytes plus its socket buffer to a
+ * server-wide budget; while that budget is exhausted, every backed-up recipient
+ * that receives more data is closed as a slow consumer.
  */
+import { LimiterSharedBudget } from '../network/limiter_shared_budget.ts';
 
 /** Coalescing stops adding edits to one frame once it reaches this size. */
 export const EDITS_FRAME_COALESCE_BYTES = 1024 * 1024;
@@ -25,6 +29,7 @@ export class ConnectionOutboundQueue {
   private head = 0;
   private queuedBytes = 0;
   private overflowed = false;
+  private chargedBytes = 0;
   /** Called after a flush that left the queue empty (presence delivery hook). */
   idleListener: (() => void) | null = null;
 
@@ -37,12 +42,14 @@ export class ConnectionOutboundQueue {
    * @param socketHighWaterBytes Socket buffer level above which flushing
    *   pauses.
    * @param onOverflow Called once when the cap is exceeded.
+   * @param backlogServerBudget Byte budget shared by every backed-up queue.
    */
   constructor(
     private readonly socket: OutboundSocket,
     private readonly maximumQueuedBytes: number,
     private readonly socketHighWaterBytes: number,
     private readonly onOverflow: () => void,
+    private readonly backlogServerBudget: LimiterSharedBudget = new LimiterSharedBudget(Number.MAX_SAFE_INTEGER),
   ) {}
 
   /**
@@ -111,6 +118,7 @@ export class ConnectionOutboundQueue {
     this.items.length = 0;
     this.head = 0;
     this.queuedBytes = 0;
+    this.backlogRecharge();
   }
 
   /**
@@ -124,26 +132,41 @@ export class ConnectionOutboundQueue {
       else this.flushSingle(item);
     }
     this.compact();
+    this.backlogRecharge();
     if (this.length() === 0) this.idleListener?.();
   }
 
   /**
+   * Charges the server budget with this queue's backlog: queued bytes plus the
+   * socket buffer while anything is queued, nothing once the queue is empty.
+   */
+  private backlogRecharge(): void {
+    const backlogBytes = this.length() > 0 ? this.queuedBytes + this.socket.getBufferedAmount() : 0;
+    this.backlogServerBudget.release(this.chargedBytes);
+    this.backlogServerBudget.consume(backlogBytes);
+    this.chargedBytes = backlogBytes;
+  }
+
+  /**
    * Appends an item, or marks the queue overflowed when the byte cap would be
-   * exceeded.
+   * exceeded or the queue stays backed up while the server budget is spent.
    *
    * @param item Item to enqueue.
    */
   private push(item: OutboundItem): void {
     if (this.overflowed) return;
-    if (this.queuedBytes + item.bytes > this.maximumQueuedBytes) {
-      this.overflowed = true;
-      this.clear();
-      this.onOverflow();
-      return;
-    }
+    if (this.queuedBytes + item.bytes > this.maximumQueuedBytes) return this.overflow();
     this.items.push(item);
     this.queuedBytes += item.bytes;
     this.flush();
+    if (this.length() > 0 && this.backlogServerBudget.inUse() > this.backlogServerBudget.maximum) this.overflow();
+  }
+
+  /** Drops everything and reports the consumer as too slow, once. */
+  private overflow(): void {
+    this.overflowed = true;
+    this.clear();
+    this.onOverflow();
   }
 
   /**

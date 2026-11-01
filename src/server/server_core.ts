@@ -145,6 +145,7 @@ export class ServerCore {
   readonly passwordWorkPerIpKey: LimiterKeyCounter;
   readonly roomEntriesPerIpKey: LimiterKeyedTokenBucket;
   readonly locksServerBudget: LimiterSharedBudget;
+  readonly outboundBacklogServerBudget: LimiterSharedBudget;
   passwordHashesInFlight = 0;
   private nextUserId = 1;
   private readonly pruneTimer: ReturnType<typeof setInterval>;
@@ -172,6 +173,7 @@ export class ServerCore {
     this.joinFailuresPerIp = new LimiterFailureWindow(config.joinFailuresPerIpPerMinute, 60_000);
     this.joinFailuresPerRoom = new LimiterFailureWindow(config.joinFailuresPerRoomPerMinute, 60_000);
     this.locksServerBudget = new LimiterSharedBudget(config.locksTotal);
+    this.outboundBacklogServerBudget = new LimiterSharedBudget(config.outboundBacklogBytesTotal);
     this.pruneTimer = setInterval(() => this.limitersPrune(), 60_000);
   }
 
@@ -278,6 +280,7 @@ export class ServerCore {
       config.outboundQueueBytesMaximum,
       config.socketBufferHighWaterBytes,
       () => session.close(CLOSE_CODES.slowConsumer, 'slow consumer'),
+      this.outboundBacklogServerBudget,
     );
     session = {
       user: this.userIdNext(),

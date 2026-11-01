@@ -1,4 +1,5 @@
 import { expect, test } from 'bun:test';
+import { LimiterSharedBudget } from '../../../src/network/limiter_shared_budget.ts';
 import { ConnectionOutboundQueue } from '../../../src/connection/connection_outbound_queue.ts';
 
 /** Fake socket whose buffered amount the test controls. */
@@ -83,4 +84,24 @@ test('sendIfIdle only sends while nothing is queued and the socket is below the 
   expect(idleCalls).toBe(1);
   expect(sent.length).toBe(3);
   expect(queue.bytesQueued()).toBe(0);
+});
+
+test('backed-up queues share a server budget and the one receiving more data past it is closed', () => {
+  const budget = new LimiterSharedBudget(100);
+  const first = socketFake();
+  const second = socketFake();
+  const overflows: string[] = [];
+  const firstQueue = new ConnectionOutboundQueue(first.socket, 1000, 10, () => overflows.push('first'), budget);
+  const secondQueue = new ConnectionOutboundQueue(second.socket, 1000, 10, () => overflows.push('second'), budget);
+  first.socket.buffered = 20;
+  second.socket.buffered = 20;
+  firstQueue.pushText('x'.repeat(50));
+  expect(budget.inUse()).toBe(70);
+  secondQueue.pushText('y'.repeat(20));
+  expect(overflows).toEqual(['second']);
+  expect(budget.inUse()).toBe(70);
+  first.socket.buffered = 0;
+  firstQueue.flush();
+  expect(budget.inUse()).toBe(0);
+  expect(overflows).toEqual(['second']);
 });
