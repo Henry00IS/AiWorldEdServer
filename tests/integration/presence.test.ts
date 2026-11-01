@@ -1,6 +1,4 @@
-/**
- * Presence relay, display names and color slots against a real local relay.
- */
+/** Presence relay, display names and color slots against a real local relay. */
 import { afterAll, afterEach, beforeAll, describe, expect, test } from 'bun:test';
 import { collabServerStart, type CollabServer } from '../../src/server/server_collab.ts';
 import { presenceFrameDecode, presenceFrameEncode, type PresenceEntry } from '../../src/shared/presence_frame.ts';
@@ -37,7 +35,9 @@ async function roomPair(): Promise<{ owner: TestClient; member: TestClient; room
 /** Collects every presence frame that arrives within a short window. */
 async function presenceDrain(client: TestClient, windowMs = 150): Promise<{ sender: number; x: number | null }[]> {
   await Bun.sleep(windowMs);
-  const frames = client.inbox.filter((item) => item.kind === 'binary').map((item) => presenceFrameDecode((item as { data: Uint8Array }).data));
+  const frames = client.inbox
+    .filter((item) => item.kind === 'binary')
+    .map((item) => presenceFrameDecode((item as { data: Uint8Array }).data));
   client.inbox.splice(0, client.inbox.length, ...client.inbox.filter((item) => item.kind !== 'binary'));
   return frames.map((frame) => ({ sender: frame?.sender ?? 0, x: frame?.entries[0]?.position[0] ?? null }));
 }
@@ -59,18 +59,33 @@ afterAll(async () => {
 describe('names and colors', () => {
   test('display names from create and join, lowest free color slots in every event', async () => {
     const owner = await connect('Old Name');
-    const created = await owner.request({ t: 'room.create', name: 'colors', private: false, internalTest: true, displayName: ' Alice ' }, 'room.created');
+    const created = await owner.request(
+      { t: 'room.create', name: 'colors', private: false, internalTest: true, displayName: ' Alice ' },
+      'room.created',
+    );
     expect(created).toMatchObject({ name: 'Alice', color: 0 });
     const bob = await connect();
     await testRoomJoinSynced(bob, owner, created.room.id, undefined, { displayName: 'Bob' });
     expect(await owner.next('member.joined')).toMatchObject({ user: bob.user, name: 'Bob', color: 1 });
     const carol = await connect();
-    const joined = await carol.request({ t: 'room.join', room: created.room.id, discardLocalWork: true, displayName: 'Carol' }, 'room.joined');
-    expect(joined.members.map((member: { name: string; color: number }) => [member.name, member.color]).sort()).toEqual([['Alice', 0], ['Bob', 1], ['Carol', 2]]);
+    const joined = await carol.request(
+      { t: 'room.join', room: created.room.id, discardLocalWork: true, displayName: 'Carol' },
+      'room.joined',
+    );
+    expect(joined.members.map((member: { name: string; color: number }) => [member.name, member.color]).sort()).toEqual(
+      [
+        ['Alice', 0],
+        ['Bob', 1],
+        ['Carol', 2],
+      ],
+    );
     bob.close();
     await owner.next('member.left');
     const dave = await connect();
-    await dave.request({ t: 'room.join', room: created.room.id, discardLocalWork: true, displayName: 'Dave' }, 'room.joined');
+    await dave.request(
+      { t: 'room.join', room: created.room.id, discardLocalWork: true, displayName: 'Dave' },
+      'room.joined',
+    );
     expect(await owner.next('member.joined', (message) => message.user === dave.user)).toMatchObject({ color: 1 });
   });
 
@@ -79,10 +94,16 @@ describe('names and colors', () => {
     expect(owner.welcome.name).toBe('a very long');
     const anonymous = await connect();
     expect(anonymous.welcome.name).toBe(`User ${anonymous.user % 10_000_000}`);
-    const reply = await owner.request({ t: 'room.create', name: 'x', private: false, internalTest: true, displayName: 'thirteen char' }, 'room.created');
+    const reply = await owner.request(
+      { t: 'room.create', name: 'x', private: false, internalTest: true, displayName: 'thirteen char' },
+      'room.created',
+    );
     expect(reply).toMatchObject({ t: 'error', code: 'invalid_name', reason: 'too_long', field: 'displayName' });
     const roomId = await roomCreate(owner);
-    const join = await anonymous.request({ t: 'room.join', room: roomId, discardLocalWork: true, displayName: '   ' }, 'room.joined');
+    const join = await anonymous.request(
+      { t: 'room.join', room: roomId, discardLocalWork: true, displayName: '   ' },
+      'room.joined',
+    );
     expect(join).toMatchObject({ t: 'error', code: 'invalid_name', field: 'displayName' });
   });
 });
@@ -124,7 +145,12 @@ describe('presence', () => {
     owner.sendRaw(presenceFrameEncode([camera(7)]));
     await Bun.sleep(100);
     const { joiner } = await testRoomJoinSynced(await connect(), owner, roomId);
-    expect((await presenceDrain(joiner)).sort((a, b) => a.sender - b.sender)).toEqual([{ sender: owner.user, x: 7 }, { sender: member.user, x: 2 }].sort((a, b) => a.sender - b.sender));
+    expect((await presenceDrain(joiner)).sort((a, b) => a.sender - b.sender)).toEqual(
+      [
+        { sender: owner.user, x: 7 },
+        { sender: member.user, x: 2 },
+      ].sort((a, b) => a.sender - b.sender),
+    );
     member.close();
     await owner.next('member.left');
     const { joiner: late } = await testRoomJoinSynced(await connect(), owner, roomId);

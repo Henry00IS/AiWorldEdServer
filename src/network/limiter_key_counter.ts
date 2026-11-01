@@ -1,12 +1,8 @@
-/**
- * Counts concurrent resources (connections, rooms) per key with a cap.
- */
+/** Counts concurrent resources (connections, rooms) per key with a cap. */
 export class LimiterKeyCounter {
   private readonly counts = new Map<string, number>();
 
-  /**
-   * @param maximumPerKey Largest count allowed per key.
-   */
+  /** @param maximumPerKey Largest count allowed per key. */
   constructor(private readonly maximumPerKey: number) {}
 
   /**
@@ -41,9 +37,7 @@ export class LimiterKeyCounter {
     return this.counts.get(key) ?? 0;
   }
 
-  /**
-   * @returns Number of tracked keys.
-   */
+  /** @returns Number of tracked keys. */
   keyCount(): number {
     return this.counts.size;
   }

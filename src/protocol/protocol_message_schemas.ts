@@ -1,6 +1,4 @@
-/**
- * Closed schemas for every client message of protocol version 1.
- */
+/** Closed schemas for every client message of protocol version 1. */
 import { EDIT_KINDS, PROTOCOL_ID, STREAM_KINDS, type ClientMessageType } from '../shared/protocol_definitions.ts';
 import type { Schema } from './schema_validator.ts';
 
@@ -21,7 +19,12 @@ const SCHEMA_STREAM_ID: Schema = { type: 'int', min: 1, max: 0xffffffff };
 const SCHEMA_OBJECT_ID: Schema = { type: 'string', min: 1, max: 64, pattern: /^[A-Za-z0-9_.:-]+$/ };
 const SCHEMA_OBJECT_IDS: Schema = { type: 'array', items: SCHEMA_OBJECT_ID, min: 1, max: PROTOCOL_CAPS.idsPerMessage };
 const SCHEMA_ROOM_ID: Schema = { type: 'string', min: 16, max: 16, pattern: /^[A-Za-z0-9_-]{16}$/ };
-const SCHEMA_ASSET_NAME: Schema = { type: 'string', min: 1, max: PROTOCOL_CAPS.assetNameMaximum, pattern: /^[^\p{Cc}]+$/u };
+const SCHEMA_ASSET_NAME: Schema = {
+  type: 'string',
+  min: 1,
+  max: PROTOCOL_CAPS.assetNameMaximum,
+  pattern: /^[^\p{Cc}]+$/u,
+};
 const SCHEMA_DISPLAY_NAME: Schema = { type: 'string', min: 1, max: 64 };
 const SCHEMA_EDIT_OPERATION: Schema = {
   type: 'object',
@@ -37,8 +40,16 @@ const SCHEMA_EDIT_OPERATION: Schema = {
  * @param optional Additional optional fields.
  * @returns Message schema.
  */
-function messageSchema(type: ClientMessageType, required: Record<string, Schema> = {}, optional: Record<string, Schema> = {}): Schema {
-  return { type: 'object', required: { t: { type: 'literal', value: type }, ...required }, optional: { r: SCHEMA_REQUEST_ID, ...optional } };
+function messageSchema(
+  type: ClientMessageType,
+  required: Record<string, Schema> = {},
+  optional: Record<string, Schema> = {},
+): Schema {
+  return {
+    type: 'object',
+    required: { t: { type: 'literal', value: type }, ...required },
+    optional: { r: SCHEMA_REQUEST_ID, ...optional },
+  };
 }
 
 /** Schema per client message type. */
@@ -82,7 +93,10 @@ export const CLIENT_MESSAGE_SCHEMAS: Readonly<Record<ClientMessageType, Schema>>
     },
   },
   'asset.request': messageSchema('asset.request', { name: SCHEMA_ASSET_NAME }),
-  'asset.missing': { type: 'object', required: { t: { type: 'literal', value: 'asset.missing' }, to: SCHEMA_USER_ID, name: SCHEMA_ASSET_NAME } },
+  'asset.missing': {
+    type: 'object',
+    required: { t: { type: 'literal', value: 'asset.missing' }, to: SCHEMA_USER_ID, name: SCHEMA_ASSET_NAME },
+  },
   'stream.begin': {
     type: 'object',
     required: {
@@ -94,7 +108,10 @@ export const CLIENT_MESSAGE_SCHEMAS: Readonly<Record<ClientMessageType, Schema>>
     },
     optional: { name: SCHEMA_ASSET_NAME, mime: { type: 'string', min: 1, max: 100, pattern: /^[\w.+-]+\/[\w.+-]+$/ } },
   },
-  'stream.end': { type: 'object', required: { t: { type: 'literal', value: 'stream.end' }, to: SCHEMA_USER_ID, stream: SCHEMA_STREAM_ID } },
+  'stream.end': {
+    type: 'object',
+    required: { t: { type: 'literal', value: 'stream.end' }, to: SCHEMA_USER_ID, stream: SCHEMA_STREAM_ID },
+  },
   'stream.abort': {
     type: 'object',
     required: { t: { type: 'literal', value: 'stream.abort' }, to: SCHEMA_USER_ID, stream: SCHEMA_STREAM_ID },

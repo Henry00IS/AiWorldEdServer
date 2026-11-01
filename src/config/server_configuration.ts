@@ -1,5 +1,6 @@
 /**
- * Server configuration with production defaults, overridable from the environment.
+ * Server configuration with production defaults, overridable from the
+ * environment.
  */
 
 /** Every tunable limit and setting of the relay. */
@@ -41,7 +42,10 @@ export interface ServerConfiguration {
   presenceHighWaterBytes: number;
 }
 
-/** Default Origin allow list: GitHub Pages, local dev servers and the desktop app. */
+/**
+ * Default Origin allow list: GitHub Pages, local dev servers and the desktop
+ * app.
+ */
 export const ALLOWED_ORIGINS_DEFAULT = [
   'https://henry00is.github.io',
   'http://localhost:*',
@@ -119,13 +123,15 @@ export function configurationFromEnvironment(environment: Record<string, string 
 function configurationParsePort(value: string | undefined, fallback: number): number {
   if (value === undefined || value === '') return fallback;
   const port = Number(value);
-  if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error('PORT must be an integer between 0 and 65535');
+  if (!Number.isInteger(port) || port < 0 || port > 65535)
+    throw new Error('PORT must be an integer between 0 and 65535');
   return port;
 }
 
 /**
  * @param value Raw secret.
- * @returns The secret, or null when unset. Rejects secrets shorter than 16 characters.
+ * @returns The secret, or null when unset. Rejects secrets shorter than 16
+ *   characters.
  */
 function configurationParseSecret(value: string | undefined): string | null {
   if (value === undefined || value === '') return null;
@@ -138,5 +144,8 @@ function configurationParseSecret(value: string | undefined): string | null {
  * @returns Trimmed non-empty entries.
  */
 function configurationParseList(value: string): string[] {
-  return value.split(',').map((entry) => entry.trim()).filter((entry) => entry.length > 0);
+  return value
+    .split(',')
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0);
 }

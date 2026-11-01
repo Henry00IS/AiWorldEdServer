@@ -1,6 +1,6 @@
 /**
- * End-to-end tests against a real local relay over real WebSockets. Rooms
- * use the internal test flag, which is only accepted from direct (non-proxied)
+ * End-to-end tests against a real local relay over real WebSockets. Rooms use
+ * the internal test flag, which is only accepted from direct (non-proxied)
  * connections. The forwarded secret is a dummy value from the test config.
  */
 import { afterAll, afterEach, beforeAll, describe, expect, test } from 'bun:test';
@@ -28,13 +28,27 @@ function proxiedHeaders(clientIp: string): Record<string, string> {
   return { 'X-Forwarded-Secret': TEST_DUMMY_FORWARDED_SECRET, 'X-Real-IP': clientIp, 'X-Forwarded-For': clientIp };
 }
 
-/** Joins and receives the full snapshot; returns the joiner and the snapshot bytes. */
-async function joinSynced(owner: TestClient, roomId: string, snapshot?: Uint8Array): Promise<{ joiner: TestClient; received: Uint8Array }> {
+/**
+ * Joins and receives the full snapshot; returns the joiner and the snapshot
+ * bytes.
+ */
+async function joinSynced(
+  owner: TestClient,
+  roomId: string,
+  snapshot?: Uint8Array,
+): Promise<{ joiner: TestClient; received: Uint8Array }> {
   return testRoomJoinSynced(await connect(), owner, roomId, snapshot);
 }
 
 beforeAll(() => {
-  server = collabServerStart(testConfiguration({ handshakeTimeoutMs: 300, connectionsPerIp: 200, joinFailuresPerIpPerMinute: 1000, joinFailuresPerRoomPerMinute: 3 }));
+  server = collabServerStart(
+    testConfiguration({
+      handshakeTimeoutMs: 300,
+      connectionsPerIp: 200,
+      joinFailuresPerIpPerMinute: 1000,
+      joinFailuresPerRoomPerMinute: 3,
+    }),
+  );
   port = server.port;
 });
 
@@ -116,16 +130,25 @@ describe('rooms', () => {
 
   test('room names are validated', async () => {
     const owner = await connect();
-    const tooLong = await owner.request({ t: 'room.create', name: 'x'.repeat(129), private: false, internalTest: true }, 'room.created');
+    const tooLong = await owner.request(
+      { t: 'room.create', name: 'x'.repeat(129), private: false, internalTest: true },
+      'room.created',
+    );
     expect(tooLong).toMatchObject({ t: 'error', code: 'invalid_name' });
-    const control = await owner.request({ t: 'room.create', name: 'bad\u0007', private: false, internalTest: true }, 'room.created');
+    const control = await owner.request(
+      { t: 'room.create', name: 'bad\u0007', private: false, internalTest: true },
+      'room.created',
+    );
     expect(control).toMatchObject({ t: 'error', code: 'invalid_name' });
   });
 
   test('private rooms require a strong password and verify it', async () => {
     const owner = await connect();
     for (const weak of ['00000000', 'Password1!', 'Abcd1234!x']) {
-      const reply = await owner.request({ t: 'room.create', name: 'secret', private: true, password: weak, internalTest: true }, 'room.created');
+      const reply = await owner.request(
+        { t: 'room.create', name: 'secret', private: true, password: weak, internalTest: true },
+        'room.created',
+      );
       expect(reply).toMatchObject({ t: 'error', code: 'weak_password' });
     }
     const password = passwordGenerate();
@@ -136,9 +159,19 @@ describe('rooms', () => {
     expect(JSON.stringify(entry)).not.toContain(password);
 
     const joiner = await connect();
-    expect(await joiner.request({ t: 'room.join', room: roomId, discardLocalWork: true }, 'room.joined')).toMatchObject({ code: 'password_required' });
-    expect(await joiner.request({ t: 'room.join', room: roomId, discardLocalWork: true, password: 'Wrong-Pass9!' }, 'room.joined')).toMatchObject({ code: 'wrong_password' });
-    const joined = await joiner.request({ t: 'room.join', room: roomId, discardLocalWork: true, password }, 'room.joined');
+    expect(await joiner.request({ t: 'room.join', room: roomId, discardLocalWork: true }, 'room.joined')).toMatchObject(
+      { code: 'password_required' },
+    );
+    expect(
+      await joiner.request(
+        { t: 'room.join', room: roomId, discardLocalWork: true, password: 'Wrong-Pass9!' },
+        'room.joined',
+      ),
+    ).toMatchObject({ code: 'wrong_password' });
+    const joined = await joiner.request(
+      { t: 'room.join', room: roomId, discardLocalWork: true, password },
+      'room.joined',
+    );
     expect(joined.t).toBe('room.joined');
   });
 
@@ -148,9 +181,15 @@ describe('rooms', () => {
     const roomId = await roomCreate(owner, { private: true, password });
     const joiner = await connect();
     for (let attempt = 0; attempt < 3; attempt++) {
-      await joiner.request({ t: 'room.join', room: roomId, discardLocalWork: true, password: 'Wrong-Pass9!' }, 'room.joined');
+      await joiner.request(
+        { t: 'room.join', room: roomId, discardLocalWork: true, password: 'Wrong-Pass9!' },
+        'room.joined',
+      );
     }
-    const blocked = await joiner.request({ t: 'room.join', room: roomId, discardLocalWork: true, password }, 'room.joined');
+    const blocked = await joiner.request(
+      { t: 'room.join', room: roomId, discardLocalWork: true, password },
+      'room.joined',
+    );
     expect(blocked).toMatchObject({ t: 'error', code: 'too_many_attempts' });
   });
 
@@ -170,7 +209,9 @@ describe('rooms', () => {
     const closed = await joiner.next('room.closed');
     expect(closed).toMatchObject({ reason: 'owner_left', offline: true });
     expect(closed.message).toContain('save your changes locally');
-    const rejoin = await (await connect()).request({ t: 'room.join', room: roomId, discardLocalWork: true }, 'room.joined');
+    const rejoin = await (
+      await connect()
+    ).request({ t: 'room.join', room: roomId, discardLocalWork: true }, 'room.joined');
     expect(rejoin).toMatchObject({ t: 'error', code: 'room_not_found' });
   });
 
@@ -178,16 +219,24 @@ describe('rooms', () => {
     const owners: TestClient[] = [];
     for (let index = 0; index < 8; index++) {
       const owner = await connect({ headers: proxiedHeaders('198.51.100.20') });
-      expect((await owner.request({ t: 'room.create', name: `limit ${index}`, private: false }, 'room.created')).t).toBe('room.created');
+      expect(
+        (await owner.request({ t: 'room.create', name: `limit ${index}`, private: false }, 'room.created')).t,
+      ).toBe('room.created');
       owners.push(owner);
     }
     const ninth = await connect({ headers: proxiedHeaders('198.51.100.20') });
-    expect(await ninth.request({ t: 'room.create', name: 'limit 9', private: false }, 'room.created')).toMatchObject({ code: 'room_limit_ip' });
+    expect(await ninth.request({ t: 'room.create', name: 'limit 9', private: false }, 'room.created')).toMatchObject({
+      code: 'room_limit_ip',
+    });
     const otherIp = await connect({ headers: proxiedHeaders('198.51.100.21') });
-    expect((await otherIp.request({ t: 'room.create', name: 'other ip', private: false }, 'room.created')).t).toBe('room.created');
+    expect((await otherIp.request({ t: 'room.create', name: 'other ip', private: false }, 'room.created')).t).toBe(
+      'room.created',
+    );
     (owners[0] as TestClient).close();
     await Bun.sleep(50);
-    expect((await ninth.request({ t: 'room.create', name: 'limit 9', private: false }, 'room.created')).t).toBe('room.created');
+    expect((await ninth.request({ t: 'room.create', name: 'limit 9', private: false }, 'room.created')).t).toBe(
+      'room.created',
+    );
     for (const owner of owners) owner.close();
     ninth.close();
     otherIp.close();
@@ -205,7 +254,10 @@ describe('internal test flag', () => {
     const hiddenRoom = await roomCreate(direct);
     const proxied = await connect({ headers: proxiedHeaders('203.0.113.77') });
     expect(proxied.welcome.via).toBe('proxy');
-    const create = await proxied.request({ t: 'room.create', name: 'sneaky', private: false, internalTest: true }, 'room.created');
+    const create = await proxied.request(
+      { t: 'room.create', name: 'sneaky', private: false, internalTest: true },
+      'room.created',
+    );
     expect(create).toMatchObject({ t: 'error', code: 'internal_test_forbidden' });
     const list = await proxied.request({ t: 'room.list' }, 'room.list');
     expect(list.rooms.some((room: { id: string }) => room.id === hiddenRoom)).toBe(false);
@@ -219,7 +271,10 @@ describe('locks and edits', () => {
     const owner = await connect();
     const roomId = await roomCreate(owner);
     const { joiner } = await joinSynced(owner, roomId);
-    expect(await owner.request({ t: 'lock.acquire', ids: ['a', 'b'] }, 'lock.result')).toMatchObject({ ok: true, add: ['a', 'b'] });
+    expect(await owner.request({ t: 'lock.acquire', ids: ['a', 'b'] }, 'lock.result')).toMatchObject({
+      ok: true,
+      add: ['a', 'b'],
+    });
     expect((await joiner.next('locks')).add).toEqual(['a', 'b']);
     const rejected = await joiner.request({ t: 'lock.acquire', ids: ['c', 'b'] }, 'lock.result');
     expect(rejected).toMatchObject({ ok: false, code: 'lock_conflict', conflicts: [{ id: 'b', by: owner.user }] });
@@ -248,7 +303,8 @@ describe('locks and edits', () => {
     first.send({ t: 'edit', seq: 1, ops: [{ k: 'transform', ids: ['cube'], d: { p: [1, 0, 0] } }] });
     expect(await first.next('edit.rejected')).toMatchObject({ seq: 1, reason: 'not_locked', ids: ['cube'] });
     await first.request({ t: 'lock.acquire', ids: ['cube'] }, 'lock.result');
-    for (let seq = 2; seq <= 6; seq++) first.send({ t: 'edit', seq, ops: [{ k: 'transform', ids: ['cube'], d: { p: [seq, 0, 0] } }] });
+    for (let seq = 2; seq <= 6; seq++)
+      first.send({ t: 'edit', seq, ops: [{ k: 'transform', ids: ['cube'], d: { p: [seq, 0, 0] } }] });
     for (const recipient of [owner, second]) {
       const seen: number[] = [];
       while (seen.length < 5) {
@@ -267,9 +323,19 @@ describe('locks and edits', () => {
     const owner = await connect();
     const roomId = await roomCreate(owner);
     const { joiner } = await joinSynced(owner, roomId);
-    joiner.send({ t: 'edit', seq: 1, ops: [{ k: 'create', ids: ['new1'], d: { type: 'brush' } }, { k: 'geometry', ids: ['new1'], d: { v: [] } }] });
+    joiner.send({
+      t: 'edit',
+      seq: 1,
+      ops: [
+        { k: 'create', ids: ['new1'], d: { type: 'brush' } },
+        { k: 'geometry', ids: ['new1'], d: { v: [] } },
+      ],
+    });
     expect((await owner.next('edits')).list[0].ops.length).toBe(2);
-    expect(await owner.request({ t: 'lock.acquire', ids: ['new1'] }, 'lock.result')).toMatchObject({ ok: false, code: 'lock_conflict' });
+    expect(await owner.request({ t: 'lock.acquire', ids: ['new1'] }, 'lock.result')).toMatchObject({
+      ok: false,
+      code: 'lock_conflict',
+    });
     joiner.send({ t: 'edit', seq: 2, ops: [{ k: 'delete', ids: ['new1'] }] });
     await owner.next('edits');
     await owner.next('locks', (message) => message.by === joiner.user && message.remove?.includes('new1'));
@@ -281,7 +347,10 @@ describe('locks and edits', () => {
     const roomId = await roomCreate(owner);
     const joiner = await connect();
     await joiner.request({ t: 'room.join', room: roomId, discardLocalWork: true }, 'room.joined');
-    expect(await joiner.request({ t: 'lock.acquire', ids: ['a'] }, 'lock.result')).toMatchObject({ t: 'error', code: 'not_synced' });
+    expect(await joiner.request({ t: 'lock.acquire', ids: ['a'] }, 'lock.result')).toMatchObject({
+      t: 'error',
+      code: 'not_synced',
+    });
   });
 });
 
@@ -322,7 +391,15 @@ describe('streams', () => {
     const request = await owner.next('asset.request');
     expect(request).toMatchObject({ from: joiner.user, name: 'textures/wall.png' });
     const png = new Uint8Array([137, 80, 78, 71, 1, 2, 3, 4]);
-    owner.send({ t: 'stream.begin', to: joiner.user, stream: 9, kind: 'asset', size: png.length, name: 'textures/wall.png', mime: 'image/png' });
+    owner.send({
+      t: 'stream.begin',
+      to: joiner.user,
+      stream: 9,
+      kind: 'asset',
+      size: png.length,
+      name: 'textures/wall.png',
+      mime: 'image/png',
+    });
     owner.sendRaw(binaryFrameEncode(9, joiner.user, png));
     owner.send({ t: 'stream.end', to: joiner.user, stream: 9 });
     expect(Array.from(await streamReceive(joiner))).toEqual(Array.from(png));

@@ -14,5 +14,11 @@ export const TEST_ORIGIN = 'http://localhost:5173';
  * @returns Test configuration bound to an ephemeral loopback port.
  */
 export function testConfiguration(overrides: Partial<ServerConfiguration> = {}): ServerConfiguration {
-  return { ...configurationDefault(), hostname: '127.0.0.1', port: 0, forwardedSecret: TEST_DUMMY_FORWARDED_SECRET, ...overrides };
+  return {
+    ...configurationDefault(),
+    hostname: '127.0.0.1',
+    port: 0,
+    forwardedSecret: TEST_DUMMY_FORWARDED_SECRET,
+    ...overrides,
+  };
 }

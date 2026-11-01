@@ -1,12 +1,14 @@
 /**
  * Presence frames: the low-priority, latest-only pose of a member's viewport
- * cameras and play-mode character. Dependency-free, shared by relay and client.
+ * cameras and play-mode character. Dependency-free, shared by relay and
+ * client.
  *
- * Client frame: [0] magic 0xA7, [1] kind 2, [2] format version, [3] entry count, then the entries.
- * Relayed frame: the same with the sender user id (u32 BE) inserted after the count.
- * Entry (18 bytes): [0] id (camera slot 0..15, or 0xFF for the character), [1..12] position
- * (3 x float32 BE), [13..16] orientation (smallest-three quaternion in 32 bits), [17] vertical
- * field of view in degrees (1..179 for cameras, 0 for the character).
+ * Client frame: [0] magic 0xA7, [1] kind 2, [2] format version, [3] entry
+ * count, then the entries. Relayed frame: the same with the sender user id (u32
+ * BE) inserted after the count. Entry (18 bytes): [0] id (camera slot 0..15, or
+ * 0xFF for the character), [1..12] position (3 x float32 BE), [13..16]
+ * orientation (smallest-three quaternion in 32 bits), [17] vertical field of
+ * view in degrees (1..179 for cameras, 0 for the character).
  */
 import { BINARY_FRAME_KIND_PRESENCE, BINARY_FRAME_MAGIC } from './protocol_definitions.ts';
 
@@ -27,9 +29,13 @@ export const PRESENCE_RELAY_HEADER_BYTES = 8;
 /** Largest accepted absolute coordinate. */
 export const PRESENCE_POSITION_LIMIT = 1e6;
 /** Largest client frame in bytes. */
-export const PRESENCE_CLIENT_FRAME_BYTES_MAXIMUM = PRESENCE_CLIENT_HEADER_BYTES + PRESENCE_ENTRIES_MAXIMUM * PRESENCE_ENTRY_BYTES;
+export const PRESENCE_CLIENT_FRAME_BYTES_MAXIMUM =
+  PRESENCE_CLIENT_HEADER_BYTES + PRESENCE_ENTRIES_MAXIMUM * PRESENCE_ENTRY_BYTES;
 
-/** Scale of one packed quaternion component (10 bits over [-1/sqrt(2), 1/sqrt(2)]). */
+/**
+ * Scale of one packed quaternion component (10 bits over [-1/sqrt(2),
+ * 1/sqrt(2)]).
+ */
 const PRESENCE_QUATERNION_RANGE = Math.SQRT1_2;
 /** Largest value of a 10 bit component. */
 const PRESENCE_QUATERNION_STEPS = 1023;
@@ -49,14 +55,19 @@ export interface PresenceFrame {
 }
 
 /**
- * Validates a client presence frame: exact length, version, unique ids, finite bounded positions and a field of
- * view matching the entry kind.
+ * Validates a client presence frame: exact length, version, unique ids, finite
+ * bounded positions and a field of view matching the entry kind.
  *
  * @param frame Raw binary frame from a client.
  * @returns True when the frame is well formed.
  */
 export function presenceFrameCheck(frame: Uint8Array): boolean {
-  if (frame.byteLength < PRESENCE_CLIENT_HEADER_BYTES || frame[0] !== BINARY_FRAME_MAGIC || frame[1] !== BINARY_FRAME_KIND_PRESENCE) return false;
+  if (
+    frame.byteLength < PRESENCE_CLIENT_HEADER_BYTES ||
+    frame[0] !== BINARY_FRAME_MAGIC ||
+    frame[1] !== BINARY_FRAME_KIND_PRESENCE
+  )
+    return false;
   const count = frame[3] ?? 0;
   if (frame[2] !== PRESENCE_FORMAT_VERSION || count > PRESENCE_ENTRIES_MAXIMUM) return false;
   if (frame.byteLength !== PRESENCE_CLIENT_HEADER_BYTES + count * PRESENCE_ENTRY_BYTES) return false;
@@ -104,7 +115,8 @@ export function presenceFrameRelay(frame: Uint8Array, sender: number): Uint8Arra
 }
 
 /**
- * Encodes a client presence frame. Callers keep entries within the documented limits.
+ * Encodes a client presence frame. Callers keep entries within the documented
+ * limits.
  *
  * @param entries Entries to send (an empty list clears the sender's presence).
  * @returns Client frame.
@@ -113,7 +125,9 @@ export function presenceFrameEncode(entries: readonly PresenceEntry[]): Uint8Arr
   const frame = new Uint8Array(PRESENCE_CLIENT_HEADER_BYTES + entries.length * PRESENCE_ENTRY_BYTES);
   const view = new DataView(frame.buffer);
   frame.set([BINARY_FRAME_MAGIC, BINARY_FRAME_KIND_PRESENCE, PRESENCE_FORMAT_VERSION, entries.length], 0);
-  entries.forEach((entry, index) => presenceEntryWrite(view, PRESENCE_CLIENT_HEADER_BYTES + index * PRESENCE_ENTRY_BYTES, entry));
+  entries.forEach((entry, index) =>
+    presenceEntryWrite(view, PRESENCE_CLIENT_HEADER_BYTES + index * PRESENCE_ENTRY_BYTES, entry),
+  );
   return frame;
 }
 
@@ -148,7 +162,8 @@ export function presenceFrameDecode(frame: Uint8Array): PresenceFrame | null {
   if (sender === 0 || !presenceFrameCheck(client)) return null;
   const clientView = new DataView(client.buffer);
   const entries: PresenceEntry[] = [];
-  for (let index = 0; index < (client[3] ?? 0); index++) entries.push(presenceEntryRead(clientView, PRESENCE_CLIENT_HEADER_BYTES + index * PRESENCE_ENTRY_BYTES));
+  for (let index = 0; index < (client[3] ?? 0); index++)
+    entries.push(presenceEntryRead(clientView, PRESENCE_CLIENT_HEADER_BYTES + index * PRESENCE_ENTRY_BYTES));
   return { sender, entries };
 }
 
@@ -160,13 +175,23 @@ export function presenceFrameDecode(frame: Uint8Array): PresenceFrame | null {
  * @returns Entry.
  */
 function presenceEntryRead(view: DataView, offset: number): PresenceEntry {
-  const position: [number, number, number] = [view.getFloat32(offset + 1), view.getFloat32(offset + 5), view.getFloat32(offset + 9)];
-  return { id: view.getUint8(offset), position, quaternion: presenceQuaternionUnpack(view.getUint32(offset + 13)), fov: view.getUint8(offset + 17) };
+  const position: [number, number, number] = [
+    view.getFloat32(offset + 1),
+    view.getFloat32(offset + 5),
+    view.getFloat32(offset + 9),
+  ];
+  return {
+    id: view.getUint8(offset),
+    position,
+    quaternion: presenceQuaternionUnpack(view.getUint32(offset + 13)),
+    fov: view.getUint8(offset + 17),
+  };
 }
 
 /**
- * Packs a unit quaternion with the smallest-three scheme: 2 bits name the dropped largest component, 3 x 10 bits
- * hold the others (about 0.1 degree resolution).
+ * Packs a unit quaternion with the smallest-three scheme: 2 bits name the
+ * dropped largest component, 3 x 10 bits hold the others (about 0.1 degree
+ * resolution).
  *
  * @param x X component.
  * @param y Y component.
@@ -195,19 +220,24 @@ export function presenceQuaternionPack(x: number, y: number, z: number, w: numbe
  * @returns Quantized value 0..1023.
  */
 function presenceQuaternionQuantize(value: number): number {
-  const unit = (Math.max(-PRESENCE_QUATERNION_RANGE, Math.min(PRESENCE_QUATERNION_RANGE, value)) / PRESENCE_QUATERNION_RANGE + 1) / 2;
+  const unit =
+    (Math.max(-PRESENCE_QUATERNION_RANGE, Math.min(PRESENCE_QUATERNION_RANGE, value)) / PRESENCE_QUATERNION_RANGE + 1) /
+    2;
   return Math.round((Number.isFinite(unit) ? unit : 0.5) * PRESENCE_QUATERNION_STEPS);
 }
 
 /**
- * Unpacks a smallest-three quaternion; any 32 bit value yields a unit quaternion.
+ * Unpacks a smallest-three quaternion; any 32 bit value yields a unit
+ * quaternion.
  *
  * @param packed Packed value.
  * @returns Components x, y, z, w.
  */
 export function presenceQuaternionUnpack(packed: number): [number, number, number, number] {
   const largest = Math.floor(packed / 2 ** 30) & 3;
-  const small = [(packed >>> 20) & 1023, (packed >>> 10) & 1023, packed & 1023].map((step) => (step / PRESENCE_QUATERNION_STEPS) * 2 - 1).map((unit) => unit * PRESENCE_QUATERNION_RANGE);
+  const small = [(packed >>> 20) & 1023, (packed >>> 10) & 1023, packed & 1023]
+    .map((step) => (step / PRESENCE_QUATERNION_STEPS) * 2 - 1)
+    .map((unit) => unit * PRESENCE_QUATERNION_RANGE);
   const sum = small.reduce((total, value) => total + value * value, 0);
   const result: number[] = [...small];
   result.splice(largest, 0, Math.sqrt(Math.max(0, 1 - sum)));

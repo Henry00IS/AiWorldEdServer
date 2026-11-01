@@ -1,5 +1,6 @@
 /**
- * Room helpers for integration tests: create an internal test room, answer snapshot requests and receive streams.
+ * Room helpers for integration tests: create an internal test room, answer
+ * snapshot requests and receive streams.
  */
 import { expect } from 'bun:test';
 import { binaryFrameEncode, binaryFrameParse, binaryFramePayload } from '../../src/shared/binary_frame.ts';
@@ -7,7 +8,10 @@ import type { TestClient } from './test_client.ts';
 
 /** Creates an internal test room and returns its id. */
 export async function roomCreate(owner: TestClient, extra: Record<string, unknown> = {}): Promise<string> {
-  const reply = await owner.request({ t: 'room.create', name: `test room ${Math.random()}`, private: false, internalTest: true, ...extra }, 'room.created');
+  const reply = await owner.request(
+    { t: 'room.create', name: `test room ${Math.random()}`, private: false, internalTest: true, ...extra },
+    'room.created',
+  );
   expect(reply.t).toBe('room.created');
   return reply.room.id;
 }
@@ -33,8 +37,17 @@ export async function snapshotSend(owner: TestClient, snapshot: Uint8Array, stre
  * @param extra Extra join request fields.
  * @returns The joiner and the received snapshot bytes.
  */
-export async function testRoomJoinSynced(joiner: TestClient, owner: TestClient, roomId: string, snapshot: Uint8Array = new TextEncoder().encode('{"world":1}'), extra: Record<string, unknown> = {}): Promise<{ joiner: TestClient; received: Uint8Array }> {
-  const joined = await joiner.request({ t: 'room.join', room: roomId, discardLocalWork: true, ...extra }, 'room.joined');
+export async function testRoomJoinSynced(
+  joiner: TestClient,
+  owner: TestClient,
+  roomId: string,
+  snapshot: Uint8Array = new TextEncoder().encode('{"world":1}'),
+  extra: Record<string, unknown> = {},
+): Promise<{ joiner: TestClient; received: Uint8Array }> {
+  const joined = await joiner.request(
+    { t: 'room.join', room: roomId, discardLocalWork: true, ...extra },
+    'room.joined',
+  );
   expect(joined.t).toBe('room.joined');
   await snapshotSend(owner, snapshot);
   return { joiner, received: await streamReceive(joiner) };

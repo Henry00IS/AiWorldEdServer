@@ -1,6 +1,4 @@
-/**
- * Edit validation against locks and relay to the other members.
- */
+/** Edit validation against locks and relay to the other members. */
 import { sessionSend, type ConnectionSession } from '../connection/connection_session.ts';
 import type { Room } from '../rooms/room.ts';
 import { roomBroadcastLocks } from '../rooms/room_broadcast.ts';
@@ -23,8 +21,8 @@ interface EditRejection {
 }
 
 /**
- * Accepts an edit when the sender holds every lock it needs, then queues it
- * for every other member (coalesced per recipient) and applies lock effects.
+ * Accepts an edit when the sender holds every lock it needs, then queues it for
+ * every other member (coalesced per recipient) and applies lock effects.
  *
  * @param _core Relay core.
  * @param session Sender.
@@ -35,7 +33,13 @@ export function handlerEdit(_core: ServerCore, session: ConnectionSession, messa
   if (!room) return;
   const plan: EditLockPlan = { created: [], deleted: [] };
   const rejection = editLockCheck(room, session.user, message.ops, plan);
-  if (rejection) return sessionSend(session, { t: 'edit.rejected', seq: message.seq, reason: rejection.reason, ids: rejection.ids.slice(0, 64) });
+  if (rejection)
+    return sessionSend(session, {
+      t: 'edit.rejected',
+      seq: message.seq,
+      reason: rejection.reason,
+      ids: rejection.ids.slice(0, 64),
+    });
   editRelay(room, session, message);
   room.locks.grant(session.user, plan.created);
   const released = room.locks.release(session.user, plan.deleted);
@@ -43,7 +47,8 @@ export function handlerEdit(_core: ServerCore, session: ConnectionSession, messa
 }
 
 /**
- * Checks every operation in order. Ids created earlier in the same batch count as held.
+ * Checks every operation in order. Ids created earlier in the same batch count
+ * as held.
  *
  * @param room Room.
  * @param user Sender.
@@ -51,22 +56,30 @@ export function handlerEdit(_core: ServerCore, session: ConnectionSession, messa
  * @param plan Filled with created and deleted ids.
  * @returns Null when acceptable, otherwise the rejection.
  */
-export function editLockCheck(room: Room, user: number, operations: readonly EditOperation[], plan: EditLockPlan): EditRejection | null {
+export function editLockCheck(
+  room: Room,
+  user: number,
+  operations: readonly EditOperation[],
+  plan: EditLockPlan,
+): EditRejection | null {
   const createdInBatch = new Set<string>();
   for (const operation of operations) {
-    const rejection = operation.k === 'create'
-      ? editCheckCreate(room, user, operation.ids, createdInBatch)
-      : editCheckLocked(room, user, operation.ids, createdInBatch);
+    const rejection =
+      operation.k === 'create'
+        ? editCheckCreate(room, user, operation.ids, createdInBatch)
+        : editCheckLocked(room, user, operation.ids, createdInBatch);
     if (rejection) return rejection;
     if (operation.k === 'delete') plan.deleted.push(...operation.ids);
   }
   plan.created.push(...[...createdInBatch].filter((id) => room.locks.holderOf(id) !== user));
-  if (!room.locks.withinLimits(room.locks.countFor(user) + plan.created.length, plan.created.length)) return { reason: 'lock_limit', ids: [] };
+  if (!room.locks.withinLimits(room.locks.countFor(user) + plan.created.length, plan.created.length))
+    return { reason: 'lock_limit', ids: [] };
   return null;
 }
 
 /**
- * New ids must not be locked by anybody else; they become locked by the creator.
+ * New ids must not be locked by anybody else; they become locked by the
+ * creator.
  *
  * @param room Room.
  * @param user Creator.
@@ -74,7 +87,12 @@ export function editLockCheck(room: Room, user: number, operations: readonly Edi
  * @param createdInBatch Collects created ids.
  * @returns Rejection or null.
  */
-function editCheckCreate(room: Room, user: number, ids: readonly string[], createdInBatch: Set<string>): EditRejection | null {
+function editCheckCreate(
+  room: Room,
+  user: number,
+  ids: readonly string[],
+  createdInBatch: Set<string>,
+): EditRejection | null {
   const conflicts = room.locks.conflictsFor(user, ids);
   if (conflicts.length > 0) return { reason: 'lock_conflict', ids: conflicts.map((conflict) => conflict.id) };
   for (const id of ids) createdInBatch.add(id);
@@ -90,7 +108,12 @@ function editCheckCreate(room: Room, user: number, ids: readonly string[], creat
  * @param createdInBatch Ids created earlier in the batch.
  * @returns Rejection or null.
  */
-function editCheckLocked(room: Room, user: number, ids: readonly string[], createdInBatch: Set<string>): EditRejection | null {
+function editCheckLocked(
+  room: Room,
+  user: number,
+  ids: readonly string[],
+  createdInBatch: Set<string>,
+): EditRejection | null {
   const missing = room.locks.missingFor(user, ids).filter((id) => !createdInBatch.has(id));
   return missing.length > 0 ? { reason: 'not_locked', ids: missing } : null;
 }

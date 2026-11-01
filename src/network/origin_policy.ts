@@ -1,11 +1,9 @@
-/**
- * Origin allow list check for WebSocket upgrades.
- */
+/** Origin allow list check for WebSocket upgrades. */
 
 /**
- * Checks an Origin header against the allow list. Entries are exact origins
- * or `scheme://host:*`, which matches the host with any (or no) port.
- * Requests without an Origin header are rejected.
+ * Checks an Origin header against the allow list. Entries are exact origins or
+ * `scheme://host:*`, which matches the host with any (or no) port. Requests
+ * without an Origin header are rejected.
  *
  * @param origin Origin header value or null.
  * @param allowedOrigins Allow list entries.

@@ -4,7 +4,11 @@ import { ConnectionOutboundQueue } from '../../src/connection/connection_outboun
 /** Fake socket whose buffered amount the test controls. */
 function socketFake() {
   const sent: (string | Uint8Array)[] = [];
-  const socket = { buffered: 0, send: (data: string | Uint8Array) => (sent.push(data), 1), getBufferedAmount: () => socket.buffered };
+  const socket = {
+    buffered: 0,
+    send: (data: string | Uint8Array) => (sent.push(data), 1),
+    getBufferedAmount: () => socket.buffered,
+  };
   return { socket, sent };
 }
 

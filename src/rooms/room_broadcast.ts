@@ -1,6 +1,4 @@
-/**
- * Room-wide message fan-out helpers.
- */
+/** Room-wide message fan-out helpers. */
 import type { ConnectionSession } from '../connection/connection_session.ts';
 import type { Room } from './room.ts';
 
@@ -26,7 +24,21 @@ export function roomBroadcast(room: Room, message: object, exceptUser?: number):
  * @param added Newly locked ids.
  * @param removed Released ids.
  */
-export function roomBroadcastLocks(room: Room, by: ConnectionSession, added: readonly string[], removed: readonly string[]): void {
+export function roomBroadcastLocks(
+  room: Room,
+  by: ConnectionSession,
+  added: readonly string[],
+  removed: readonly string[],
+): void {
   if (added.length === 0 && removed.length === 0) return;
-  roomBroadcast(room, { t: 'locks', by: by.user, ...(added.length ? { add: added } : {}), ...(removed.length ? { remove: removed } : {}) }, by.user);
+  roomBroadcast(
+    room,
+    {
+      t: 'locks',
+      by: by.user,
+      ...(added.length ? { add: added } : {}),
+      ...(removed.length ? { remove: removed } : {}),
+    },
+    by.user,
+  );
 }

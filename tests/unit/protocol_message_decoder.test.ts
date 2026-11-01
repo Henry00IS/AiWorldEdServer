@@ -8,7 +8,11 @@ const valid = [
   { t: 'room.join', room: 'AbCdEfGhIjKlMn_-', discardLocalWork: true },
   { t: 'lock.acquire', ids: ['brush:1', 'brush.2'], replace: true },
   { t: 'lock.release' },
-  { t: 'edit', seq: 7, ops: [{ k: 'transform', ids: ['brush:1'], d: { p: [1, 2, 3], nested: { a: [true, null, 'x'] } } }] },
+  {
+    t: 'edit',
+    seq: 7,
+    ops: [{ k: 'transform', ids: ['brush:1'], d: { p: [1, 2, 3], nested: { a: [true, null, 'x'] } } }],
+  },
   { t: 'stream.begin', to: 2, stream: 1, kind: 'asset', size: 10, name: 'textures/wall.png', mime: 'image/png' },
 ];
 
@@ -29,7 +33,14 @@ test.each([
   ['bad object id', JSON.stringify({ t: 'lock.acquire', ids: ['bad id with spaces'] })],
   ['unknown edit kind', JSON.stringify({ t: 'edit', seq: 1, ops: [{ k: 'chat', ids: ['a'] }] })],
   ['float seq', JSON.stringify({ t: 'edit', seq: 1.5, ops: [{ k: 'transform', ids: ['a'] }] })],
-  ['too deep payload', JSON.stringify({ t: 'edit', seq: 1, ops: [{ k: 'property', ids: ['a'], d: JSON.parse('['.repeat(40) + ']'.repeat(40)) }] })],
+  [
+    'too deep payload',
+    JSON.stringify({
+      t: 'edit',
+      seq: 1,
+      ops: [{ k: 'property', ids: ['a'], d: JSON.parse('['.repeat(40) + ']'.repeat(40)) }],
+    }),
+  ],
   ['stream size too big', JSON.stringify({ t: 'stream.begin', to: 2, stream: 1, kind: 'asset', size: 2 ** 40 })],
 ])('rejects %s', (_label, text) => {
   expect(protocolMessageDecode(text).ok).toBe(false);

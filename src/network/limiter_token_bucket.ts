@@ -1,6 +1,4 @@
-/**
- * Token bucket rate limiter.
- */
+/** Token bucket rate limiter. */
 export class LimiterTokenBucket {
   private tokens: number;
   private lastRefillMs: number;
@@ -32,9 +30,7 @@ export class LimiterTokenBucket {
     return true;
   }
 
-  /**
-   * Adds tokens for the elapsed time, capped at the burst size.
-   */
+  /** Adds tokens for the elapsed time, capped at the burst size. */
   private refill(): void {
     const now = this.nowMs();
     this.tokens = Math.min(this.burst, this.tokens + ((now - this.lastRefillMs) / 1000) * this.ratePerSecond);

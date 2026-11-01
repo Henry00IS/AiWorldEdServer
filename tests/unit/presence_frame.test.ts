@@ -12,7 +12,12 @@ import {
   type PresenceEntry,
 } from '../../src/shared/presence_frame.ts';
 
-const CAMERA: PresenceEntry = { id: 0, position: [1.5, -2.25, 1000], quaternion: [0, 0.3826834, 0, 0.9238795], fov: 60 };
+const CAMERA: PresenceEntry = {
+  id: 0,
+  position: [1.5, -2.25, 1000],
+  quaternion: [0, 0.3826834, 0, 0.9238795],
+  fov: 60,
+};
 const CHARACTER: PresenceEntry = { id: PRESENCE_ID_CHARACTER, position: [3, 0, -4], quaternion: [0, 0, 0, 1], fov: 0 };
 
 /** Angle in degrees between two unit quaternions. */
@@ -29,7 +34,10 @@ describe('presence frame', () => {
     expect(presenceFrameCheck(frame)).toBe(true);
     const decoded = presenceFrameDecode(presenceFrameRelay(frame, 42));
     expect(decoded?.sender).toBe(42);
-    expect(decoded?.entries.map((entry) => [entry.id, entry.position, entry.fov])).toEqual([[0, [1.5, -2.25, 1000], 60], [255, [3, 0, -4], 0]]);
+    expect(decoded?.entries.map((entry) => [entry.id, entry.position, entry.fov])).toEqual([
+      [0, [1.5, -2.25, 1000], 60],
+      [255, [3, 0, -4], 0],
+    ]);
     expect(quaternionAngle(decoded?.entries[0]?.quaternion ?? [], CAMERA.quaternion)).toBeLessThan(0.2);
   });
 
@@ -70,10 +78,22 @@ describe('presence frame', () => {
     new DataView(far.buffer).setFloat32(5, 2e6);
     const tooMany = presenceFrameEncode(Array.from({ length: 7 }, (_, id) => ({ ...CAMERA, id })));
     for (const frame of [
-      variant(0, 0), variant(1, 1), variant(2, 9), variant(3, 2), variant(4, 16), variant(21, 0), variant(21, 180),
-      good.subarray(0, 21), new Uint8Array([...good, 0]), nonFinite, far, tooMany,
-      presenceFrameEncode([CAMERA, CAMERA]), presenceFrameEncode([{ ...CHARACTER, fov: 60 }]),
-    ]) expect(presenceFrameCheck(frame)).toBe(false);
+      variant(0, 0),
+      variant(1, 1),
+      variant(2, 9),
+      variant(3, 2),
+      variant(4, 16),
+      variant(21, 0),
+      variant(21, 180),
+      good.subarray(0, 21),
+      new Uint8Array([...good, 0]),
+      nonFinite,
+      far,
+      tooMany,
+      presenceFrameEncode([CAMERA, CAMERA]),
+      presenceFrameEncode([{ ...CHARACTER, fov: 60 }]),
+    ])
+      expect(presenceFrameCheck(frame)).toBe(false);
     expect(PRESENCE_CLIENT_FRAME_BYTES_MAXIMUM).toBe(4 + 6 * PRESENCE_ENTRY_BYTES);
   });
 });

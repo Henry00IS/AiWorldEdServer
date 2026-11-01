@@ -1,5 +1,10 @@
 import { describe, expect, test } from 'bun:test';
-import { passwordGenerate, PASSWORD_ALPHABET_DIGITS, PASSWORD_ALPHABET_SPECIAL, PASSWORD_ALPHABET_UPPERCASE } from '../../src/shared/password_generator.ts';
+import {
+  passwordGenerate,
+  PASSWORD_ALPHABET_DIGITS,
+  PASSWORD_ALPHABET_SPECIAL,
+  PASSWORD_ALPHABET_UPPERCASE,
+} from '../../src/shared/password_generator.ts';
 import { passwordPolicyEvaluate, passwordPolicyIsAcceptable } from '../../src/shared/password_policy.ts';
 
 describe('password policy', () => {
@@ -27,12 +32,15 @@ describe('password policy', () => {
     expect(passwordPolicyEvaluate(`Aa1!${'xY7#'.repeat(40)}`).issues).toContain('too_long');
   });
 
-  test.each(['Tq7#mRw2!xLp', 'Gx9$vNk4@Lb', 'blue-Ocean7!river', 'Jy4&Rk8%Wz', 'Fähre-Blau9!'])('accepts %p', (password) => {
-    const result = passwordPolicyEvaluate(password);
-    expect(result.issues).toEqual([]);
-    expect(result.ok).toBe(true);
-    expect(result.estimatedBits).toBeGreaterThanOrEqual(40);
-  });
+  test.each(['Tq7#mRw2!xLp', 'Gx9$vNk4@Lb', 'blue-Ocean7!river', 'Jy4&Rk8%Wz', 'Fähre-Blau9!'])(
+    'accepts %p',
+    (password) => {
+      const result = passwordPolicyEvaluate(password);
+      expect(result.issues).toEqual([]);
+      expect(result.ok).toBe(true);
+      expect(result.estimatedBits).toBeGreaterThanOrEqual(40);
+    },
+  );
 });
 
 describe('password generator', () => {

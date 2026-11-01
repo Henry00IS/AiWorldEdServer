@@ -1,8 +1,9 @@
 /**
- * Presence relay: latest-only, lowest priority. Each recipient has a mailbox holding at most one frame per sender;
- * a newer frame replaces the older one and frames leave the mailbox only while the recipient's outbound queue is
- * empty and its socket buffer is nearly drained, so presence never delays or queues behind edits and never builds
- * a backlog.
+ * Presence relay: latest-only, lowest priority. Each recipient has a mailbox
+ * holding at most one frame per sender; a newer frame replaces the older one
+ * and frames leave the mailbox only while the recipient's outbound queue is
+ * empty and its socket buffer is nearly drained, so presence never delays or
+ * queues behind edits and never builds a backlog.
  */
 import type { ConnectionSession } from '../connection/connection_session.ts';
 import type { Room } from '../rooms/room.ts';
@@ -10,8 +11,9 @@ import type { ServerCore } from '../server/server_core.ts';
 import { presenceFrameCheck, presenceFrameRelay } from '../shared/presence_frame.ts';
 
 /**
- * Validates a presence frame and offers it to every other synced member.
- * Frames from members that are not synced yet and frames over the presence rate are dropped silently.
+ * Validates a presence frame and offers it to every other synced member. Frames
+ * from members that are not synced yet and frames over the presence rate are
+ * dropped silently.
  *
  * @param core Relay core.
  * @param session Sender.
@@ -29,7 +31,8 @@ export function handlerPresence(core: ServerCore, session: ConnectionSession, fr
 }
 
 /**
- * Stores a frame in a recipient's mailbox (replacing the sender's older one) and tries to deliver.
+ * Stores a frame in a recipient's mailbox (replacing the sender's older one)
+ * and tries to deliver.
  *
  * @param recipient Recipient.
  * @param sender Sender user id.
@@ -55,7 +58,8 @@ export function presenceFlush(recipient: ConnectionSession): void {
 }
 
 /**
- * Gives a member that just finished syncing the latest presence of everyone else.
+ * Gives a member that just finished syncing the latest presence of everyone
+ * else.
  *
  * @param room Room.
  * @param member Newly synced member.

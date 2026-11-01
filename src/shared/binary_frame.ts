@@ -1,9 +1,13 @@
 /**
- * Fixed 12 byte header for binary stream chunks:
- * [0] magic 0xA7, [1] kind, [2..3] reserved (0), [4..7] stream id (u32 BE),
- * [8..11] peer user id (u32 BE; recipient when sent by a client, sender when relayed).
+ * Fixed 12 byte header for binary stream chunks: [0] magic 0xA7, [1] kind,
+ * [2..3] reserved (0), [4..7] stream id (u32 BE), [8..11] peer user id (u32 BE;
+ * recipient when sent by a client, sender when relayed).
  */
-import { BINARY_FRAME_HEADER_BYTES, BINARY_FRAME_KIND_STREAM_CHUNK, BINARY_FRAME_MAGIC } from './protocol_definitions.ts';
+import {
+  BINARY_FRAME_HEADER_BYTES,
+  BINARY_FRAME_KIND_STREAM_CHUNK,
+  BINARY_FRAME_MAGIC,
+} from './protocol_definitions.ts';
 
 /** Decoded binary chunk header plus payload view. */
 export interface BinaryStreamChunk {

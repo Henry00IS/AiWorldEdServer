@@ -43,7 +43,7 @@ export const PASSWORD_ENTROPY_BITS_MINIMUM = 40;
 const KEYBOARD_ROWS: readonly string[] = [
   '`1234567890-=',
   'qwertyuiop[]',
-  'asdfghjkl;\'',
+  "asdfghjkl;'",
   'zxcvbnm,./',
   'qwertzuiopü',
   'asdfghjklöä',
@@ -54,17 +54,72 @@ const KEYBOARD_ROWS: readonly string[] = [
 ];
 
 const COMMON_PASSWORD_WORDS: readonly string[] = [
-  'password', 'passwort', 'passw', 'qwerty', 'qwertz', 'azerty', 'letmein', 'welcome', 'admin',
-  'iloveyou', 'monkey', 'dragon', 'football', 'baseball', 'master', 'login', 'sunshine',
-  'princess', 'shadow', 'trustno', 'changeme', 'secret', 'aiworlded', 'hallo', 'hello',
-  'summer', 'winter', 'spring', 'autumn', 'freedom', 'whatever', 'superman', 'batman',
-  'starwars', 'pokemon', 'michael', 'jordan', 'charlie', 'killer', 'soccer', 'hunter',
-  'abc', 'test', 'guest', 'root', 'user', 'default', 'computer', 'internet', 'google',
+  'password',
+  'passwort',
+  'passw',
+  'qwerty',
+  'qwertz',
+  'azerty',
+  'letmein',
+  'welcome',
+  'admin',
+  'iloveyou',
+  'monkey',
+  'dragon',
+  'football',
+  'baseball',
+  'master',
+  'login',
+  'sunshine',
+  'princess',
+  'shadow',
+  'trustno',
+  'changeme',
+  'secret',
+  'aiworlded',
+  'hallo',
+  'hello',
+  'summer',
+  'winter',
+  'spring',
+  'autumn',
+  'freedom',
+  'whatever',
+  'superman',
+  'batman',
+  'starwars',
+  'pokemon',
+  'michael',
+  'jordan',
+  'charlie',
+  'killer',
+  'soccer',
+  'hunter',
+  'abc',
+  'test',
+  'guest',
+  'root',
+  'user',
+  'default',
+  'computer',
+  'internet',
+  'google',
 ];
 
 const LEET_SUBSTITUTIONS: Readonly<Record<string, string>> = {
-  '0': 'o', '1': 'i', '!': 'i', '|': 'i', '3': 'e', '4': 'a', '@': 'a', '5': 's', '$': 's',
-  '7': 't', '+': 't', '8': 'b', '9': 'g',
+  '0': 'o',
+  '1': 'i',
+  '!': 'i',
+  '|': 'i',
+  '3': 'e',
+  '4': 'a',
+  '@': 'a',
+  '5': 's',
+  $: 's',
+  '7': 't',
+  '+': 't',
+  '8': 'b',
+  '9': 'g',
 };
 
 /**
@@ -111,13 +166,18 @@ function passwordPolicyCollectStructuralIssues(characters: string[], issues: Pas
 }
 
 /**
- * Collects heuristic weakness issues (repeats, sequences, variety, common words).
+ * Collects heuristic weakness issues (repeats, sequences, variety, common
+ * words).
  *
  * @param password Original password.
  * @param characters Password split into code points.
  * @param issues Issue list to append to.
  */
-function passwordPolicyCollectWeaknessIssues(password: string, characters: string[], issues: PasswordPolicyIssue[]): void {
+function passwordPolicyCollectWeaknessIssues(
+  password: string,
+  characters: string[],
+  issues: PasswordPolicyIssue[],
+): void {
   if (passwordHasRepeatedCharacters(characters)) issues.push('repeated_characters');
   if (passwordHasSequence(password.toLowerCase())) issues.push('sequence');
   if (new Set(characters).size < PASSWORD_DISTINCT_CHARACTERS_MINIMUM) issues.push('low_variety');
@@ -125,7 +185,8 @@ function passwordPolicyCollectWeaknessIssues(password: string, characters: strin
 }
 
 /**
- * Detects long runs of one character or a single character dominating the password.
+ * Detects long runs of one character or a single character dominating the
+ * password.
  *
  * @param characters Password split into code points.
  * @returns True when the password is too repetitive.
@@ -145,7 +206,8 @@ export function passwordHasRepeatedCharacters(characters: string[]): boolean {
 }
 
 /**
- * Detects alphabetical/numeric runs (abcd, 4321) and keyboard runs (qwer, asdf).
+ * Detects alphabetical/numeric runs (abcd, 4321) and keyboard runs (qwer,
+ * asdf).
  *
  * @param lowercasePassword Password in lower case.
  * @returns True when a sequence of at least the minimum run length exists.
@@ -174,7 +236,8 @@ function passwordHasCodePointSequence(text: string): boolean {
 }
 
 /**
- * Detects runs of adjacent keys on common keyboard layouts, in either direction.
+ * Detects runs of adjacent keys on common keyboard layouts, in either
+ * direction.
  *
  * @param text Lower case text to scan.
  * @returns True when a keyboard run reaches the minimum length.
@@ -213,9 +276,9 @@ function passwordNormalizeLeet(lowercasePassword: string): string {
 }
 
 /**
- * Conservative entropy estimate: pool size of the used character classes
- * raised to the number of characters, where repeated characters only count
- * once and sequence steps count as half a character.
+ * Conservative entropy estimate: pool size of the used character classes raised
+ * to the number of characters, where repeated characters only count once and
+ * sequence steps count as half a character.
  *
  * @param characters Password split into code points.
  * @returns Estimated entropy in bits.
@@ -238,7 +301,8 @@ function passwordCharacterPoolSize(characters: string[]): number {
   if (characters.some((character) => character >= 'a' && character <= 'z')) pool += 26;
   if (characters.some((character) => character >= 'A' && character <= 'Z')) pool += 26;
   if (characters.some(passwordCharacterIsDigit)) pool += 10;
-  if (characters.some((character) => passwordCharacterIsSpecial(character) && character.charCodeAt(0) < 128)) pool += 33;
+  if (characters.some((character) => passwordCharacterIsSpecial(character) && character.charCodeAt(0) < 128))
+    pool += 33;
   if (characters.some((character) => character.charCodeAt(0) >= 128)) pool += 100;
   return pool;
 }
@@ -281,7 +345,8 @@ export function passwordCharacterIsDigit(character: string): boolean {
 
 /**
  * @param character Single code point.
- * @returns True for anything that is not a letter, digit, whitespace or control character.
+ * @returns True for anything that is not a letter, digit, whitespace or control
+ *   character.
  */
 export function passwordCharacterIsSpecial(character: string): boolean {
   return !/[\p{L}\p{N}\s\p{Cc}]/u.test(character);

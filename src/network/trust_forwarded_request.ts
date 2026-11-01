@@ -1,6 +1,6 @@
 /**
- * Decides whether an upgrade request came through the trusted reverse proxy
- * and which client address it represents.
+ * Decides whether an upgrade request came through the trusted reverse proxy and
+ * which client address it represents.
  */
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { isIP } from 'node:net';
@@ -10,22 +10,28 @@ export const HEADER_FORWARDED_SECRET = 'x-forwarded-secret';
 
 /** Trust verdict for an incoming request. */
 export type RequestTrust =
-  | { kind: 'direct'; clientIp: string }
-  | { kind: 'proxied'; clientIp: string }
-  | { kind: 'rejected'; reason: string };
+  { kind: 'direct'; clientIp: string } | { kind: 'proxied'; clientIp: string } | { kind: 'rejected'; reason: string };
 
 /**
  * Resolves trust and client address.
- * - No secret header: direct connection, socket address is used, forwarded headers are ignored.
- * - Correct secret: proxied, X-Real-IP (or the last X-Forwarded-For hop) is the client.
+ *
+ * - No secret header: direct connection, socket address is used, forwarded
+ *   headers are ignored.
+ * - Correct secret: proxied, X-Real-IP (or the last X-Forwarded-For hop) is the
+ *   client.
  * - Wrong secret, or a secret header while none is configured: rejected.
  *
  * @param headers Request headers.
  * @param socketAddress Remote address of the TCP peer.
- * @param configuredSecret Expected secret, or null when the proxy is not configured.
+ * @param configuredSecret Expected secret, or null when the proxy is not
+ *   configured.
  * @returns Trust verdict.
  */
-export function requestTrustResolve(headers: Headers, socketAddress: string, configuredSecret: string | null): RequestTrust {
+export function requestTrustResolve(
+  headers: Headers,
+  socketAddress: string,
+  configuredSecret: string | null,
+): RequestTrust {
   const presentedSecret = headers.get(HEADER_FORWARDED_SECRET);
   if (presentedSecret === null) return { kind: 'direct', clientIp: ipNormalize(socketAddress) };
   if (configuredSecret === null || !secretEqualsConstantTime(presentedSecret, configuredSecret)) {
@@ -49,12 +55,16 @@ export function secretEqualsConstantTime(presented: string, expected: string): b
 
 /**
  * @param headers Request headers from the trusted proxy.
- * @returns Client address from X-Real-IP, else the last X-Forwarded-For hop, else null.
+ * @returns Client address from X-Real-IP, else the last X-Forwarded-For hop,
+ *   else null.
  */
 function forwardedClientIp(headers: Headers): string | null {
   const realIp = headers.get('x-real-ip')?.trim();
   if (realIp && isIP(ipNormalize(realIp))) return ipNormalize(realIp);
-  const forwardedHops = (headers.get('x-forwarded-for') ?? '').split(',').map((hop) => hop.trim()).filter(Boolean);
+  const forwardedHops = (headers.get('x-forwarded-for') ?? '')
+    .split(',')
+    .map((hop) => hop.trim())
+    .filter(Boolean);
   const lastHop = forwardedHops[forwardedHops.length - 1];
   if (lastHop && isIP(ipNormalize(lastHop))) return ipNormalize(lastHop);
   return null;

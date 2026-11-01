@@ -1,7 +1,7 @@
 /**
- * End-to-end check through the public proxy:
- *   connect -> hello -> create room -> list -> second client joins -> snapshot relay.
- * Asserts the server reports the connection as coming through the proxy (via=proxy).
+ * End-to-end check through the public proxy: connect -> hello -> create room ->
+ * list -> second client joins -> snapshot relay. Asserts the server reports the
+ * connection as coming through the proxy (via=proxy).
  *
  * Usage: bun scripts/verify_public.ts [wss://aiworlded.00labs.net/ws]
  */
@@ -10,15 +10,25 @@ import { PROTOCOL_ID, PROTOCOL_VERSION } from '../src/shared/protocol_definition
 
 const url = process.argv[2] ?? process.env.PUBLIC_WS_URL ?? 'wss://aiworlded.00labs.net/ws';
 const origin = 'https://henry00is.github.io';
-/** Expected trust verdict; 'proxy' through the reverse proxy, 'direct' when testing a local server. */
+/**
+ * Expected trust verdict; 'proxy' through the reverse proxy, 'direct' when testing a local
+ * server.
+ */
 const expectedVia = process.env.EXPECT_VIA ?? 'proxy';
 
 /** Minimal client with an inbox. */
-async function clientOpen(): Promise<{ send: (m: object) => void; raw: (d: Uint8Array) => void; next: (t: string) => Promise<any>; close: () => void }> {
+async function clientOpen(): Promise<{
+  send: (m: object) => void;
+  raw: (d: Uint8Array) => void;
+  next: (t: string) => Promise<any>;
+  close: () => void;
+}> {
   const socket = new WebSocket(url, { headers: { Origin: origin } } as any);
   socket.binaryType = 'arraybuffer';
   const inbox: any[] = [];
-  socket.addEventListener('message', (event) => inbox.push(typeof event.data === 'string' ? JSON.parse(event.data) : { t: '#binary' }));
+  socket.addEventListener('message', (event) =>
+    inbox.push(typeof event.data === 'string' ? JSON.parse(event.data) : { t: '#binary' }),
+  );
   await new Promise((resolve, reject) => {
     socket.addEventListener('open', resolve, { once: true });
     socket.addEventListener('error', () => reject(new Error(`cannot connect to ${url}`)), { once: true });

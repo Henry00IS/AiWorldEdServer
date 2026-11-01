@@ -7,9 +7,22 @@ import { Room } from '../../src/rooms/room.ts';
 /** Session with a fake socket whose buffer level the test controls. */
 function sessionFake(user: number) {
   const sent: Uint8Array[] = [];
-  const socket = { buffered: 0, send: (data: string | Uint8Array) => (sent.push(data as Uint8Array), 1), getBufferedAmount: () => socket.buffered };
+  const socket = {
+    buffered: 0,
+    send: (data: string | Uint8Array) => (sent.push(data as Uint8Array), 1),
+    getBufferedAmount: () => socket.buffered,
+  };
   const outbound = new ConnectionOutboundQueue(socket, 1 << 20, 1000, () => {});
-  const session = { user, ipKey: 'ip', name: `u${user}`, outbound, closed: false, synced: true, presencePending: new Map(), presenceHighWaterBytes: 100 } as unknown as ConnectionSession;
+  const session = {
+    user,
+    ipKey: 'ip',
+    name: `u${user}`,
+    outbound,
+    closed: false,
+    synced: true,
+    presencePending: new Map(),
+    presenceHighWaterBytes: 100,
+  } as unknown as ConnectionSession;
   outbound.idleListener = () => presenceFlush(session);
   return { session, socket, sent };
 }
@@ -43,7 +56,17 @@ test('purge forgets a leaver in every mailbox and in the room', () => {
   const owner = sessionFake(1);
   const other = sessionFake(2);
   const leaver = sessionFake(3);
-  const room = new Room({ id: 'r', name: 'room', isPrivate: false, passwordHash: null, internalTest: true, maxUsers: 8, owner: owner.session, locksPerUser: 10, locksPerRoom: 10 });
+  const room = new Room({
+    id: 'r',
+    name: 'room',
+    isPrivate: false,
+    passwordHash: null,
+    internalTest: true,
+    maxUsers: 8,
+    owner: owner.session,
+    locksPerUser: 10,
+    locksPerRoom: 10,
+  });
   room.memberAdd(other.session);
   other.socket.buffered = 500;
   presenceOffer(other.session, 3, new Uint8Array([1]));

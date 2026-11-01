@@ -1,6 +1,4 @@
-/**
- * Fixed-window failure counter per key (e.g. wrong passwords per minute).
- */
+/** Fixed-window failure counter per key (e.g. wrong passwords per minute). */
 export class LimiterFailureWindow {
   private readonly windows = new Map<string, { startMs: number; failures: number }>();
 
@@ -17,7 +15,8 @@ export class LimiterFailureWindow {
 
   /**
    * @param key Limit key.
-   * @returns True when the key has exhausted its failures in the current window.
+   * @returns True when the key has exhausted its failures in the current
+   *   window.
    */
   isBlocked(key: string): boolean {
     const window = this.windowCurrent(key);
@@ -35,9 +34,7 @@ export class LimiterFailureWindow {
     this.windows.set(key, window);
   }
 
-  /**
-   * Drops expired windows to bound memory.
-   */
+  /** Drops expired windows to bound memory. */
   prune(): void {
     for (const key of [...this.windows.keys()]) this.windowCurrent(key);
   }

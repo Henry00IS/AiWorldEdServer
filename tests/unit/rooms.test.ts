@@ -7,7 +7,11 @@ import { RoomRegistry } from '../../src/rooms/room_registry.ts';
 test('lock acquisition is all-or-nothing and reports holders', () => {
   const locks = new RoomLockTable(100, 1000);
   expect(locks.acquire(1, ['a', 'b'], false)).toEqual({ ok: true, added: ['a', 'b'], removed: [] });
-  expect(locks.acquire(2, ['c', 'b'], false)).toEqual({ ok: false, reason: 'lock_conflict', conflicts: [{ id: 'b', by: 1 }] });
+  expect(locks.acquire(2, ['c', 'b'], false)).toEqual({
+    ok: false,
+    reason: 'lock_conflict',
+    conflicts: [{ id: 'b', by: 1 }],
+  });
   expect(locks.holderOf('c')).toBeUndefined();
   expect(locks.acquire(1, ['b', 'c'], true)).toEqual({ ok: true, added: ['c'], removed: ['a'] });
   expect(locks.acquire(2, ['a'], false).ok).toBe(true);
@@ -37,7 +41,17 @@ test('registry enforces per-IP and total room limits with reservations', () => {
 
 test('color slots: lowest free slot, unique among members, reused after leaving', () => {
   const session = (user: number) => ({ user, ipKey: 'ip', name: `u${user}` }) as unknown as ConnectionSession;
-  const room = new Room({ id: 'r', name: 'room', isPrivate: false, passwordHash: null, internalTest: true, maxUsers: 8, owner: session(1), locksPerUser: 10, locksPerRoom: 10 });
+  const room = new Room({
+    id: 'r',
+    name: 'room',
+    isPrivate: false,
+    passwordHash: null,
+    internalTest: true,
+    maxUsers: 8,
+    owner: session(1),
+    locksPerUser: 10,
+    locksPerRoom: 10,
+  });
   for (const user of [2, 3, 4]) room.memberAdd(session(user));
   expect([1, 2, 3, 4].map((user) => room.colorOf(user))).toEqual([0, 1, 2, 3]);
   room.memberDelete(2);

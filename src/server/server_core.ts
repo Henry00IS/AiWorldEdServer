@@ -1,5 +1,6 @@
 /**
- * Transport-independent relay core: session lifecycle, rate limits and dispatch.
+ * Transport-independent relay core: session lifecycle, rate limits and
+ * dispatch.
  */
 import type { ServerConfiguration } from '../config/server_configuration.ts';
 import { ConnectionOutboundQueue, type OutboundSocket } from '../connection/connection_outbound_queue.ts';
@@ -7,8 +8,21 @@ import { sessionSend, type ConnectionSession, type ConnectionUpgradeData } from 
 import { handlerEdit } from '../handlers/handler_edit.ts';
 import { handlerPresence, presenceFlush } from '../handlers/handler_presence.ts';
 import { handlerLockAcquire, handlerLockRelease } from '../handlers/handler_lock.ts';
-import { handlerRoomCreate, handlerRoomJoin, handlerRoomLeave, handlerRoomList, roomMembershipEnd } from '../handlers/handler_room.ts';
-import { handlerAssetMissing, handlerAssetRequest, handlerStreamAbort, handlerStreamBegin, handlerStreamChunk, handlerStreamEnd } from '../handlers/handler_stream.ts';
+import {
+  handlerRoomCreate,
+  handlerRoomJoin,
+  handlerRoomLeave,
+  handlerRoomList,
+  roomMembershipEnd,
+} from '../handlers/handler_room.ts';
+import {
+  handlerAssetMissing,
+  handlerAssetRequest,
+  handlerStreamAbort,
+  handlerStreamBegin,
+  handlerStreamChunk,
+  handlerStreamEnd,
+} from '../handlers/handler_stream.ts';
 import { LimiterFailureWindow } from '../network/limiter_failure_window.ts';
 import { LimiterKeyCounter } from '../network/limiter_key_counter.ts';
 import { LimiterTokenBucket } from '../network/limiter_token_bucket.ts';
@@ -16,7 +30,13 @@ import { protocolMessageDecode } from '../protocol/protocol_message_decoder.ts';
 import { PROTOCOL_CAPS } from '../protocol/protocol_message_schemas.ts';
 import { RoomRegistry } from '../rooms/room_registry.ts';
 import { displayNameFallback, displayNameNormalize, DISPLAY_NAME_LENGTH_MAXIMUM } from '../shared/room_name_policy.ts';
-import { BINARY_FRAME_KIND_PRESENCE, CLOSE_CODES, PROTOCOL_ID, PROTOCOL_VERSION, type ClientMessage } from '../shared/protocol_definitions.ts';
+import {
+  BINARY_FRAME_KIND_PRESENCE,
+  CLOSE_CODES,
+  PROTOCOL_ID,
+  PROTOCOL_VERSION,
+  type ClientMessage,
+} from '../shared/protocol_definitions.ts';
 
 /** Socket surface the core needs from the transport. */
 export interface CoreSocket extends OutboundSocket {
@@ -24,14 +44,19 @@ export interface CoreSocket extends OutboundSocket {
 }
 
 /**
- * Display name from the hello message. Older clients may send longer names; they are cut to the maximum.
+ * Display name from the hello message. Older clients may send longer names;
+ * they are cut to the maximum.
  *
  * @param rawName Name from hello, if any.
  * @param user User id for the fallback.
  * @returns Valid display name.
  */
 function displayNameFromHello(rawName: string | undefined, user: number): string {
-  const name = displayNameNormalize(Array.from(rawName?.trim() ?? '').slice(0, DISPLAY_NAME_LENGTH_MAXIMUM).join(''));
+  const name = displayNameNormalize(
+    Array.from(rawName?.trim() ?? '')
+      .slice(0, DISPLAY_NAME_LENGTH_MAXIMUM)
+      .join(''),
+  );
   return name.ok ? name.name : displayNameFallback(user);
 }
 
@@ -46,9 +71,7 @@ export class ServerCore {
   private nextUserId = 1;
   private readonly pruneTimer: ReturnType<typeof setInterval>;
 
-  /**
-   * @param config Effective configuration.
-   */
+  /** @param config Effective configuration. */
   constructor(readonly config: ServerConfiguration) {
     this.registry = new RoomRegistry(config.roomsPerIp, config.roomsTotal);
     this.connectionsPerIpKey = new LimiterKeyCounter(config.connectionsPerIp);
@@ -69,7 +92,8 @@ export class ServerCore {
   }
 
   /**
-   * Creates the session for a freshly upgraded socket and arms the handshake timer.
+   * Creates the session for a freshly upgraded socket and arms the handshake
+   * timer.
    *
    * @param socket Transport socket.
    * @param data Upgrade data.
@@ -78,7 +102,10 @@ export class ServerCore {
   sessionOpen(socket: CoreSocket, data: ConnectionUpgradeData): ConnectionSession {
     const session = this.sessionCreate(socket, data);
     this.sessions.set(session.user, session);
-    session.handshakeTimer = setTimeout(() => session.close(CLOSE_CODES.handshakeTimeout, 'handshake timeout'), this.config.handshakeTimeoutMs);
+    session.handshakeTimer = setTimeout(
+      () => session.close(CLOSE_CODES.handshakeTimeout, 'handshake timeout'),
+      this.config.handshakeTimeoutMs,
+    );
     return session;
   }
 
@@ -123,9 +150,7 @@ export class ServerCore {
     this.connectionsPerIpKey.release(session.ipKey);
   }
 
-  /**
-   * Closes every connection and stops timers.
-   */
+  /** Closes every connection and stops timers. */
   shutdown(): void {
     clearInterval(this.pruneTimer);
     for (const session of [...this.sessions.values()]) session.close(CLOSE_CODES.shuttingDown, 'server shutting down');
@@ -149,8 +174,11 @@ export class ServerCore {
   private sessionCreate(socket: CoreSocket, data: ConnectionUpgradeData): ConnectionSession {
     const config = this.config;
     let session: ConnectionSession;
-    const outbound = new ConnectionOutboundQueue(socket, config.outboundQueueBytesMaximum, config.socketBufferHighWaterBytes, () =>
-      session.close(CLOSE_CODES.slowConsumer, 'slow consumer'),
+    const outbound = new ConnectionOutboundQueue(
+      socket,
+      config.outboundQueueBytesMaximum,
+      config.socketBufferHighWaterBytes,
+      () => session.close(CLOSE_CODES.slowConsumer, 'slow consumer'),
     );
     session = {
       user: this.userIdNext(),
@@ -178,9 +206,7 @@ export class ServerCore {
     return session;
   }
 
-  /**
-   * @returns Next user id, wrapping within u32 and skipping ids in use.
-   */
+  /** @returns Next user id, wrapping within u32 and skipping ids in use. */
   private userIdNext(): number {
     do {
       this.nextUserId = this.nextUserId >= 0xffffffff ? 1 : this.nextUserId + 1;
@@ -218,7 +244,8 @@ export class ServerCore {
    */
   private handshake(session: ConnectionSession, message: ClientMessage): void {
     if (message.t !== 'hello') return this.violation(session, 'expected hello');
-    if (message.version !== PROTOCOL_VERSION) return this.violation(session, `unsupported version, server speaks ${PROTOCOL_VERSION}`);
+    if (message.version !== PROTOCOL_VERSION)
+      return this.violation(session, `unsupported version, server speaks ${PROTOCOL_VERSION}`);
     session.name = displayNameFromHello(message.name, session.user);
     session.helloDone = true;
     if (session.handshakeTimer) clearTimeout(session.handshakeTimer);
@@ -264,26 +291,38 @@ export class ServerCore {
    */
   private dispatch(session: ConnectionSession, message: ClientMessage): void {
     switch (message.t) {
-      case 'ping': return sessionSend(session, { t: 'pong', ...(message.r === undefined ? {} : { r: message.r }) });
-      case 'room.list': return handlerRoomList(this, session, message);
-      case 'room.create': return void handlerRoomCreate(this, session, message);
-      case 'room.join': return void handlerRoomJoin(this, session, message);
-      case 'room.leave': return handlerRoomLeave(this, session, message);
-      case 'lock.acquire': return handlerLockAcquire(this, session, message);
-      case 'lock.release': return handlerLockRelease(this, session, message);
-      case 'edit': return handlerEdit(this, session, message);
-      case 'asset.request': return handlerAssetRequest(this, session, message);
-      case 'asset.missing': return handlerAssetMissing(this, session, message);
-      case 'stream.begin': return handlerStreamBegin(this, session, message);
-      case 'stream.end': return handlerStreamEnd(this, session, message);
-      case 'stream.abort': return handlerStreamAbort(this, session, message);
-      case 'hello': return this.violation(session, 'duplicate hello');
+      case 'ping':
+        return sessionSend(session, { t: 'pong', ...(message.r === undefined ? {} : { r: message.r }) });
+      case 'room.list':
+        return handlerRoomList(this, session, message);
+      case 'room.create':
+        return void handlerRoomCreate(this, session, message);
+      case 'room.join':
+        return void handlerRoomJoin(this, session, message);
+      case 'room.leave':
+        return handlerRoomLeave(this, session, message);
+      case 'lock.acquire':
+        return handlerLockAcquire(this, session, message);
+      case 'lock.release':
+        return handlerLockRelease(this, session, message);
+      case 'edit':
+        return handlerEdit(this, session, message);
+      case 'asset.request':
+        return handlerAssetRequest(this, session, message);
+      case 'asset.missing':
+        return handlerAssetMissing(this, session, message);
+      case 'stream.begin':
+        return handlerStreamBegin(this, session, message);
+      case 'stream.end':
+        return handlerStreamEnd(this, session, message);
+      case 'stream.abort':
+        return handlerStreamAbort(this, session, message);
+      case 'hello':
+        return this.violation(session, 'duplicate hello');
     }
   }
 
-  /**
-   * Drops expired failure windows.
-   */
+  /** Drops expired failure windows. */
   private limitersPrune(): void {
     this.joinFailuresPerIp.prune();
     this.joinFailuresPerRoom.prune();

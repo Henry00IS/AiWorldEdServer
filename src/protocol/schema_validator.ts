@@ -27,7 +27,9 @@ export function schemaValidate(schema: Schema, value: unknown, path = '$'): stri
     case 'string':
       return schemaValidateString(schema, value, path);
     case 'int':
-      return Number.isSafeInteger(value) && (value as number) >= schema.min && (value as number) <= schema.max ? null : `${path}: int`;
+      return Number.isSafeInteger(value) && (value as number) >= schema.min && (value as number) <= schema.max
+        ? null
+        : `${path}: int`;
     case 'bool':
       return typeof value === 'boolean' ? null : `${path}: bool`;
     case 'literal':
@@ -39,7 +41,9 @@ export function schemaValidate(schema: Schema, value: unknown, path = '$'): stri
     case 'object':
       return schemaValidateObject(schema, value, path);
     case 'opaque':
-      return schemaOpaqueWithinBounds(value, schema.maxDepth, { remaining: schema.maxNodes }) ? null : `${path}: opaque too deep or large`;
+      return schemaOpaqueWithinBounds(value, schema.maxDepth, { remaining: schema.maxNodes })
+        ? null
+        : `${path}: opaque too deep or large`;
   }
 }
 
@@ -49,7 +53,11 @@ export function schemaValidate(schema: Schema, value: unknown, path = '$'): stri
  * @param path Error path.
  * @returns Null when valid, otherwise an error description.
  */
-function schemaValidateString(schema: Extract<Schema, { type: 'string' }>, value: unknown, path: string): string | null {
+function schemaValidateString(
+  schema: Extract<Schema, { type: 'string' }>,
+  value: unknown,
+  path: string,
+): string | null {
   if (typeof value !== 'string') return `${path}: string`;
   if (value.length < schema.min || value.length > schema.max) return `${path}: length`;
   if (schema.pattern && !schema.pattern.test(value)) return `${path}: pattern`;
@@ -78,11 +86,16 @@ function schemaValidateArray(schema: Extract<Schema, { type: 'array' }>, value: 
  * @param path Error path.
  * @returns Null when valid, otherwise an error description.
  */
-function schemaValidateObject(schema: Extract<Schema, { type: 'object' }>, value: unknown, path: string): string | null {
+function schemaValidateObject(
+  schema: Extract<Schema, { type: 'object' }>,
+  value: unknown,
+  path: string,
+): string | null {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return `${path}: object`;
   const record = value as Record<string, unknown>;
   for (const key of Object.keys(record)) {
-    if (!Object.hasOwn(schema.required, key) && !(schema.optional && Object.hasOwn(schema.optional, key))) return `${path}.${key}: unknown field`;
+    if (!Object.hasOwn(schema.required, key) && !(schema.optional && Object.hasOwn(schema.optional, key)))
+      return `${path}.${key}: unknown field`;
   }
   for (const [key, child] of Object.entries(schema.required)) {
     if (!Object.hasOwn(record, key)) return `${path}.${key}: missing`;
@@ -98,7 +111,11 @@ function schemaValidateObject(schema: Extract<Schema, { type: 'object' }>, value
  * @param path Error path.
  * @returns Null when valid, otherwise an error description.
  */
-function schemaValidateOptionalFields(optional: Record<string, Schema> | undefined, record: Record<string, unknown>, path: string): string | null {
+function schemaValidateOptionalFields(
+  optional: Record<string, Schema> | undefined,
+  record: Record<string, unknown>,
+  path: string,
+): string | null {
   if (!optional) return null;
   for (const [key, child] of Object.entries(optional)) {
     if (!Object.hasOwn(record, key)) continue;

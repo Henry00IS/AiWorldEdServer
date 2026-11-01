@@ -1,6 +1,4 @@
-/**
- * Real WebSocket test client with an inbox and awaitable message matching.
- */
+/** Real WebSocket test client with an inbox and awaitable message matching. */
 import { PROTOCOL_ID, PROTOCOL_VERSION } from '../../src/shared/protocol_definitions.ts';
 import { TEST_ORIGIN } from './test_configuration.ts';
 
@@ -23,9 +21,7 @@ export class TestClient {
   welcome: Record<string, any> = {};
   private waiters: (() => void)[] = [];
 
-  /**
-   * @param socket Connected socket.
-   */
+  /** @param socket Connected socket. */
   private constructor(readonly socket: WebSocket) {
     socket.binaryType = 'arraybuffer';
     socket.addEventListener('message', (event) => this.inboxPush(event.data));
@@ -37,7 +33,8 @@ export class TestClient {
   }
 
   /**
-   * Opens a socket (with the test Origin unless overridden) and optionally says hello.
+   * Opens a socket (with the test Origin unless overridden) and optionally says
+   * hello.
    *
    * @param port Server port.
    * @param options Headers, hello toggle and display name.
@@ -61,35 +58,46 @@ export class TestClient {
    * @param name Optional display name.
    */
   async hello(name?: string): Promise<void> {
-    this.send({ t: 'hello', protocol: PROTOCOL_ID, version: PROTOCOL_VERSION, client: 'aiworlded-tests/1', ...(name ? { name } : {}) });
+    this.send({
+      t: 'hello',
+      protocol: PROTOCOL_ID,
+      version: PROTOCOL_VERSION,
+      client: 'aiworlded-tests/1',
+      ...(name ? { name } : {}),
+    });
     this.welcome = await this.next('welcome');
     this.user = this.welcome.user;
   }
 
-  /**
-   * @param message Object to send as JSON.
-   */
+  /** @param message Object to send as JSON. */
   send(message: object): void {
     this.socket.send(JSON.stringify(message));
   }
 
-  /**
-   * @param data Raw frame.
-   */
+  /** @param data Raw frame. */
   sendRaw(data: string | Uint8Array): void {
     this.socket.send(data);
   }
 
   /**
-   * Waits for and removes the first JSON message of the given type ('*' = any) matching the predicate.
+   * Waits for and removes the first JSON message of the given type ('*' = any)
+   * matching the predicate.
    *
    * @param type Message type.
    * @param predicate Extra filter.
    * @param timeoutMs Timeout.
    * @returns The message.
    */
-  async next(type: string, predicate: (message: Record<string, any>) => boolean = () => true, timeoutMs = 3000): Promise<Record<string, any>> {
-    const found = await this.waitFor((item) => item.kind === 'json' && (type === '*' || item.message.t === type) && predicate(item.message), timeoutMs, type);
+  async next(
+    type: string,
+    predicate: (message: Record<string, any>) => boolean = () => true,
+    timeoutMs = 3000,
+  ): Promise<Record<string, any>> {
+    const found = await this.waitFor(
+      (item) => item.kind === 'json' && (type === '*' || item.message.t === type) && predicate(item.message),
+      timeoutMs,
+      type,
+    );
     return (found as { message: Record<string, any> }).message;
   }
 
@@ -105,7 +113,8 @@ export class TestClient {
   }
 
   /**
-   * Sends a request with a request id and waits for the reply of the given type or an error.
+   * Sends a request with a request id and waits for the reply of the given type
+   * or an error.
    *
    * @param message Request without r.
    * @param replyType Expected reply type.
@@ -138,9 +147,7 @@ export class TestClient {
     return this.inbox.some((item) => item.kind === 'json' && item.message.t === type);
   }
 
-  /**
-   * Closes the socket.
-   */
+  /** Closes the socket. */
   close(): void {
     this.socket.close();
   }
@@ -151,37 +158,38 @@ export class TestClient {
    * @param label Label for the timeout error.
    * @returns Matched inbox item (removed from the inbox).
    */
-  private async waitFor(matcher: (item: TestInbound) => boolean, timeoutMs: number, label: string): Promise<TestInbound> {
+  private async waitFor(
+    matcher: (item: TestInbound) => boolean,
+    timeoutMs: number,
+    label: string,
+  ): Promise<TestInbound> {
     const deadline = Date.now() + timeoutMs;
     for (;;) {
       const index = this.inbox.findIndex(matcher);
       if (index >= 0) return this.inbox.splice(index, 1)[0] as TestInbound;
-      if (Date.now() > deadline) throw new Error(`timed out waiting for ${label}; inbox: ${JSON.stringify(this.inbox.map((i) => (i.kind === 'json' ? i.message : 'binary')))}`);
+      if (Date.now() > deadline)
+        throw new Error(
+          `timed out waiting for ${label}; inbox: ${JSON.stringify(this.inbox.map((i) => (i.kind === 'json' ? i.message : 'binary')))}`,
+        );
       await this.sleepUntilWake(deadline - Date.now());
     }
   }
 
-  /**
-   * @param data Raw message data.
-   */
+  /** @param data Raw message data. */
   private inboxPush(data: unknown): void {
     if (typeof data === 'string') this.inbox.push({ kind: 'json', message: JSON.parse(data) });
     else this.inbox.push({ kind: 'binary', data: new Uint8Array(data as ArrayBuffer) });
     this.wake();
   }
 
-  /**
-   * Resolves all pending waiters.
-   */
+  /** Resolves all pending waiters. */
   private wake(): void {
     const waiters = this.waiters;
     this.waiters = [];
     for (const waiter of waiters) waiter();
   }
 
-  /**
-   * @param maximumMs Longest sleep.
-   */
+  /** @param maximumMs Longest sleep. */
   private sleepUntilWake(maximumMs: number): Promise<void> {
     return new Promise((resolve) => {
       const timer = setTimeout(resolve, Math.max(1, maximumMs));

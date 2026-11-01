@@ -1,6 +1,4 @@
-/**
- * Bun.serve wiring: HTTP upgrade gatekeeping and WebSocket event forwarding.
- */
+/** Bun.serve wiring: HTTP upgrade gatekeeping and WebSocket event forwarding. */
 import type { Server, ServerWebSocket } from 'bun';
 import type { ServerConfiguration } from '../config/server_configuration.ts';
 import type { ConnectionSession, ConnectionUpgradeData } from '../connection/connection_session.ts';
@@ -72,7 +70,8 @@ function collabServerFetch(core: ServerCore, request: Request, server: Server<So
   const url = new URL(request.url);
   if (url.pathname === '/healthz' && request.method === 'GET') return new Response('ok\n');
   if (url.pathname !== PROTOCOL_WEBSOCKET_PATH) return new Response('not found\n', { status: 404 });
-  if (request.headers.get('upgrade')?.toLowerCase() !== 'websocket') return new Response('websocket upgrade required\n', { status: 426 });
+  if (request.headers.get('upgrade')?.toLowerCase() !== 'websocket')
+    return new Response('websocket upgrade required\n', { status: 426 });
   const upgradeData = collabUpgradeAdmit(core, request, server);
   if (upgradeData instanceof Response) return upgradeData;
   if (server.upgrade(request, { data: upgradeData })) return undefined;
@@ -92,7 +91,8 @@ function collabUpgradeAdmit(core: ServerCore, request: Request, server: Server<S
   const socketAddress = server.requestIP(request)?.address ?? '0.0.0.0';
   const trust = requestTrustResolve(request.headers, socketAddress, core.config.forwardedSecret);
   if (trust.kind === 'rejected') return new Response('forbidden\n', { status: 403 });
-  if (!originIsAllowed(request.headers.get('origin'), core.config.allowedOrigins)) return new Response('origin not allowed\n', { status: 403 });
+  if (!originIsAllowed(request.headers.get('origin'), core.config.allowedOrigins))
+    return new Response('origin not allowed\n', { status: 403 });
   const ipKey = ipLimitKey(trust.clientIp);
   if (!core.connectionReserve(ipKey)) return new Response('too many connections\n', { status: 429 });
   return { clientIp: trust.clientIp, ipKey, via: trust.kind === 'proxied' ? 'proxy' : 'direct', session: null };

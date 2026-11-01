@@ -1,6 +1,6 @@
 /**
- * One collaboration room: owner, members, locks and in-flight streams.
- * Holds no world data.
+ * One collaboration room: owner, members, locks and in-flight streams. Holds no
+ * world data.
  */
 import type { ConnectionSession } from '../connection/connection_session.ts';
 import type { RoomMemberEntry, StreamKind } from '../shared/protocol_definitions.ts';
@@ -45,13 +45,14 @@ export class Room {
   private readonly colorSlots = new Map<number, number>();
   readonly locks: RoomLockTable;
   readonly streams = new Map<string, RoomStream>();
-  /** Latest relayed presence frame per member, handed to members when they finish syncing. */
+  /**
+   * Latest relayed presence frame per member, handed to members when they
+   * finish syncing.
+   */
   readonly presenceLatest = new Map<number, Uint8Array>();
   closed = false;
 
-  /**
-   * @param options Room parameters; the owner becomes the first member.
-   */
+  /** @param options Room parameters; the owner becomes the first member. */
   constructor(options: RoomOptions) {
     this.id = options.id;
     this.name = options.name;
@@ -127,17 +128,18 @@ export class Room {
     return removed;
   }
 
-  /**
-   * @returns Public description used in list and join replies.
-   */
+  /** @returns Public description used in list and join replies. */
   describe(): { id: string; name: string; private: boolean; users: number; maxUsers: number } {
     return { id: this.id, name: this.name, private: this.isPrivate, users: this.members.size, maxUsers: this.maxUsers };
   }
 
-  /**
-   * @returns Member listing for join replies.
-   */
+  /** @returns Member listing for join replies. */
   memberList(): RoomMemberEntry[] {
-    return [...this.members.values()].map((member) => ({ user: member.user, name: member.name, owner: member === this.owner, color: this.colorOf(member.user) }));
+    return [...this.members.values()].map((member) => ({
+      user: member.user,
+      name: member.name,
+      owner: member === this.owner,
+      color: this.colorOf(member.user),
+    }));
   }
 }

@@ -21,15 +21,15 @@ bun run start       # listens on 0.0.0.0:8081 (HOST / PORT override)
 AiWorldEd client ──wss──► reverse proxy (TLS, X-Real-IP, optional X-Forwarded-Secret) ──ws──► relay :8081
 ```
 
-| Path | Role |
-| --- | --- |
-| `src/shared/` | Dependency-free modules the client can import directly: protocol constants and types, binary frame codec, password policy, password generator, room/display name rules. |
-| `src/protocol/` | Strict closed-object schema validator and the schema of every client message. |
-| `src/network/` | Proxy trust (secret check, client IP), Origin allow list, token bucket, per-key counters, failure windows. |
-| `src/connection/` | Per-connection session state and the bounded, coalescing outbound queue. |
-| `src/rooms/` | Room, lock table, registry (per-IP / total room limits), broadcast helpers. |
-| `src/handlers/` | Message handlers: rooms, locks, edits, streams/assets. |
-| `src/server/` | `ServerCore` (handshake, rate limits, dispatch, lifecycle) and the `Bun.serve` wiring. |
+| Path              | Role                                                                                                                                                                    |
+| ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/shared/`     | Dependency-free modules the client can import directly: protocol constants and types, binary frame codec, password policy, password generator, room/display name rules. |
+| `src/protocol/`   | Strict closed-object schema validator and the schema of every client message.                                                                                           |
+| `src/network/`    | Proxy trust (secret check, client IP), Origin allow list, token bucket, per-key counters, failure windows.                                                              |
+| `src/connection/` | Per-connection session state and the bounded, coalescing outbound queue.                                                                                                |
+| `src/rooms/`      | Room, lock table, registry (per-IP / total room limits), broadcast helpers.                                                                                             |
+| `src/handlers/`   | Message handlers: rooms, locks, edits, streams/assets.                                                                                                                  |
+| `src/server/`     | `ServerCore` (handshake, rate limits, dispatch, lifecycle) and the `Bun.serve` wiring.                                                                                  |
 
 Memory model: a room is metadata + members + lock table + the state of streams
 in flight. Edits exist only in recipients' outbound queues until the socket
@@ -49,7 +49,7 @@ stream chunks and presence. An optional `r` (int 0..2^31-1) on requests is echoe
 The first frame must be `hello` within 5 s:
 
 ```json
-{"t":"hello","protocol":"aiworlded-collab","version":1,"client":"AiWorldEd/0.1","name":"Henry"}
+{ "t": "hello", "protocol": "aiworlded-collab", "version": 1, "client": "AiWorldEd/0.1", "name": "Henry" }
 ```
 
 Reply: `{"t":"welcome","protocol":"aiworlded-collab","version":1,"user":7,"name":"Henry","via":"proxy","limits":{...}}`.
@@ -61,23 +61,23 @@ message, ops per edit, messages per second, rooms per IP, users per room, locks 
 
 ### Client → server
 
-| Type | Fields | Notes |
-| --- | --- | --- |
-| `ping` | | → `pong` |
-| `room.list` | | → `room.list {rooms:[{id,name,private,users,maxUsers}]}`. Private rooms are flagged and reveal nothing else. |
-| `room.create` | `name`, `private`, `password?`, `maxUsers?` (clamped to 32, default 16), `internalTest?`, `displayName?` | → `room.created {room, you, name, color}`. Creator becomes owner. One room per connection. |
-| `room.join` | `room`, `discardLocalWork: true`, `password?`, `displayName?` | → `room.joined {room, you, owner, members, locks}`; members are `{user, name, owner, color}`. `discardLocalWork` must be literally `true`: joining always discards local work. |
-| `room.leave` | | → `room.left`. If the owner leaves, the room closes. |
-| `lock.acquire` | `ids[]`, `replace?` | All-or-nothing. → `lock.result {ok:true, add, remove}` or `{ok:false, code:'lock_conflict', conflicts:[{id,by}]}` / `lock_limit`. `replace:true` atomically swaps the whole selection (releases held ids not in `ids`). |
-| `lock.release` | `ids?` | Omit `ids` to release everything. |
-| `edit` | `seq`, `ops:[{k, ids, d?}]` | See edit rules. Rejection: `edit.rejected {seq, reason, ids}`; no ack on success. |
-| `asset.request` | `name` | Member asks the owner for an asset (relayed as `asset.request {from, name}`). |
-| `asset.missing` | `to`, `name` | Owner answers that an asset does not exist. |
-| `stream.begin` | `to`, `stream`, `kind: snapshot\|asset`, `size`, `name?`, `mime?` | Owner only. `name` is required for assets. |
-| *(binary chunk)* | see below | Owner only. |
-| *(binary presence)* | see below | Synced members only. Low priority, latest-only. |
-| `stream.end` | `to`, `stream` | Must follow exactly `size` bytes. |
-| `stream.abort` | `to`, `stream`, `reason?` | |
+| Type                | Fields                                                                                                   | Notes                                                                                                                                                                                                                   |
+| ------------------- | -------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ping`              |                                                                                                          | → `pong`                                                                                                                                                                                                                |
+| `room.list`         |                                                                                                          | → `room.list {rooms:[{id,name,private,users,maxUsers}]}`. Private rooms are flagged and reveal nothing else.                                                                                                            |
+| `room.create`       | `name`, `private`, `password?`, `maxUsers?` (clamped to 32, default 16), `internalTest?`, `displayName?` | → `room.created {room, you, name, color}`. Creator becomes owner. One room per connection.                                                                                                                              |
+| `room.join`         | `room`, `discardLocalWork: true`, `password?`, `displayName?`                                            | → `room.joined {room, you, owner, members, locks}`; members are `{user, name, owner, color}`. `discardLocalWork` must be literally `true`: joining always discards local work.                                          |
+| `room.leave`        |                                                                                                          | → `room.left`. If the owner leaves, the room closes.                                                                                                                                                                    |
+| `lock.acquire`      | `ids[]`, `replace?`                                                                                      | All-or-nothing. → `lock.result {ok:true, add, remove}` or `{ok:false, code:'lock_conflict', conflicts:[{id,by}]}` / `lock_limit`. `replace:true` atomically swaps the whole selection (releases held ids not in `ids`). |
+| `lock.release`      | `ids?`                                                                                                   | Omit `ids` to release everything.                                                                                                                                                                                       |
+| `edit`              | `seq`, `ops:[{k, ids, d?}]`                                                                              | See edit rules. Rejection: `edit.rejected {seq, reason, ids}`; no ack on success.                                                                                                                                       |
+| `asset.request`     | `name`                                                                                                   | Member asks the owner for an asset (relayed as `asset.request {from, name}`).                                                                                                                                           |
+| `asset.missing`     | `to`, `name`                                                                                             | Owner answers that an asset does not exist.                                                                                                                                                                             |
+| `stream.begin`      | `to`, `stream`, `kind: snapshot\|asset`, `size`, `name?`, `mime?`                                        | Owner only. `name` is required for assets.                                                                                                                                                                              |
+| _(binary chunk)_    | see below                                                                                                | Owner only.                                                                                                                                                                                                             |
+| _(binary presence)_ | see below                                                                                                | Synced members only. Low priority, latest-only.                                                                                                                                                                         |
+| `stream.end`        | `to`, `stream`                                                                                           | Must follow exactly `size` bytes.                                                                                                                                                                                       |
+| `stream.abort`      | `to`, `stream`, `reason?`                                                                                |                                                                                                                                                                                                                         |
 
 Object ids: 1–64 chars of `[A-Za-z0-9_.:-]`, max 4096 per message. Room ids: 16 chars base64url.
 Edit kinds: `transform`, `geometry`, `property`, `texture`, `reparent`, `delete`, `create`;
@@ -85,20 +85,20 @@ max 256 ops per edit; `d` is opaque JSON (max depth 32, max 200k nodes) relayed 
 
 ### Server → client
 
-| Type | Fields |
-| --- | --- |
-| `welcome`, `pong`, `room.list`, `room.created`, `room.joined`, `room.left {reason}` | replies |
-| `member.joined {user, name, color}`, `member.left {user}` | membership |
-| `locks {by, add?, remove?}` | lock changes of another user |
-| `lock.result` | reply to `lock.acquire` / `lock.release` |
-| `edits {list:[{from, seq, ops}]}` | relayed edits, in order per sender |
-| `edit.rejected {seq, reason, ids}` | `not_locked`, `lock_conflict`, `lock_limit` |
-| `snapshot.request {for}` | owner only: send the world to user `for` |
-| `stream.begin {from, stream, kind, size, name?, mime?}`, binary chunks, `stream.end {from, stream}`, `stream.abort {from|to, stream, reason}` | streams |
-| `stream.credit {to, stream, delivered}` | owner only: bytes of a stream handed to the recipient |
-| `asset.request {from, name}` (owner), `asset.missing {from, name}` | assets |
-| `room.closed {reason:'owner_left', offline:true, message}` | the owner left: you are now offline, save locally |
-| `error {code, r?, ...}` | see error codes |
+| Type                                                                                                                     | Fields                                                |
+| ------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------- |
+| `welcome`, `pong`, `room.list`, `room.created`, `room.joined`, `room.left {reason}`                                      | replies                                               |
+| `member.joined {user, name, color}`, `member.left {user}`                                                                | membership                                            |
+| `locks {by, add?, remove?}`                                                                                              | lock changes of another user                          |
+| `lock.result`                                                                                                            | reply to `lock.acquire` / `lock.release`              |
+| `edits {list:[{from, seq, ops}]}`                                                                                        | relayed edits, in order per sender                    |
+| `edit.rejected {seq, reason, ids}`                                                                                       | `not_locked`, `lock_conflict`, `lock_limit`           |
+| `snapshot.request {for}`                                                                                                 | owner only: send the world to user `for`              |
+| `stream.begin {from, stream, kind, size, name?, mime?}`, binary chunks, `stream.end {from, stream}`, `stream.abort {from | to, stream, reason}`                                  | streams |
+| `stream.credit {to, stream, delivered}`                                                                                  | owner only: bytes of a stream handed to the recipient |
+| `asset.request {from, name}` (owner), `asset.missing {from, name}`                                                       | assets                                                |
+| `room.closed {reason:'owner_left', offline:true, message}`                                                               | the owner left: you are now offline, save locally     |
+| `error {code, r?, ...}`                                                                                                  | see error codes                                       |
 
 `displayName` on create and join replaces the hello name for this room; an invalid one is rejected with
 `invalid_name {reason, field: "displayName"}`. `color` is a color slot: the lowest slot no current member
@@ -211,20 +211,20 @@ warn the user that they are offline and should save locally. Re-joining any room
 
 ## Abuse resistance and limits
 
-| Limit | Default |
-| --- | --- |
-| Max frame | 1 MiB (binary chunk payload 256 KiB) |
-| Messages | 120/s, burst 400 → close 4002 |
-| Bytes in | 16 MiB/s, burst 32 MiB → close 4002 |
-| Connections | 24 per IP (IPv6 per /64), 2000 total |
-| Rooms | 8 owned per IP, 500 total; 1 room per connection |
-| Users per room | 16 default, max 32 |
-| Locks | 20 000 per user, 100 000 per room |
-| Outbound queue | 16 MiB per recipient → close 4004 (slow consumer) |
-| Handshake / idle | 5 s / 60 s (with ping/pong) |
-| Snapshot / asset | 256 MiB / 64 MiB, 4 MiB window, 8 streams per recipient, 60 s snapshot timeout |
-| Room list | 200 entries |
-| Presence | 10 frames/s per member (burst 20), latest-only per sender per recipient, 116 bytes max |
+| Limit            | Default                                                                                |
+| ---------------- | -------------------------------------------------------------------------------------- |
+| Max frame        | 1 MiB (binary chunk payload 256 KiB)                                                   |
+| Messages         | 120/s, burst 400 → close 4002                                                          |
+| Bytes in         | 16 MiB/s, burst 32 MiB → close 4002                                                    |
+| Connections      | 24 per IP (IPv6 per /64), 2000 total                                                   |
+| Rooms            | 8 owned per IP, 500 total; 1 room per connection                                       |
+| Users per room   | 16 default, max 32                                                                     |
+| Locks            | 20 000 per user, 100 000 per room                                                      |
+| Outbound queue   | 16 MiB per recipient → close 4004 (slow consumer)                                      |
+| Handshake / idle | 5 s / 60 s (with ping/pong)                                                            |
+| Snapshot / asset | 256 MiB / 64 MiB, 4 MiB window, 8 streams per recipient, 60 s snapshot timeout         |
+| Room list        | 200 entries                                                                            |
+| Presence         | 10 frames/s per member (burst 20), latest-only per sender per recipient, 116 bytes max |
 
 Other measures: versioned hello handshake; strict schemas; only allowed `Origin`s
 (`https://henry00is.github.io`, `http://localhost:*`, `http://127.0.0.1:*`, `http://[::1]:*`,
@@ -253,13 +253,13 @@ the proxy (`room_not_found`). Proxied creation attempts get `internal_test_forbi
 
 ## Configuration (environment)
 
-| Variable | Meaning |
-| --- | --- |
-| `HOST`, `PORT` | Listen address (container: `0.0.0.0:8081`) |
-| `FORWARDED_SECRET` | Secret the reverse proxy sends as `X-Forwarded-Secret` (≥16 chars). Without it, proxied requests are refused. |
-| `ALLOWED_ORIGINS` | Comma-separated Origin allow list |
-| `INTERNAL_TEST_ROOMS` | `false` disables internal test rooms |
-| `BIND_ADDRESS` | compose only: host address to publish 8081 on |
+| Variable              | Meaning                                                                                          |
+| --------------------- | ------------------------------------------------------------------------------------------------ |
+| `HOST`, `PORT`        | Listen address (container: `0.0.0.0:8081`)                                                       |
+| `FORWARDED_SECRET`    | Secret the reverse proxy sends as `X-Forwarded-Secret` (≥16 chars). Without it, proxied requests are refused. |
+| `ALLOWED_ORIGINS`     | Comma-separated Origin allow list                                                                |
+| `INTERNAL_TEST_ROOMS` | `false` disables internal test rooms                                                             |
+| `BIND_ADDRESS`        | compose only: host address to publish 8081 on                                                    |
 
 ## Deployment
 

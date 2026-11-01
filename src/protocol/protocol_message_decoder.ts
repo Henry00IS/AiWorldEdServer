@@ -1,6 +1,4 @@
-/**
- * Decodes and validates text frames into typed client messages.
- */
+/** Decodes and validates text frames into typed client messages. */
 import type { ClientMessage, ClientMessageType } from '../shared/protocol_definitions.ts';
 import { CLIENT_MESSAGE_SCHEMAS } from './protocol_message_schemas.ts';
 import { schemaValidate } from './schema_validator.ts';
@@ -17,9 +15,11 @@ export type DecodeResult = { ok: true; message: ClientMessage } | { ok: false; r
 export function protocolMessageDecode(text: string): DecodeResult {
   const parsed = protocolJsonParseSafely(text);
   if (parsed === undefined) return { ok: false, reason: 'invalid json' };
-  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return { ok: false, reason: 'not an object' };
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed))
+    return { ok: false, reason: 'not an object' };
   const type = (parsed as { t?: unknown }).t;
-  if (typeof type !== 'string' || !Object.hasOwn(CLIENT_MESSAGE_SCHEMAS, type)) return { ok: false, reason: 'unknown type' };
+  if (typeof type !== 'string' || !Object.hasOwn(CLIENT_MESSAGE_SCHEMAS, type))
+    return { ok: false, reason: 'unknown type' };
   const error = schemaValidate(CLIENT_MESSAGE_SCHEMAS[type as ClientMessageType], parsed);
   return error ? { ok: false, reason: error } : { ok: true, message: parsed as ClientMessage };
 }

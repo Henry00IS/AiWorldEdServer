@@ -1,6 +1,4 @@
-/**
- * Entry point: reads the environment and starts the relay.
- */
+/** Entry point: reads the environment and starts the relay. */
 import { configurationFromEnvironment } from './config/server_configuration.ts';
 import { collabServerStart } from './server/server_collab.ts';
 
@@ -12,9 +10,7 @@ console.log(
     `internal test rooms ${configuration.internalTestRoomsEnabled ? 'enabled' : 'disabled'})`,
 );
 
-/**
- * Stops the server gracefully on termination signals.
- */
+/** Stops the server gracefully on termination signals. */
 async function shutdownGracefully(): Promise<void> {
   await server.stop();
   process.exit(0);

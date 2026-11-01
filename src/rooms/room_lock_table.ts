@@ -1,5 +1,6 @@
 /**
- * Exclusive object locks inside one room. Single-threaded, so every method is atomic.
+ * Exclusive object locks inside one room. Single-threaded, so every method is
+ * atomic.
  */
 
 /** Lock conflict: the object id and the user currently holding it. */
@@ -35,7 +36,8 @@ export class RoomLockTable {
    * @param user Requesting user id.
    * @param ids Object ids to lock.
    * @param replace Whether to release locks outside `ids`.
-   * @returns Added and removed ids, or the conflicts / limit that blocked the request.
+   * @returns Added and removed ids, or the conflicts / limit that blocked the
+   *   request.
    */
   acquire(user: number, ids: readonly string[], replace: boolean): LockAcquireResult {
     const conflicts = this.conflictsFor(user, ids);
@@ -44,7 +46,8 @@ export class RoomLockTable {
     const held = this.heldSet(user);
     const removed = replace ? [...held].filter((id) => !requested.has(id)) : [];
     const added = [...requested].filter((id) => !held.has(id));
-    if (!this.withinLimits(held.size - removed.length + added.length, added.length - removed.length)) return { ok: false, reason: 'lock_limit' };
+    if (!this.withinLimits(held.size - removed.length + added.length, added.length - removed.length))
+      return { ok: false, reason: 'lock_limit' };
     this.release(user, removed);
     this.grant(user, added);
     return { ok: true, added, removed };
@@ -123,16 +126,12 @@ export class RoomLockTable {
     return this.objectIdsByHolder.get(user)?.size ?? 0;
   }
 
-  /**
-   * @returns Total locks in the room.
-   */
+  /** @returns Total locks in the room. */
   countTotal(): number {
     return this.holderByObjectId.size;
   }
 
-  /**
-   * @returns Every holder with their ids, for join snapshots.
-   */
+  /** @returns Every holder with their ids, for join snapshots. */
   listAll(): { by: number; ids: string[] }[] {
     return [...this.objectIdsByHolder].map(([by, ids]) => ({ by, ids: [...ids] }));
   }
@@ -143,7 +142,9 @@ export class RoomLockTable {
    * @returns True when both limits hold.
    */
   withinLimits(userTotalAfter: number, roomDelta: number): boolean {
-    return userTotalAfter <= this.locksPerUserMaximum && this.holderByObjectId.size + roomDelta <= this.locksPerRoomMaximum;
+    return (
+      userTotalAfter <= this.locksPerUserMaximum && this.holderByObjectId.size + roomDelta <= this.locksPerRoomMaximum
+    );
   }
 
   /**

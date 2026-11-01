@@ -1,6 +1,4 @@
-/**
- * All live rooms plus the per-address and global room limits.
- */
+/** All live rooms plus the per-address and global room limits. */
 import { LimiterKeyCounter } from '../network/limiter_key_counter.ts';
 import type { Room } from './room.ts';
 
@@ -72,16 +70,12 @@ export class RoomRegistry {
     return this.rooms.get(id);
   }
 
-  /**
-   * @returns Every live room.
-   */
+  /** @returns Every live room. */
   all(): IterableIterator<Room> {
     return this.rooms.values();
   }
 
-  /**
-   * @returns Number of live rooms.
-   */
+  /** @returns Number of live rooms. */
   size(): number {
     return this.rooms.size;
   }

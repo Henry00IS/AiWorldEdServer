@@ -13,7 +13,11 @@ test('encodes, parses and rewrites the peer field', () => {
 
 test('rejects bad magic, kind, reserved bytes, short and oversized frames', () => {
   const frame = binaryFrameEncode(1, 1, new Uint8Array(8));
-  for (const [offset, value] of [[0, 0x00], [1, 9], [2, 1]] as const) {
+  for (const [offset, value] of [
+    [0, 0x00],
+    [1, 9],
+    [2, 1],
+  ] as const) {
     const bad = frame.slice();
     bad[offset] = value;
     expect(binaryFrameParse(bad, 1024)).toBeNull();

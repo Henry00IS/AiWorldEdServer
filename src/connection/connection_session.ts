@@ -1,6 +1,4 @@
-/**
- * Per-connection state.
- */
+/** Per-connection state. */
 import type { LimiterTokenBucket } from '../network/limiter_token_bucket.ts';
 import type { Room } from '../rooms/room.ts';
 import type { ConnectionOutboundQueue } from './connection_outbound_queue.ts';
@@ -57,6 +55,11 @@ export function sessionSend(session: ConnectionSession, message: object): void {
  * @param requestId Request id to echo, if any.
  * @param details Extra fields.
  */
-export function sessionSendError(session: ConnectionSession, code: string, requestId: number | undefined, details: object = {}): void {
+export function sessionSendError(
+  session: ConnectionSession,
+  code: string,
+  requestId: number | undefined,
+  details: object = {},
+): void {
   sessionSend(session, { t: 'error', code, ...(requestId === undefined ? {} : { r: requestId }), ...details });
 }

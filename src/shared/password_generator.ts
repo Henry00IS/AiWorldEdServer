@@ -1,6 +1,6 @@
 /**
- * Dependency-free secure password generator for private room suggestions.
- * Uses the Web Crypto CSPRNG (browser and Bun) with unbiased rejection sampling.
+ * Dependency-free secure password generator for private room suggestions. Uses
+ * the Web Crypto CSPRNG (browser and Bun) with unbiased rejection sampling.
  */
 import { passwordPolicyIsAcceptable } from './password_policy.ts';
 
@@ -19,7 +19,8 @@ const PASSWORD_ALPHABET_ALL =
   PASSWORD_ALPHABET_UPPERCASE + PASSWORD_ALPHABET_LOWERCASE + PASSWORD_ALPHABET_DIGITS + PASSWORD_ALPHABET_SPECIAL;
 
 /**
- * Generates a password that contains every character class and passes the policy.
+ * Generates a password that contains every character class and passes the
+ * policy.
  *
  * @param length Desired length, clamped to 12..128.
  * @returns A freshly generated password.
@@ -33,7 +34,8 @@ export function passwordGenerate(length: number = PASSWORD_GENERATED_LENGTH_DEFA
 }
 
 /**
- * Builds one candidate with one character from each class, filled up and shuffled.
+ * Builds one candidate with one character from each class, filled up and
+ * shuffled.
  *
  * @param length Candidate length.
  * @returns Candidate password.
