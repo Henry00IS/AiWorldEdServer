@@ -60,6 +60,33 @@ export interface EditOperation {
 }
 
 /**
+ * Answers of the room owner to a `verify` query: `ok` when every id in `ids`
+ * exists and every id in `anc` is an ancestor of at least one of them,
+ * `deleted` when an id no longer exists, `invalid` otherwise.
+ */
+export const VERIFY_VERDICTS = ['ok', 'invalid', 'deleted'] as const;
+/** Union of owner verdicts. */
+export type VerifyVerdict = (typeof VERIFY_VERDICTS)[number];
+
+/**
+ * Why the relay refused locks it could not confirm with the room owner
+ * (`lock_unverified`): the owner's verdict, no answer in time, the owner left,
+ * or too many queries.
+ */
+export type VerifyDenial = Exclude<VerifyVerdict, 'ok'> | 'owner_timeout' | 'owner_left' | 'rate_limited';
+
+/**
+ * Sent by the relay to the room owner before a member gets shared locks on
+ * containers it does not hold yet. `q` is echoed in `verify.result`.
+ */
+export interface VerifyQueryMessage {
+  t: 'verify';
+  q: number;
+  ids: string[];
+  anc: string[];
+}
+
+/**
  * Messages a client may send. `r` is an optional request id echoed in replies
  * and errors.
  */
@@ -86,6 +113,7 @@ export type ClientMessage =
   | { t: 'lock.acquire'; r?: number; ids: string[]; replace?: boolean; shared?: string[] }
   | { t: 'lock.release'; r?: number; ids?: string[] }
   | { t: 'edit'; seq: number; ops: EditOperation[] }
+  | { t: 'verify.result'; q: number; v: VerifyVerdict }
   | { t: 'asset.request'; r?: number; name: string }
   | { t: 'asset.missing'; to: number; name: string }
   | { t: 'stream.begin'; to: number; stream: number; kind: StreamKind; size: number; name?: string; mime?: string }
@@ -149,6 +177,7 @@ export type ErrorCode =
   | 'lock_conflict'
   | 'lock_limit'
   | 'not_locked'
+  | 'lock_unverified'
   | 'stream_invalid'
   | 'subscription_limit'
   | 'name_locked'

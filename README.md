@@ -80,6 +80,7 @@ Every relay supports the live room list (`room.subscribe`); there is no feature 
 | `name.set`          | `name`                                                                                                   | Outside a room → `name.changed {name}`. Inside a room → error `name_locked`: a member's name is fixed until it leaves.                                                                                                                  |
 | `chat`              | `text` (≤8192 UTF-16 units on the wire)                                                                  | Room members only. → `chat.sent {id, from, name, color, text, at}`; others get `chat` with the same fields. See Chat.                                                                                                                   |
 | `lock.acquire`      | `ids[]`, `replace?`, `shared?[]`                                                                         | All-or-nothing. → `lock.result {ok:true, add, remove}` or `{ok:false, code:'lock_conflict', conflicts:[{id,by}]}` / `lock_limit`. `replace:true` atomically swaps the whole selection (releases held ids not in `ids`).                 |
+| `verify.result`     | `q`, `v: ok\|invalid\|deleted`                                                                           | Owner only: answer to a relay `verify` query (see Owner verification). Does not count against the owner's rate limits.                                                                                                                  |
 | `lock.release`      | `ids?`                                                                                                   | Omit `ids` to release everything.                                                                                                                                                                                                       |
 | `edit`              | `seq`, `ops:[{k, ids, d?}]`                                                                              | See edit rules. Rejection: `edit.rejected {seq, reason, ids}`; no ack on success.                                                                                                                                                       |
 | `asset.request`     | `name`                                                                                                   | Member asks the owner for an asset (relayed as `asset.request {from, name}`).                                                                                                                                                           |
@@ -96,23 +97,24 @@ max 256 ops per edit; `d` is opaque JSON (max depth 32, max 200k nodes) relayed 
 
 ### Server → client
 
-| Type                                                                                                                     | Fields                                                |
-| ------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------- |
-| `welcome`, `pong`, `room.list`, `room.created`, `room.joined`, `room.left {reason}`                                      | replies                                               |
-| `room.subscribed {rooms, intervalMs}`, `room.unsubscribed`                                                               | replies to `room.subscribe` / `room.unsubscribe`      |
-| `room.list.update {rooms, removed}`                                                                                      | live list: new or changed entries, removed room ids   |
-| `member.joined {user, name, color}`, `member.left {user}`                                                                | membership                                            |
-| `chat {id, from, name, color, text, at}`                                                                                 | chat message of another member                        |
-| `locks {by, add?, remove?}`                                                                                              | lock changes of another user                          |
-| `lock.result`                                                                                                            | reply to `lock.acquire` / `lock.release`              |
-| `edits {list:[{from, seq, ops}]}`                                                                                        | relayed edits, in order per sender                    |
-| `edit.rejected {seq, reason, ids}`                                                                                       | `not_locked`, `lock_conflict`, `lock_limit`           |
-| `snapshot.request {for}`                                                                                                 | owner only: send the world to user `for`              |
-| `stream.begin {from, stream, kind, size, name?, mime?}`, binary chunks, `stream.end {from, stream}`, `stream.abort {from | to, stream, reason}`                                  | streams |
-| `stream.credit {to, stream, delivered}`                                                                                  | owner only: bytes of a stream handed to the recipient |
-| `asset.request {from, name}` (owner), `asset.missing {from, name}`                                                       | assets                                                |
-| `room.closed {reason:'owner_left', offline:true, message}`                                                               | the owner left: you are now offline, save locally     |
-| `error {code, r?, ...}`                                                                                                  | see error codes                                       |
+| Type                                                                                                                     | Fields                                                         |
+| ------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------- |
+| `welcome`, `pong`, `room.list`, `room.created`, `room.joined`, `room.left {reason}`                                      | replies                                                        |
+| `room.subscribed {rooms, intervalMs}`, `room.unsubscribed`                                                               | replies to `room.subscribe` / `room.unsubscribe`               |
+| `room.list.update {rooms, removed}`                                                                                      | live list: new or changed entries, removed room ids            |
+| `member.joined {user, name, color}`, `member.left {user}`                                                                | membership                                                     |
+| `chat {id, from, name, color, text, at}`                                                                                 | chat message of another member                                 |
+| `locks {by, add?, remove?}`                                                                                              | lock changes of another user                                   |
+| `lock.result`                                                                                                            | reply to `lock.acquire` / `lock.release`                       |
+| `edits {list:[{from, seq, ops}]}`                                                                                        | relayed edits, in order per sender                             |
+| `edit.rejected {seq, reason, ids, why?}`                                                                                 | `not_locked`, `lock_conflict`, `lock_limit`, `lock_unverified` |
+| `verify {q, ids, anc}`                                                                                                   | owner only: confirm a member's claim, answer `verify.result`   |
+| `snapshot.request {for}`                                                                                                 | owner only: send the world to user `for`                       |
+| `stream.begin {from, stream, kind, size, name?, mime?}`, binary chunks, `stream.end {from, stream}`, `stream.abort {from | to, stream, reason}`                                           | streams |
+| `stream.credit {to, stream, delivered}`                                                                                  | owner only: bytes of a stream handed to the recipient          |
+| `asset.request {from, name}` (owner), `asset.missing {from, name}`                                                       | assets                                                         |
+| `room.closed {reason:'owner_left', offline:true, message}`                                                               | the owner left: you are now offline, save locally              |
+| `error {code, r?, ...}`                                                                                                  | see error codes                                                |
 
 `displayName` on create and join replaces the hello name for this room; an invalid one is rejected with
 `invalid_name {reason, field: "displayName"}`. `color` is a color slot: the lowest slot no current member
@@ -243,6 +245,33 @@ rejected with `lock_conflict` when another member holds any of those ids exclusi
 earlier in the same edit excepted); otherwise the sender gets shared locks on the chain, so nobody
 can grab the new container from a stale view. Ops without `p` keep the old behaviour.
 
+### Owner verification
+
+The owner's editor is the source of truth for the hierarchy, so a member cannot make up ancestors
+to block containers it is not inside. Whenever a member's `lock.acquire` or `edit` would give it
+shared locks it does not already hold, the relay first sends the owner
+`verify {q, ids, anc}`. The owner answers `verify.result {q, v}`: `ok` when every id in `ids`
+exists and every id in `anc` is an ancestor of at least one of them, `deleted` when an id is
+unknown, `invalid` otherwise. For `lock.acquire`, `ids` are the requested ids and `anc` the new
+shared ids. For `edit`, `ids` are the first ids of the parent chains and `anc` the rest; a chain
+whose first id is created earlier in the same edit must continue with that create's own chain
+and is checked by the relay alone (otherwise `invalid` without asking).
+
+- The owner's own requests and requests whose shared ids the member already holds are never
+  verified: ancestors a member shares were already confirmed, so they act as the cache and the
+  relay keeps no copy of the hierarchy.
+- Conflicts are checked before asking. Anything other than `ok` refuses the request:
+  `lock.result {ok:false, code:'lock_unverified', why}` or `edit.rejected {reason:'lock_unverified', ids:[], why}`
+  with `why` = `invalid`, `deleted`, `owner_timeout` (no answer within 5 s), `owner_left` or
+  `rate_limited`. After an `ok` the request is checked against the locks again and applied.
+- Each member has at most one open query. Its later `lock.acquire`, `lock.release` and `edit`
+  messages wait behind it in order (at most 64 messages / 4 MiB, more closes 4002).
+- Queries are limited to 10/s (burst 20) per member and 50/s (burst 100) per room. The relay
+  counts refuted claims per connection (for a future kick rule).
+- An answer can be one owner round trip stale; a reparent in flight can only make a true claim
+  look false (the member retries) or confirm an ancestor that was just moved away, which blocks
+  nothing more than an honest selection made a moment earlier would have.
+
 ### Owner disconnect / offline sessions
 
 When the owner disconnects or leaves, every member gets
@@ -283,6 +312,7 @@ warn the user that they are offline and should save locally. Re-joining any room
 | Room list pushes | 1000 subscribers, at most one update per 500 ms per subscriber, low priority                          |
 | Presence         | 10 frames/s per member (burst 20), latest-only per sender per recipient, 116 bytes max                |
 | Chat             | 1 message per 5 s per session, 2000 code points, 20 lines, 64 waiting per recipient, no history       |
+| Owner verify     | 5 s timeout, 10/s (burst 20) per member, 50/s (burst 100) per room, 64 msgs / 4 MiB held per member   |
 
 Other measures: versioned hello handshake; strict schemas; only allowed `Origin`s
 (`https://henry00is.github.io`, `http://localhost:*`, `http://127.0.0.1:*`, `http://[::1]:*`,
@@ -356,6 +386,8 @@ subscribers, even when `INTERNAL_TEST_ROOMS_VIA_PROXY` is set.
   `stream.credit`; answer `asset.request` with an asset stream or `asset.missing`.
 - Selection → `lock.acquire {replace:true}`; on `lock_conflict` show who holds what; deselect → `lock.release`.
   Render `locks` events as remote selections.
+- Owner: answer every `verify` with `verify.result` from the live scene. Members: on `lock_unverified` retry
+  briefly, then tell the user the owner did not confirm.
 - Send edits batched per frame/operation with increasing `seq`; handle `edit.rejected` by reverting locally.
 - On `room.closed {offline:true}` show the offline warning and offer "save locally".
 - Handle close codes (4002 back off, 4004 reconnect & rejoin, 4006 server restart).

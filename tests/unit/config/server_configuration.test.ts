@@ -12,6 +12,14 @@ describe('server configuration', () => {
     expect(defaults.chatTextLengthMaximum * 2).toBeLessThanOrEqual(CHAT_TEXT_WIRE_MAXIMUM);
   });
 
+  test('owner verification waits 5 s, allows 10/s (burst 20) per member and 50/s (burst 100) per room', () => {
+    const defaults = configurationDefault();
+    expect(defaults.verifyTimeoutMs).toBe(5000);
+    expect([defaults.verifyPerMemberPerSecond, defaults.verifyPerMemberBurst]).toEqual([10, 20]);
+    expect([defaults.verifyPerRoomPerSecond, defaults.verifyPerRoomBurst]).toEqual([50, 100]);
+    expect([defaults.verifyQueueMessagesMaximum, defaults.verifyQueueBytesMaximum]).toEqual([64, 4 * 1024 * 1024]);
+  });
+
   test('internal test rooms through the proxy are off by default', () => {
     expect(configurationDefault().internalTestRoomsViaProxy).toBe(false);
     expect(configurationFromEnvironment({}).internalTestRoomsViaProxy).toBe(false);

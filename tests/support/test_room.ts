@@ -4,7 +4,7 @@
  */
 import { expect } from 'bun:test';
 import { binaryFrameEncode, binaryFrameParse, binaryFramePayload } from '../../src/shared/binary_frame.ts';
-import type { TestClient } from './test_client.ts';
+import type { TestClient, TestMessage } from './test_client.ts';
 
 /**
  * Creates an internal test room.
@@ -90,4 +90,17 @@ export async function streamReceive(receiver: TestClient): Promise<Uint8Array> {
   let offset = 0;
   for (const part of parts) result.set(part, (offset += part.byteLength) - part.byteLength);
   return result;
+}
+
+/**
+ * Waits for the relay's next verify query to the owner and answers it.
+ *
+ * @param owner Room owner.
+ * @param verdict Answer to send.
+ * @returns The query.
+ */
+export async function verifyAnswer(owner: TestClient, verdict = 'ok'): Promise<TestMessage> {
+  const query = await owner.next('verify');
+  owner.send({ t: 'verify.result', q: query.q, v: verdict });
+  return query;
 }

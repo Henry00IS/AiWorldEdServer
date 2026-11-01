@@ -1,5 +1,11 @@
 /** Closed schemas for every client message of protocol version 1. */
-import { EDIT_KINDS, PROTOCOL_ID, STREAM_KINDS, type ClientMessageType } from '../shared/protocol_definitions.ts';
+import {
+  EDIT_KINDS,
+  PROTOCOL_ID,
+  STREAM_KINDS,
+  VERIFY_VERDICTS,
+  type ClientMessageType,
+} from '../shared/protocol_definitions.ts';
 import { CHAT_TEXT_WIRE_MAXIMUM } from '../shared/chat_text_policy.ts';
 import type { Schema } from './schema_validator.ts';
 
@@ -102,6 +108,14 @@ export const CLIENT_MESSAGE_SCHEMAS: Readonly<Record<ClientMessageType, Schema>>
       t: { type: 'literal', value: 'edit' },
       seq: { type: 'int', min: 0, max: Number.MAX_SAFE_INTEGER },
       ops: { type: 'array', items: SCHEMA_EDIT_OPERATION, min: 1, max: PROTOCOL_CAPS.opsPerEdit },
+    },
+  },
+  'verify.result': {
+    type: 'object',
+    required: {
+      t: { type: 'literal', value: 'verify.result' },
+      q: { type: 'int', min: 1, max: 0xffffffff },
+      v: { type: 'enum', values: VERIFY_VERDICTS },
     },
   },
   'asset.request': messageSchema('asset.request', { name: SCHEMA_ASSET_NAME }),

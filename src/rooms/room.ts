@@ -5,6 +5,7 @@
 import type { ConnectionSession } from '../connection/connection_session.ts';
 import type { RoomListEntry, RoomMemberEntry, StreamKind } from '../shared/protocol_definitions.ts';
 import type { LimiterSharedBudget } from '../network/limiter_shared_budget.ts';
+import { LimiterTokenBucket } from '../network/limiter_token_bucket.ts';
 import { displayNameKey } from '../shared/room_name_policy.ts';
 import { RoomLockTable } from './room_lock_table.ts';
 
@@ -32,6 +33,10 @@ export interface RoomOptions {
   locksPerUser: number;
   locksPerRoom: number;
   locksServerBudget?: LimiterSharedBudget;
+  /** Owner queries per second for the whole room (default 50). */
+  verifyPerSecond?: number;
+  /** Burst of owner queries for the whole room (default 100). */
+  verifyBurst?: number;
 }
 
 /** Live room state. */
@@ -55,6 +60,14 @@ export class Room {
   readonly presenceLatest = new Map<number, Uint8Array>();
   /** Id of the last chat message sent in the room (chat itself is not kept). */
   chatSequence = 0;
+  /**
+   * Members waiting for the owner to answer a verify query, by query id; at
+   * most one per member.
+   */
+  readonly verifyWaiting = new Map<number, ConnectionSession>();
+  /** Limits the owner queries of the whole room. */
+  readonly verifyBucket: LimiterTokenBucket;
+  private verifySequence = 0;
   closed = false;
 
   /**
@@ -72,6 +85,7 @@ export class Room {
     this.owner = options.owner;
     this.ownerIpKey = options.owner.ipKey;
     this.locks = new RoomLockTable(options.locksPerUser, options.locksPerRoom, options.locksServerBudget);
+    this.verifyBucket = new LimiterTokenBucket(options.verifyPerSecond ?? 50, options.verifyBurst ?? 100);
     this.memberAdd(options.owner);
   }
 
@@ -107,6 +121,18 @@ export class Room {
     const keys = new Set<string>();
     for (const member of this.members.values()) keys.add(displayNameKey(member.name));
     return keys;
+  }
+
+  /**
+   * Allocates the id of the next verify query.
+   *
+   * @returns Query id between 1 and 0xffffffff, not used by an open query.
+   */
+  verifyQueryNext(): number {
+    do {
+      this.verifySequence = this.verifySequence >= 0xffffffff ? 1 : this.verifySequence + 1;
+    } while (this.verifyWaiting.has(this.verifySequence));
+    return this.verifySequence;
   }
 
   /**

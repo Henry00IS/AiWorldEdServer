@@ -2,6 +2,7 @@
 import type { LimiterTokenBucket } from '../network/limiter_token_bucket.ts';
 import type { Room } from '../rooms/room.ts';
 import type { ConnectionOutboundQueue } from './connection_outbound_queue.ts';
+import type { ConnectionVerifyState } from './connection_verify_state.ts';
 
 /** Data captured at upgrade time and attached to the WebSocket. */
 export interface ConnectionUpgradeData {
@@ -44,6 +45,8 @@ export interface ConnectionSession {
   snapshotTimer: ReturnType<typeof setTimeout> | null;
   handshakeTimer: ReturnType<typeof setTimeout> | null;
   pendingAsyncOperation: boolean;
+  /** Owner verification of claimed ancestors: open query and held messages. */
+  readonly verify: ConnectionVerifyState;
 }
 
 /**

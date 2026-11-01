@@ -3,8 +3,9 @@ import { sessionSend, type ConnectionSession } from '../connection/connection_se
 import type { Room } from '../rooms/room.ts';
 import { roomBroadcastLocks } from '../rooms/room_broadcast.ts';
 import type { ServerCore } from '../server/server_core.ts';
-import type { ClientMessage, EditOperation } from '../shared/protocol_definitions.ts';
+import type { ClientMessage, EditOperation, VerifyDenial } from '../shared/protocol_definitions.ts';
 import { sessionSyncedRoom } from './handler_lock.ts';
+import { verifyAsk, verifyNeeded, type VerifyClaim } from './handler_verify.ts';
 
 type EditMessage = Extract<ClientMessage, { t: 'edit' }>;
 
@@ -17,35 +18,122 @@ interface EditLockPlan {
 
 /** Rejection of an edit. */
 interface EditRejection {
-  reason: 'not_locked' | 'lock_conflict' | 'lock_limit';
+  reason: 'not_locked' | 'lock_conflict' | 'lock_limit' | 'lock_unverified';
   ids: string[];
 }
 
 /**
  * Accepts an edit when the sender holds every lock it needs, then queues it for
- * every other member (coalesced per recipient) and applies lock effects.
+ * every other member (coalesced per recipient) and applies lock effects. When a
+ * member's parent chains would give it shared locks it does not have yet, the
+ * room owner must confirm the chains first.
  *
- * @param _core Relay core.
+ * @param core Relay core.
  * @param session Sender.
  * @param message Edit batch.
  */
-export function handlerEdit(_core: ServerCore, session: ConnectionSession, message: EditMessage): void {
+export function handlerEdit(core: ServerCore, session: ConnectionSession, message: EditMessage): void {
   const room = sessionSyncedRoom(session, undefined);
   if (!room) return;
+  const plan = editPlan(room, session, message);
+  if (plan === null) return;
+  if (!verifyNeeded(room, session, plan.shared)) return editAccept(room, session, message, plan);
+  const claim = editClaim(message.ops);
+  if (claim === null) return editReject(session, message.seq, { reason: 'lock_unverified', ids: [] }, 'invalid');
+  verifyAsk(core, room, session, claim, (outcome) => {
+    if (outcome !== 'ok') return editReject(session, message.seq, { reason: 'lock_unverified', ids: [] }, outcome);
+    if (session.room !== room || !session.synced) return;
+    const recheckedPlan = editPlan(room, session, message);
+    if (recheckedPlan !== null) editAccept(room, session, message, recheckedPlan);
+  });
+}
+
+/**
+ * Checks an edit against the locks and refuses it when it does not pass.
+ *
+ * @param room Room.
+ * @param session Sender.
+ * @param message Edit batch.
+ * @returns Lock effects, or null when the edit was refused.
+ */
+function editPlan(room: Room, session: ConnectionSession, message: EditMessage): EditLockPlan | null {
   const plan: EditLockPlan = { created: [], deleted: [], shared: [] };
   const rejection = editLockCheck(room, session.user, message.ops, plan);
-  if (rejection)
-    return sessionSend(session, {
-      t: 'edit.rejected',
-      seq: message.seq,
-      reason: rejection.reason,
-      ids: rejection.ids.slice(0, 64),
-    });
+  if (rejection === null) return plan;
+  editReject(session, message.seq, rejection, null);
+  return null;
+}
+
+/**
+ * Relays an accepted edit and applies its lock effects.
+ *
+ * @param room Room.
+ * @param session Sender.
+ * @param message Edit batch.
+ * @param plan Lock effects.
+ */
+function editAccept(room: Room, session: ConnectionSession, message: EditMessage, plan: EditLockPlan): void {
   editRelay(room, session, message);
   room.locks.grant(session.user, plan.created);
   room.locks.sharedGrant(session.user, plan.shared);
   const released = room.locks.release(session.user, plan.deleted);
   roomBroadcastLocks(room, session, plan.created, released);
+}
+
+/**
+ * Tells the sender its edit was refused.
+ *
+ * @param session Sender.
+ * @param seq Sequence number of the edit.
+ * @param rejection Reason and ids.
+ * @param why Why the owner did not confirm, for `lock_unverified`.
+ */
+function editReject(session: ConnectionSession, seq: number, rejection: EditRejection, why: VerifyDenial | null): void {
+  sessionSend(session, {
+    t: 'edit.rejected',
+    seq,
+    reason: rejection.reason,
+    ids: rejection.ids.slice(0, 64),
+    ...(why === null ? {} : { why }),
+  });
+}
+
+/**
+ * Builds the owner query for the parent chains of an edit: each chain's first
+ * id must exist and the rest must be its ancestors. A chain whose parent is
+ * created earlier in the same batch must continue with that create's own chain,
+ * which is checked here without asking the owner.
+ *
+ * @param operations Operations of the batch.
+ * @returns Claim, or null when a chain contradicts the batch itself.
+ */
+export function editClaim(operations: readonly EditOperation[]): VerifyClaim | null {
+  const chainOfCreated = new Map<string, readonly string[]>();
+  const heads = new Set<string>();
+  const ancestors = new Set<string>();
+  for (const operation of operations) {
+    const chain = operation.k === 'create' || operation.k === 'reparent' ? (operation.p ?? []) : [];
+    const [head, ...rest] = chain;
+    if (head !== undefined && chainOfCreated.has(head)) {
+      if (!editChainSame(rest, chainOfCreated.get(head) ?? [])) return null;
+    } else if (head !== undefined) {
+      heads.add(head);
+      rest.forEach((id) => ancestors.add(id));
+    }
+    if (operation.k === 'create') operation.ids.forEach((id) => chainOfCreated.set(id, chain));
+  }
+  return { ids: [...heads], anc: [...ancestors] };
+}
+
+/**
+ * Compares two parent chains.
+ *
+ * @param left Chain.
+ * @param right Chain.
+ * @returns True when both list the same ids in the same order.
+ */
+function editChainSame(left: readonly string[], right: readonly string[]): boolean {
+  return left.length === right.length && left.every((id, index) => id === right[index]);
 }
 
 /**

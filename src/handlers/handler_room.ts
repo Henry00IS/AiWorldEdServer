@@ -8,6 +8,7 @@ import type { ClientMessage } from '../shared/protocol_definitions.ts';
 import { displayNameNormalize, displayNameUnique, roomNameNormalize } from '../shared/room_name_policy.ts';
 import { chatPurge } from './handler_chat.ts';
 import { presencePurge } from './handler_presence.ts';
+import { verifyCancel } from './handler_verify.ts';
 
 type RoomCreateMessage = Extract<ClientMessage, { t: 'room.create' }>;
 type RoomJoinMessage = Extract<ClientMessage, { t: 'room.join' }>;
@@ -165,6 +166,8 @@ function roomInstantiate(
     locksPerUser: core.config.locksPerUser,
     locksPerRoom: core.config.locksPerRoom,
     locksServerBudget: core.locksServerBudget,
+    verifyPerSecond: core.config.verifyPerRoomPerSecond,
+    verifyBurst: core.config.verifyPerRoomBurst,
   });
 }
 
@@ -420,6 +423,7 @@ export function roomMembershipEnd(
  * @param session Member.
  */
 function roomMemberRemove(room: Room, session: ConnectionSession): void {
+  verifyCancel(session, null);
   room.memberDelete(session.user);
   presencePurge(room, session);
   sessionRoomStateReset(session);
@@ -442,6 +446,8 @@ function roomClose(core: ServerCore, room: Room): void {
   room.streams.clear();
   room.locks.releaseEverything();
   room.presenceLatest.clear();
+  for (const member of room.members.values()) verifyCancel(member, 'owner_left');
+  room.verifyWaiting.clear();
   for (const member of room.members.values()) {
     member.presencePending.clear();
     sessionRoomStateReset(member);

@@ -10,3 +10,10 @@ test('token bucket refills over time', () => {
   expect(bucket.take(2)).toBe(true);
   expect(bucket.take()).toBe(false);
 });
+
+test('token bucket takes tokens back up to its burst', () => {
+  const bucket = new LimiterTokenBucket(0, 2, () => 0);
+  expect([bucket.take(), bucket.take(), bucket.take()]).toEqual([true, true, false]);
+  bucket.give(5);
+  expect([bucket.take(), bucket.take(), bucket.take()]).toEqual([true, true, false]);
+});

@@ -66,6 +66,26 @@ export interface ServerConfiguration {
    * oldest is dropped when a slow recipient falls further behind.
    */
   chatPendingPerRecipient: number;
+  /**
+   * How long the relay waits for the room owner to confirm a member's claimed
+   * ancestors before it refuses the request.
+   */
+  verifyTimeoutMs: number;
+  /** Owner queries one member may cause per second. */
+  verifyPerMemberPerSecond: number;
+  /** Burst of owner queries one member may cause. */
+  verifyPerMemberBurst: number;
+  /** Owner queries one room may send per second, all members together. */
+  verifyPerRoomPerSecond: number;
+  /** Burst of owner queries one room may send. */
+  verifyPerRoomBurst: number;
+  /**
+   * Lock and edit messages held per member while its query is open; more closes
+   * the connection as rate limited.
+   */
+  verifyQueueMessagesMaximum: number;
+  /** Bytes of lock and edit messages held per member while its query is open. */
+  verifyQueueBytesMaximum: number;
 }
 
 /**
@@ -127,6 +147,13 @@ const CONFIGURATION_ROOM_LIMITS_DEFAULT = {
   chatTextLengthMaximum: CHAT_TEXT_LENGTH_MAXIMUM,
   chatTextLinesMaximum: CHAT_TEXT_LINES_MAXIMUM,
   chatPendingPerRecipient: 64,
+  verifyTimeoutMs: 5000,
+  verifyPerMemberPerSecond: 10,
+  verifyPerMemberBurst: 20,
+  verifyPerRoomPerSecond: 50,
+  verifyPerRoomBurst: 100,
+  verifyQueueMessagesMaximum: 64,
+  verifyQueueBytesMaximum: 4 * 1024 * 1024,
 } satisfies Partial<ServerConfiguration>;
 
 /**

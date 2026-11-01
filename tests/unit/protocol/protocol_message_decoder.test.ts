@@ -10,6 +10,7 @@ const valid = [
   { t: 'lock.acquire', ids: ['brush:1'], shared: ['group:1', 'model:1'] },
   { t: 'edit', seq: 8, ops: [{ k: 'reparent', ids: ['brush:1'], d: {}, p: ['group:1'] }] },
   { t: 'lock.release' },
+  { t: 'verify.result', q: 4294967295, v: 'deleted' },
   {
     t: 'edit',
     seq: 7,
@@ -35,6 +36,10 @@ test.each([
   ['bad object id', JSON.stringify({ t: 'lock.acquire', ids: ['bad id with spaces'] })],
   ['bad shared id', JSON.stringify({ t: 'lock.acquire', ids: ['a'], shared: ['bad id'] })],
   ['empty parent chain', JSON.stringify({ t: 'edit', seq: 1, ops: [{ k: 'create', ids: ['a'], p: [] }] })],
+  ['unknown verdict', JSON.stringify({ t: 'verify.result', q: 1, v: 'maybe' })],
+  ['verify answer without query', JSON.stringify({ t: 'verify.result', v: 'ok' })],
+  ['verify answer with request id', JSON.stringify({ t: 'verify.result', q: 1, v: 'ok', r: 1 })],
+  ['zero verify query', JSON.stringify({ t: 'verify.result', q: 0, v: 'ok' })],
   ['unknown edit kind', JSON.stringify({ t: 'edit', seq: 1, ops: [{ k: 'chat', ids: ['a'] }] })],
   ['float seq', JSON.stringify({ t: 'edit', seq: 1.5, ops: [{ k: 'transform', ids: ['a'] }] })],
   [

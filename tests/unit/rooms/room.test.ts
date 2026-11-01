@@ -34,3 +34,20 @@ test('color slots: lowest free slot, unique among members, reused after leaving'
   expect([5, 6, 7].map((user) => room.colorOf(user))).toEqual([1, 2, 4]);
   expect(new Set(room.memberList().map((entry) => entry.color)).size).toBe(room.members.size);
 });
+
+test('verify query ids count up from 1 and skip ids that are still open', () => {
+  const room = new Room({
+    id: 'r',
+    name: 'room',
+    isPrivate: false,
+    passwordHash: null,
+    internalTest: true,
+    maxUsers: 8,
+    owner: sessionFake(1),
+    locksPerUser: 10,
+    locksPerRoom: 10,
+  });
+  expect(room.verifyQueryNext()).toBe(1);
+  room.verifyWaiting.set(2, sessionFake(2));
+  expect(room.verifyQueryNext()).toBe(3);
+});

@@ -66,7 +66,7 @@ export class RoomLockTable {
   acquire(user: number, ids: readonly string[], replace: boolean, shared: readonly string[] = []): LockAcquireResult {
     const requested = new Set(ids);
     const sharedWanted = new Set(shared.filter((id) => !requested.has(id)));
-    const conflicts = [...this.conflictsFor(user, ids), ...this.conflictsShared(user, ids, sharedWanted)];
+    const conflicts = this.acquireConflicts(user, ids, sharedWanted);
     if (conflicts.length > 0) return { ok: false, reason: 'lock_conflict', conflicts };
     const plan = this.acquirePlan(user, requested, sharedWanted, replace);
     const delta = plan.added.length - plan.removed.length + plan.sharedAdded.length - plan.sharedRemoved.length;
@@ -99,6 +99,20 @@ export class RoomLockTable {
       if (holder !== undefined && holder !== user) conflicts.push({ id, by: holder });
     }
     return conflicts;
+  }
+
+  /**
+   * Lists what blocks an acquire: exclusive locks of others on the requested
+   * ids, and shared locks against exclusive ones either way.
+   *
+   * @param user Requester.
+   * @param ids Requested exclusive ids.
+   * @param sharedWanted Requested shared ids that are not requested
+   *   exclusively.
+   * @returns Conflicts, empty when the acquire could go ahead.
+   */
+  acquireConflicts(user: number, ids: readonly string[], sharedWanted: Iterable<string>): LockConflict[] {
+    return [...this.conflictsFor(user, ids), ...this.conflictsShared(user, ids, sharedWanted)];
   }
 
   /**

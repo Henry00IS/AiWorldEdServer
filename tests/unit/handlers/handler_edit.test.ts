@@ -4,7 +4,7 @@
  */
 import { expect, test } from 'bun:test';
 import type { ConnectionSession } from '../../../src/connection/connection_session.ts';
-import { editLockCheck } from '../../../src/handlers/handler_edit.ts';
+import { editClaim, editLockCheck } from '../../../src/handlers/handler_edit.ts';
 import { Room } from '../../../src/rooms/room.ts';
 
 /**
@@ -53,4 +53,23 @@ test('a create of a fresh id or one only the sender shares is accepted', () => {
   const plan = { created: [] as string[], deleted: [], shared: [] };
   expect(editLockCheck(room, 2, [{ k: 'create', ids: ['fresh', 'group'], d: [{}, {}] }] as never, plan)).toBeNull();
   expect(plan.created).toEqual(['fresh', 'group']);
+});
+
+test('a claim asks about chain heads and their ancestors once each', () => {
+  const claim = editClaim([
+    { k: 'reparent', ids: ['a'], d: {}, p: ['inner', 'middle', 'outer'] },
+    { k: 'reparent', ids: ['b'], d: {}, p: ['middle', 'outer'] },
+    { k: 'transform', ids: ['c'], d: {} },
+    { k: 'reparent', ids: ['d'], d: {} },
+  ] as never);
+  expect(claim).toEqual({ ids: ['inner', 'middle'], anc: ['middle', 'outer'] });
+});
+
+test('a chain through a container created in the batch must repeat its chain', () => {
+  const created = { k: 'create', ids: ['box', 'lid'], d: [{}, {}], p: ['group'] };
+  const good = editClaim([created, { k: 'create', ids: ['x'], d: [{}], p: ['lid', 'group'] }] as never);
+  expect(good).toEqual({ ids: ['group'], anc: [] });
+  expect(editClaim([created, { k: 'reparent', ids: ['y'], d: {}, p: ['box'] }] as never)).toBeNull();
+  const rootBox = { k: 'create', ids: ['box'], d: [{}] };
+  expect(editClaim([rootBox, { k: 'reparent', ids: ['y'], d: {}, p: ['box'] }] as never)).toEqual({ ids: [], anc: [] });
 });

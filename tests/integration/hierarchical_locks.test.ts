@@ -7,7 +7,7 @@
 import { afterAll, afterEach, beforeAll, describe, expect, test } from 'bun:test';
 import { collabServerStart, type CollabServer } from '../../src/server/server_collab.ts';
 import { TestClient } from '../support/test_client.ts';
-import { roomCreate, testRoomJoinSynced } from '../support/test_room.ts';
+import { roomCreate, testRoomJoinSynced, verifyAnswer } from '../support/test_room.ts';
 import { testConfiguration } from '../support/test_configuration.ts';
 
 let server: CollabServer;
@@ -54,7 +54,9 @@ afterAll(async () => {
 describe('hierarchical locks', () => {
   test('a container cannot be locked while a member edits something inside it', async () => {
     const { owner, joiner } = await roomPair();
-    const granted = await joiner.request({ t: 'lock.acquire', ids: ['cube'], shared: ['group'] }, 'lock.result');
+    const pending = joiner.request({ t: 'lock.acquire', ids: ['cube'], shared: ['group'] }, 'lock.result');
+    expect(await verifyAnswer(owner)).toMatchObject({ ids: ['cube'], anc: ['group'] });
+    const granted = await pending;
     expect(granted).toMatchObject({ ok: true, add: ['cube'] });
     const refused = await owner.request({ t: 'lock.acquire', ids: ['group', 'sphere'], replace: true }, 'lock.result');
     expect(refused).toMatchObject({
@@ -84,6 +86,7 @@ describe('hierarchical locks', () => {
     const { owner, joiner } = await roomPair();
     await joiner.request({ t: 'lock.acquire', ids: ['cube'] }, 'lock.result');
     joiner.send({ t: 'edit', seq: 1, ops: [{ k: 'reparent', ids: ['cube'], d: {}, p: ['group'] }] });
+    expect(await verifyAnswer(owner)).toMatchObject({ ids: ['group'], anc: [] });
     expect((await owner.next('edits')).list[0].ops[0].p).toEqual(['group']);
     const refused = await owner.request({ t: 'lock.acquire', ids: ['group'] }, 'lock.result');
     expect(refused).toMatchObject({ ok: false, conflicts: [{ id: 'group', by: joiner.user, shared: true }] });

@@ -32,6 +32,16 @@ export class LimiterTokenBucket {
     return true;
   }
 
+  /**
+   * Returns tokens, for traffic the relay asked for itself.
+   *
+   * @param amount Tokens to return.
+   */
+  give(amount = 1): void {
+    this.refill();
+    this.tokens = Math.min(this.burst, this.tokens + amount);
+  }
+
   /** Adds tokens for the elapsed time, capped at the burst size. */
   private refill(): void {
     const now = this.nowMs();

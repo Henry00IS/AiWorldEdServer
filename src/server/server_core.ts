@@ -4,6 +4,8 @@
  */
 import type { ServerConfiguration } from '../config/server_configuration.ts';
 import { ConnectionOutboundQueue, type OutboundSocket } from '../connection/connection_outbound_queue.ts';
+import { ConnectionVerifyState, type ConnectionVerifyHeldMessage } from '../connection/connection_verify_state.ts';
+import { handlerVerifyResult, verifyHoldOrRun } from '../handlers/handler_verify.ts';
 import { sessionSend, type ConnectionSession, type ConnectionUpgradeData } from '../connection/connection_session.ts';
 import { handlerEdit } from '../handlers/handler_edit.ts';
 import { chatFlush, handlerChat } from '../handlers/handler_chat.ts';
@@ -89,7 +91,23 @@ function sessionInitialState(config: ServerConfiguration): SessionInitialState {
     snapshotTimer: null,
     handshakeTimer: null,
     pendingAsyncOperation: false,
+    verify: sessionVerifyState(config),
   };
+}
+
+/**
+ * Builds the owner verification state of a new session.
+ *
+ * @param config Effective configuration.
+ * @returns Idle verification state.
+ */
+function sessionVerifyState(config: ServerConfiguration): ConnectionVerifyState {
+  return new ConnectionVerifyState({
+    perSecond: config.verifyPerMemberPerSecond,
+    burst: config.verifyPerMemberBurst,
+    heldMessagesMaximum: config.verifyQueueMessagesMaximum,
+    heldBytesMaximum: config.verifyQueueBytesMaximum,
+  });
 }
 
 /**
@@ -350,7 +368,7 @@ export class ServerCore {
     if (!decoded.ok) return this.violation(session, decoded.reason);
     if (!session.helloDone) return this.handshake(session, decoded.message);
     if (decoded.message.t === 'hello') return this.violation(session, 'duplicate hello');
-    this.dispatch(session, decoded.message);
+    this.dispatch(session, decoded.message, text.length);
   }
 
   /**
@@ -394,8 +412,9 @@ export class ServerCore {
    *
    * @param session Sender.
    * @param message Validated message.
+   * @param bytes Frame size.
    */
-  private dispatch(session: ConnectionSession, message: Exclude<ClientMessage, { t: 'hello' }>): void {
+  private dispatch(session: ConnectionSession, message: Exclude<ClientMessage, { t: 'hello' }>, bytes: number): void {
     switch (message.t) {
       case 'ping':
         return sessionSend(session, { t: 'pong', ...(message.r === undefined ? {} : { r: message.r }) });
@@ -414,7 +433,7 @@ export class ServerCore {
       case 'name.set':
         return handlerNameSet(session, message);
       default:
-        return this.dispatchContent(session, message);
+        return this.dispatchContent(session, message, bytes);
     }
   }
 
@@ -423,15 +442,16 @@ export class ServerCore {
    *
    * @param session Sender.
    * @param message Validated message.
+   * @param bytes Frame size.
    */
-  private dispatchContent(session: ConnectionSession, message: ContentMessage): void {
+  private dispatchContent(session: ConnectionSession, message: ContentMessage, bytes: number): void {
     switch (message.t) {
       case 'lock.acquire':
-        return handlerLockAcquire(this, session, message);
       case 'lock.release':
-        return handlerLockRelease(this, session, message);
       case 'edit':
-        return handlerEdit(this, session, message);
+        return verifyHoldOrRun(this, session, message, bytes);
+      case 'verify.result':
+        return handlerVerifyResult(this, session, message, bytes);
       case 'chat':
         return handlerChat(this, session, message);
       case 'asset.request':
@@ -444,6 +464,23 @@ export class ServerCore {
         return handlerStreamEnd(this, session, message);
       case 'stream.abort':
         return handlerStreamAbort(this, session, message);
+    }
+  }
+
+  /**
+   * Routes a lock or edit message that is not held behind an open verify query.
+   *
+   * @param session Sender.
+   * @param message Lock or edit message.
+   */
+  lockOrEditRoute(session: ConnectionSession, message: ConnectionVerifyHeldMessage): void {
+    switch (message.t) {
+      case 'lock.acquire':
+        return handlerLockAcquire(this, session, message);
+      case 'lock.release':
+        return handlerLockRelease(this, session, message);
+      case 'edit':
+        return handlerEdit(this, session, message);
     }
   }
 
