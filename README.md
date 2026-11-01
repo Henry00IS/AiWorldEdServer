@@ -10,7 +10,7 @@ Contributors and agents: read [AGENTS.md](AGENTS.md) for the code standards and
 server rules before changing anything.
 
 The official public relay is `wss://aiworlded.00labs.net/ws`; editor builds connect to it by
-default.
+default. To run your own relay, see [`docs/SELF_HOSTING.md`](docs/SELF_HOSTING.md).
 
 ```
 bun install
@@ -458,11 +458,33 @@ Compose-only variables:
 | `BIND_ADDRESS`                | compose only: host address to publish the port on                        |
 | `CONTAINER_NAME`, `IMAGE_TAG` | compose only: dev instance names (defaults `aiworlded-server`, `latest`) |
 
-## Deployment
+## Deployment with compose.yaml
 
-`compose.yaml` runs the relay in Docker behind a TLS-terminating reverse proxy. Secrets come
-from `./.env` (chmod 600, never committed; see `.env.example`). Publish the container port only
-on a private interface the proxy can reach, and let the proxy forward only the WebSocket path.
+`docs/SELF_HOSTING.md` covers every way to run the relay (release executable, Docker,
+`deploy/self-host/compose.yaml`, built-in TLS, Caddy and nginx). The root `compose.yaml` is a
+hardened variant for running the relay behind a reverse proxy on another machine of a private
+network: copy `.env.example` to `.env` (chmod 600) next to it, set `BIND_ADDRESS` to the private
+address the proxy reaches, `TRUST_PROXY=true` and a random `FORWARDED_SECRET`, then
+`docker compose up -d --build`. `CONTAINER_NAME`, `IMAGE_TAG`, `COMPOSE_PROJECT_NAME` and `PORT`
+let a second (test) instance share the same file.
+
+The container (`oven/bun:1.4.4-slim`) runs as user `bun`, read-only root FS, all capabilities
+dropped, `no-new-privileges`, 768 MiB / 2 CPUs / 256 pids, log rotation, `restart: unless-stopped`
+and a `/healthz` health check. Only forward the WebSocket path through the proxy.
+
+Verify a deployment end to end with `bun scripts/verify_public.ts wss://relay.example.com/ws`
+(expects `via=proxy`), or locally with
+`EXPECT_VIA=direct EXPECT_INTERNAL_TEST=allowed bun scripts/verify_public.ts ws://127.0.0.1:8081/ws`.
+
+### Keeping the port private
+
+Docker-published ports are DNAT'ed before the host `INPUT` chain, so ufw/iptables INPUT rules do
+**not** protect them. Publish the port only on a private address (`BIND_ADDRESS`), never on
+`0.0.0.0` of a machine with a public address. If the proxy runs on the same host in a Docker
+network, attach the relay to that network and drop the `ports:` mapping instead. For stricter
+filtering add a `DOCKER-USER` iptables rule that only admits the proxy's network, for example
+`iptables -I DOCKER-USER -p tcp --dport 8081 ! -s 192.0.2.0/24 -j DROP`. In addition, the relay
+only trusts forwarded headers that carry the right secret.
 
 ### Live room list
 

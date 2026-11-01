@@ -1,6 +1,6 @@
-# Runs the relay on the server. Secrets come from ./.env (chmod 600, never committed).
-# The same file serves both instances: live (/srv/relay, defaults below) and
-# dev (/srv/relay-dev, whose .env sets CONTAINER_NAME, IMAGE_TAG and PORT).
+# Runs the relay behind a reverse proxy on a private network. Settings and secrets come from
+# ./.env (copy .env.example, chmod 600, never committed). A second instance on the same host
+# sets CONTAINER_NAME, IMAGE_TAG, COMPOSE_PROJECT_NAME and PORT in its own .env.
 services:
   relay:
     build: .

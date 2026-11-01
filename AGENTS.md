@@ -3,7 +3,7 @@
 The WebSocket relay that lets several AiWorldEd users edit one world together.
 It never holds the world: it negotiates between the room owner and the other
 members, relays edits, streams and presence, and enforces selection locks.
-See `README.md` for the protocol.
+See `README.md` for the protocol and `docs/SELF_HOSTING.md` for running a relay.
 
 ## Server rules
 
@@ -36,8 +36,9 @@ See `README.md` for the protocol.
    and checks it with `bun run collab:shared:check`
    (`scripts/collaboration_shared_sync.ts` in the AiWorldEd repo). After any
    change here, run the sync in the editor so both copies stay identical.
-8. Never commit details of a real deployment (hosts, addresses, admin services,
-   accounts, secrets) to this repository.
+8. Self-hosting documentation lives in `docs/SELF_HOSTING.md`. Keep it current when
+   the Docker, compose, proxy or settings change. Never commit details of a real
+   deployment (hosts, addresses, admin services, accounts, secrets) to this repository.
 
 ## Unit testing requirement
 

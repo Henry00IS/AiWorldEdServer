@@ -5,11 +5,12 @@
  * (member name and color, a camera pose relayed between the two clients) and
  * whether internal test rooms are allowed.
  *
- * Usage: bun scripts/verify_public.ts [wss://aiworlded.00labs.net/ws]
+ * Usage: bun scripts/verify_public.ts [wss://relay.example.com/ws] (default:
+ * the official relay)
  *
  * Env: EXPECT_VIA=proxy|direct (default proxy),
- * EXPECT_INTERNAL_TEST=forbidden|allowed (default forbidden; the dev relay at
- * /wstest allows them).
+ * EXPECT_INTERNAL_TEST=forbidden|allowed (default forbidden; a development
+ * relay with INTERNAL_TEST_ROOMS_VIA_PROXY allows them).
  */
 import { binaryFrameEncode } from '../src/shared/binary_frame.ts';
 import { presenceFrameDecode, presenceFrameEncode } from '../src/shared/presence_frame.ts';
@@ -18,8 +19,8 @@ import { PROTOCOL_ID, PROTOCOL_VERSION } from '../src/shared/protocol_definition
 const url = process.argv[2] ?? process.env['PUBLIC_WS_URL'] ?? 'wss://aiworlded.00labs.net/ws';
 const origin = 'https://henry00is.github.io';
 /**
- * Expected trust verdict; 'proxy' through the reverse proxy, 'direct' when testing a local
- * server.
+ * Expected trust verdict; 'proxy' through the reverse proxy, 'direct' when
+ * testing a local server.
  */
 const expectedVia = process.env['EXPECT_VIA'] ?? 'proxy';
 /** Expected answer to an internal test room request. */
