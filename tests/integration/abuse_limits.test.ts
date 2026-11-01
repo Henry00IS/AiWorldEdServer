@@ -110,3 +110,29 @@ test('room create and join requests are rate limited per address', async () => {
   bystander.close();
   await limited.stop();
 });
+
+/**
+ * Creates a public room and asks for locks on the given ids.
+ *
+ * @param owner Room creator.
+ * @param ids Object ids to lock.
+ * @returns The lock.result reply.
+ */
+async function roomCreateAndLock(owner: TestClient, ids: string[]): Promise<any> {
+  await owner.request({ t: 'room.create', name: 'locks', private: false }, 'room.created');
+  return owner.request({ t: 'lock.acquire', ids }, 'lock.result');
+}
+
+test('locks are capped across all rooms and a closed room returns its locks', async () => {
+  const budgeted = collabServerStart(testConfiguration({ locksTotal: 5 }));
+  const firstOwner = await connectFrom('203.0.113.50', budgeted.port);
+  const secondOwner = await connectFrom('198.51.100.60', budgeted.port);
+  expect((await roomCreateAndLock(firstOwner, ['a', 'b', 'c'])).ok).toBe(true);
+  const refused = await roomCreateAndLock(secondOwner, ['d', 'e', 'f']);
+  expect([refused.ok, refused.code]).toEqual([false, 'lock_limit']);
+  await firstOwner.request({ t: 'room.leave' }, 'room.left');
+  expect((await secondOwner.request({ t: 'lock.acquire', ids: ['d', 'e', 'f'] }, 'lock.result')).ok).toBe(true);
+  firstOwner.close();
+  secondOwner.close();
+  await budgeted.stop();
+});

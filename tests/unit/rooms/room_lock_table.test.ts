@@ -1,4 +1,5 @@
 import { expect, test } from 'bun:test';
+import { LimiterSharedBudget } from '../../../src/network/limiter_shared_budget.ts';
 import { RoomLockTable } from '../../../src/rooms/room_lock_table.ts';
 
 test('lock acquisition is all-or-nothing and reports holders', () => {
@@ -23,4 +24,19 @@ test('lock limits per user and per room', () => {
   expect(locks.acquire(1, ['a', 'b'], false).ok).toBe(true);
   expect(locks.acquire(2, ['c', 'd'], false)).toEqual({ ok: false, reason: 'lock_limit' });
   expect(locks.acquire(1, ['x', 'y'], true).ok).toBe(true);
+});
+
+test('lock tables share the server-wide budget and return locks when released or closed', () => {
+  const budget = new LimiterSharedBudget(5);
+  const first = new RoomLockTable(100, 100, budget);
+  const second = new RoomLockTable(100, 100, budget);
+  expect(first.acquire(1, ['a', 'b', 'c'], false).ok).toBe(true);
+  expect(second.acquire(2, ['d', 'e', 'f'], false)).toEqual({ ok: false, reason: 'lock_limit' });
+  expect(second.acquire(2, ['d', 'e'], false).ok).toBe(true);
+  expect(budget.inUse()).toBe(5);
+  first.release(1, ['a']);
+  expect(second.acquire(2, ['f'], false).ok).toBe(true);
+  first.releaseEverything();
+  expect(budget.inUse()).toBe(3);
+  expect(first.countTotal()).toBe(0);
 });

@@ -26,6 +26,7 @@ import {
 import { LimiterFailureWindow } from '../network/limiter_failure_window.ts';
 import { LimiterKeyCounter } from '../network/limiter_key_counter.ts';
 import { LimiterKeyedTokenBucket } from '../network/limiter_keyed_token_bucket.ts';
+import { LimiterSharedBudget } from '../network/limiter_shared_budget.ts';
 import { LimiterTokenBucket } from '../network/limiter_token_bucket.ts';
 import { protocolMessageDecode } from '../protocol/protocol_message_decoder.ts';
 import { PROTOCOL_CAPS } from '../protocol/protocol_message_schemas.ts';
@@ -143,6 +144,7 @@ export class ServerCore {
   readonly joinFailuresPerRoom: LimiterFailureWindow;
   readonly passwordWorkPerIpKey: LimiterKeyCounter;
   readonly roomEntriesPerIpKey: LimiterKeyedTokenBucket;
+  readonly locksServerBudget: LimiterSharedBudget;
   passwordHashesInFlight = 0;
   private nextUserId = 1;
   private readonly pruneTimer: ReturnType<typeof setInterval>;
@@ -169,6 +171,7 @@ export class ServerCore {
     );
     this.joinFailuresPerIp = new LimiterFailureWindow(config.joinFailuresPerIpPerMinute, 60_000);
     this.joinFailuresPerRoom = new LimiterFailureWindow(config.joinFailuresPerRoomPerMinute, 60_000);
+    this.locksServerBudget = new LimiterSharedBudget(config.locksTotal);
     this.pruneTimer = setInterval(() => this.limitersPrune(), 60_000);
   }
 

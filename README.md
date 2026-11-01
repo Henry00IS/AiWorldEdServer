@@ -231,7 +231,7 @@ warn the user that they are offline and should save locally. Re-joining any room
 | Rooms            | 8 owned per IP, 500 total; 1 room per connection                                       |
 | Room entries     | create + join 30/min per IP (burst 10) → error `too_many_attempts`                     |
 | Users per room   | 16 default, max 32                                                                     |
-| Locks            | 20 000 per user, 100 000 per room                                                      |
+| Locks            | 20 000 per user, 100 000 per room, 400 000 per relay                                   |
 | Outbound queue   | 16 MiB per recipient → close 4004 (slow consumer)                                      |
 | Handshake / idle | 5 s / 60 s (with ping/pong)                                                            |
 | Snapshot / asset | 256 MiB / 64 MiB, 4 MiB window, 8 streams per recipient, 60 s snapshot timeout         |

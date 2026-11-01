@@ -2,6 +2,7 @@
  * Exclusive object locks inside one room. Single-threaded, so every method is
  * atomic.
  */
+import { LimiterSharedBudget } from '../network/limiter_shared_budget.ts';
 
 /** Lock conflict: the object id and the user currently holding it. */
 export interface LockConflict {
@@ -25,10 +26,12 @@ export class RoomLockTable {
    *
    * @param locksPerUserMaximum Most locks one user may hold.
    * @param locksPerRoomMaximum Most locks the whole room may hold.
+   * @param locksServerBudget Lock budget shared by every room of the relay.
    */
   constructor(
     private readonly locksPerUserMaximum: number,
     private readonly locksPerRoomMaximum: number,
+    private readonly locksServerBudget: LimiterSharedBudget = new LimiterSharedBudget(Number.MAX_SAFE_INTEGER),
   ) {}
 
   /**
@@ -63,11 +66,13 @@ export class RoomLockTable {
    */
   grant(user: number, ids: readonly string[]): void {
     const held = this.heldSet(user);
+    const sizeBefore = this.holderByObjectId.size;
     for (const id of ids) {
       this.holderByObjectId.set(id, user);
       held.add(id);
     }
     this.objectIdsByHolder.set(user, held);
+    this.locksServerBudget.consume(this.holderByObjectId.size - sizeBefore);
   }
 
   /**
@@ -86,7 +91,15 @@ export class RoomLockTable {
       this.holderByObjectId.delete(id);
     }
     if (held.size === 0) this.objectIdsByHolder.delete(user);
+    this.locksServerBudget.release(released.length);
     return released;
+  }
+
+  /** Drops every lock of a closing room and returns them to the server budget. */
+  releaseEverything(): void {
+    this.locksServerBudget.release(this.holderByObjectId.size);
+    this.holderByObjectId.clear();
+    this.objectIdsByHolder.clear();
   }
 
   /**
@@ -155,15 +168,18 @@ export class RoomLockTable {
   }
 
   /**
-   * Checks a planned lock change against the per-user and per-room limits.
+   * Checks a planned lock change against the per-user, per-room and server-wide
+   * limits.
    *
    * @param userTotalAfter User lock count after the change.
    * @param roomDelta Change of the room lock count.
-   * @returns True when both limits hold.
+   * @returns True when every limit holds.
    */
   withinLimits(userTotalAfter: number, roomDelta: number): boolean {
     return (
-      userTotalAfter <= this.locksPerUserMaximum && this.holderByObjectId.size + roomDelta <= this.locksPerRoomMaximum
+      userTotalAfter <= this.locksPerUserMaximum &&
+      this.holderByObjectId.size + roomDelta <= this.locksPerRoomMaximum &&
+      this.locksServerBudget.fits(roomDelta)
     );
   }
 

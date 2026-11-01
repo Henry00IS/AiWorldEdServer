@@ -163,6 +163,7 @@ function roomInstantiate(
     owner: session,
     locksPerUser: core.config.locksPerUser,
     locksPerRoom: core.config.locksPerRoom,
+    locksServerBudget: core.locksServerBudget,
   });
 }
 
@@ -433,6 +434,7 @@ function roomClose(core: ServerCore, room: Room): void {
   room.closed = true;
   core.registry.remove(room);
   room.streams.clear();
+  room.locks.releaseEverything();
   room.presenceLatest.clear();
   for (const member of room.members.values()) {
     member.presencePending.clear();

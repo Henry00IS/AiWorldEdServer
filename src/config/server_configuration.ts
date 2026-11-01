@@ -29,6 +29,7 @@ export interface ServerConfiguration {
   usersPerRoomMaximum: number;
   locksPerUser: number;
   locksPerRoom: number;
+  locksTotal: number;
   outboundQueueBytesMaximum: number;
   socketBufferHighWaterBytes: number;
   snapshotBytesMaximum: number;
@@ -84,6 +85,7 @@ const CONFIGURATION_ROOM_LIMITS_DEFAULT = {
   usersPerRoomMaximum: 32,
   locksPerUser: 20_000,
   locksPerRoom: 100_000,
+  locksTotal: 400_000,
   outboundQueueBytesMaximum: 16 * 1024 * 1024,
   socketBufferHighWaterBytes: 1024 * 1024,
   snapshotBytesMaximum: 256 * 1024 * 1024,

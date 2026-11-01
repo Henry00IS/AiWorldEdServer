@@ -4,6 +4,7 @@
  */
 import type { ConnectionSession } from '../connection/connection_session.ts';
 import type { RoomListEntry, RoomMemberEntry, StreamKind } from '../shared/protocol_definitions.ts';
+import type { LimiterSharedBudget } from '../network/limiter_shared_budget.ts';
 import { RoomLockTable } from './room_lock_table.ts';
 
 /** One owner-to-member stream that is currently in flight. */
@@ -29,6 +30,7 @@ export interface RoomOptions {
   owner: ConnectionSession;
   locksPerUser: number;
   locksPerRoom: number;
+  locksServerBudget?: LimiterSharedBudget;
 }
 
 /** Live room state. */
@@ -66,7 +68,7 @@ export class Room {
     this.maxUsers = options.maxUsers;
     this.owner = options.owner;
     this.ownerIpKey = options.owner.ipKey;
-    this.locks = new RoomLockTable(options.locksPerUser, options.locksPerRoom);
+    this.locks = new RoomLockTable(options.locksPerUser, options.locksPerRoom, options.locksServerBudget);
     this.memberAdd(options.owner);
   }
 
