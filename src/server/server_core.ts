@@ -139,6 +139,7 @@ export class ServerCore {
   readonly connectionsPerIpKey: LimiterKeyCounter;
   readonly joinFailuresPerIp: LimiterFailureWindow;
   readonly joinFailuresPerRoom: LimiterFailureWindow;
+  readonly passwordWorkPerIpKey: LimiterKeyCounter;
   passwordHashesInFlight = 0;
   private nextUserId = 1;
   private readonly pruneTimer: ReturnType<typeof setInterval>;
@@ -158,6 +159,7 @@ export class ServerCore {
       lowPriorityHighWaterBytes: config.presenceHighWaterBytes,
     });
     this.connectionsPerIpKey = new LimiterKeyCounter(config.connectionsPerIp);
+    this.passwordWorkPerIpKey = new LimiterKeyCounter(config.passwordHashConcurrencyPerIp);
     this.joinFailuresPerIp = new LimiterFailureWindow(config.joinFailuresPerIpPerMinute, 60_000);
     this.joinFailuresPerRoom = new LimiterFailureWindow(config.joinFailuresPerRoomPerMinute, 60_000);
     this.pruneTimer = setInterval(() => this.limitersPrune(), 60_000);

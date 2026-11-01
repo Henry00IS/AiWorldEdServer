@@ -195,7 +195,8 @@ async function passwordHashGuarded(
 }
 
 /**
- * Runs password work under the concurrency cap and the per-session busy flag.
+ * Runs password work under the global and per-address concurrency caps and the
+ * per-session busy flag, so one address cannot occupy every hashing slot.
  *
  * @param core Relay core.
  * @param session Requester.
@@ -208,12 +209,14 @@ async function passwordWorkGuarded<T>(
   work: () => Promise<T>,
 ): Promise<T | null> {
   if (core.passwordHashesInFlight >= core.config.passwordHashConcurrency) return null;
+  if (!core.passwordWorkPerIpKey.tryAcquire(session.ipKey)) return null;
   core.passwordHashesInFlight++;
   session.pendingAsyncOperation = true;
   try {
     return await work();
   } finally {
     core.passwordHashesInFlight--;
+    core.passwordWorkPerIpKey.release(session.ipKey);
     session.pendingAsyncOperation = false;
   }
 }

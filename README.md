@@ -217,7 +217,8 @@ warn the user that they are offline and should save locally. Re-joining any room
   with rejection sampling, unambiguous alphabets, guarantees each class, and always passes the policy.
   Use it to prefill the private room password field.
 - The server stores only argon2id hashes (`Bun.password`, 19 MiB, t=2), verifies in constant time,
-  at most 4 hash operations concurrently, and limits wrong passwords to 10/min per IP and 30/min per room.
+  at most 4 hash operations concurrently and 1 per IP (IPv6 per /64), and limits wrong passwords to
+  10/min per IP and 30/min per room.
 
 ## Abuse resistance and limits
 
