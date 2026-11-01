@@ -65,9 +65,8 @@ function updateNext(client: TestClient, predicate: (update: TestMessage) => bool
 }
 
 describe('live room list subscription', () => {
-  test('welcome announces the feature and the list limits', async () => {
+  test('welcome announces the list limits', async () => {
     const client = await connect('Probe');
-    expect(client.welcome.features).toContain('room.subscribe');
     expect(client.welcome.limits.roomListMaximum).toBe(server.core.config.roomListMaximum);
     expect(client.welcome.limits.roomListPushIntervalMs).toBe(20);
   });

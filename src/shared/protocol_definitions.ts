@@ -87,14 +87,6 @@ export type ClientMessage =
 /** Union of client message type names. */
 export type ClientMessageType = ClientMessage['t'];
 
-/**
- * Features announced in `welcome.features`. Clients must check for a feature
- * before using it, so they keep working with older relays.
- */
-export const PROTOCOL_FEATURES = ['room.subscribe'] as const;
-/** Union of protocol feature names. */
-export type ProtocolFeature = (typeof PROTOCOL_FEATURES)[number];
-
 /** Public room listing entry. */
 export interface RoomListEntry {
   id: string;

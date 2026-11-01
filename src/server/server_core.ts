@@ -35,7 +35,6 @@ import { displayNameFallback, displayNameNormalize, DISPLAY_NAME_LENGTH_MAXIMUM 
 import {
   BINARY_FRAME_KIND_PRESENCE,
   CLOSE_CODES,
-  PROTOCOL_FEATURES,
   PROTOCOL_ID,
   PROTOCOL_VERSION,
   type ClientMessage,
@@ -350,7 +349,6 @@ export class ServerCore {
       user: session.user,
       name: session.name,
       via: session.via,
-      features: [...PROTOCOL_FEATURES],
       limits: welcomeLimits(this.config),
     };
   }
