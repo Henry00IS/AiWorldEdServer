@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { displayNameFallback, displayNameNormalize, roomNameNormalize } from '../../src/shared/room_name_policy.ts';
+import { displayNameFallback, displayNameNormalize, roomNameNormalize } from '../../../src/shared/room_name_policy.ts';
 
 test('room names are trimmed, NFC-normalized and limited to 128 characters', () => {
   expect(roomNameNormalize('  My Level  ')).toEqual({ ok: true, name: 'My Level' });

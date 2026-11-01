@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { protocolMessageDecode } from '../../src/protocol/protocol_message_decoder.ts';
+import { protocolMessageDecode } from '../../../src/protocol/protocol_message_decoder.ts';
 
 const valid = [
   { t: 'ping' },

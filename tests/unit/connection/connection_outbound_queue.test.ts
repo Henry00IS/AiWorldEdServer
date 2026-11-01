@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { ConnectionOutboundQueue } from '../../src/connection/connection_outbound_queue.ts';
+import { ConnectionOutboundQueue } from '../../../src/connection/connection_outbound_queue.ts';
 
 /** Fake socket whose buffered amount the test controls. */
 function socketFake() {

@@ -10,7 +10,7 @@ import {
   presenceQuaternionPack,
   presenceQuaternionUnpack,
   type PresenceEntry,
-} from '../../src/shared/presence_frame.ts';
+} from '../../../src/shared/presence_frame.ts';
 
 const CAMERA: PresenceEntry = {
   id: 0,

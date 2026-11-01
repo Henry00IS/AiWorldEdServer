@@ -1,8 +1,8 @@
 import { expect, test } from 'bun:test';
-import { ConnectionOutboundQueue } from '../../src/connection/connection_outbound_queue.ts';
-import type { ConnectionSession } from '../../src/connection/connection_session.ts';
-import { presenceFlush, presenceOffer, presencePurge } from '../../src/handlers/handler_presence.ts';
-import { Room } from '../../src/rooms/room.ts';
+import { ConnectionOutboundQueue } from '../../../src/connection/connection_outbound_queue.ts';
+import type { ConnectionSession } from '../../../src/connection/connection_session.ts';
+import { presenceFlush, presenceOffer, presencePurge } from '../../../src/handlers/handler_presence.ts';
+import { Room } from '../../../src/rooms/room.ts';
 
 /**
  * Creates a session with a fake socket whose buffer level the test controls.

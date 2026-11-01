@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { binaryFrameCopyWithPeer, binaryFrameEncode, binaryFrameParse } from '../../src/shared/binary_frame.ts';
+import { binaryFrameCopyWithPeer, binaryFrameEncode, binaryFrameParse } from '../../../src/shared/binary_frame.ts';
 
 test('encodes, parses and rewrites the peer field', () => {
   const frame = binaryFrameEncode(42, 7, new Uint8Array([1, 2, 3]));
