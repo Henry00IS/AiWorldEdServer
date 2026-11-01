@@ -30,3 +30,19 @@ test('display names are at most 12 characters and the fallback always fits', () 
     expect(displayNameNormalize(fallback)).toEqual({ ok: true, name: fallback });
   }
 });
+
+test('invisible, blank-looking and stacked-mark names are rejected', () => {
+  const invisible = ['a\u200Bb', 'a\u00ADb', 'a\u2060b', 'a\u206Fb', '\u{E0041}x', 'a\uE000b', 'a\uD800b', 'a\u2028b'];
+  const blank = ['\u3164', 'a\u115Fb', '\u2800\u2800', 'a\uFFA0', 'a\u034Fb'];
+  const zalgo = ['a' + '\u0301\u0302\u0303\u0304\u0305'];
+  for (const bad of [...invisible, ...blank, ...zalgo]) {
+    expect(roomNameNormalize(bad)).toEqual({ ok: false, reason: 'invalid_characters' });
+  }
+});
+
+test('emoji sequences, accents and unusual spaces stay valid and spaces collapse', () => {
+  expect(roomNameNormalize('👨\u200D👩\u200D👧 ❤️ 👍🏽').ok).toBe(true);
+  expect(roomNameNormalize('a\u0301\u0302\u0303\u0304').ok).toBe(true);
+  expect(roomNameNormalize('My\u00A0\u3000  Level\u2003')).toEqual({ ok: true, name: 'My Level' });
+  expect(displayNameNormalize('\u00A0\u2003')).toEqual({ ok: false, reason: 'empty' });
+});

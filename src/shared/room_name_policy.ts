@@ -30,19 +30,50 @@ export function displayNameNormalize(rawName: string): NameNormalizeResult {
 }
 
 /**
- * Trims, NFC-normalizes and checks length and forbidden characters.
+ * Invisible, format, surrogate, private-use and line-separator characters; the
+ * zero width joiner stays allowed for emoji sequences.
+ */
+const NAME_FORBIDDEN_CHARACTERS = /[\p{Cc}\p{Cs}\p{Co}\u2028\u2029]|(?!\u200D)\p{Cf}/u;
+/**
+ * Letters and marks that render as blank space (Hangul fillers, braille blank,
+ * CGJ).
+ */
+const NAME_BLANK_LOOKING_CHARACTERS = /[\u034F\u115F\u1160\u2800\u3164\uFFA0]/u;
+/** More than four stacked combining marks ("zalgo" text drawn over neighbours). */
+const NAME_STACKED_MARKS = /\p{M}{5}/u;
+
+/**
+ * Collapses whitespace, NFC-normalizes, trims and checks length and forbidden
+ * characters.
  *
  * @param rawName Name as typed by the user.
  * @param maximumLength Maximum length in code points.
  * @returns The normalized name or the reason it was rejected.
  */
 function nameNormalizeWithLimit(rawName: string, maximumLength: number): NameNormalizeResult {
-  if (/[\p{Cc}\u2028\u2029\u202A-\u202E\u2066-\u2069\uFEFF]/u.test(rawName))
-    return { ok: false, reason: 'invalid_characters' };
-  const name = rawName.normalize('NFC').trim();
+  if (nameHasForbiddenCharacters(rawName)) return { ok: false, reason: 'invalid_characters' };
+  const name = rawName
+    .normalize('NFC')
+    .replace(/\p{White_Space}+/gu, ' ')
+    .trim();
   if (name.length === 0) return { ok: false, reason: 'empty' };
   if (Array.from(name).length > maximumLength) return { ok: false, reason: 'too_long' };
   return { ok: true, name };
+}
+
+/**
+ * Tells whether a name contains characters that are invisible, render as blank
+ * or stack over neighbouring text.
+ *
+ * @param rawName Name as typed by the user.
+ * @returns True when the name must be rejected.
+ */
+function nameHasForbiddenCharacters(rawName: string): boolean {
+  return (
+    NAME_FORBIDDEN_CHARACTERS.test(rawName) ||
+    NAME_BLANK_LOOKING_CHARACTERS.test(rawName) ||
+    NAME_STACKED_MARKS.test(rawName)
+  );
 }
 
 /**
