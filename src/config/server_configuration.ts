@@ -2,11 +2,13 @@
  * Server configuration with production defaults, overridable from the
  * environment['']
  */
+import { PROTOCOL_WEBSOCKET_PATH } from '../shared/protocol_definitions.ts';
 
 /** Every tunable limit and setting of the relay. */
 export interface ServerConfiguration {
   hostname: string;
   port: number;
+  websocketPath: string;
   forwardedSecret: string | null;
   allowedOrigins: string[];
   internalTestRoomsEnabled: boolean;
@@ -102,6 +104,7 @@ export function configurationDefault(): ServerConfiguration {
   return {
     hostname: '0.0.0.0',
     port: 8081,
+    websocketPath: PROTOCOL_WEBSOCKET_PATH,
     forwardedSecret: null,
     allowedOrigins: [...ALLOWED_ORIGINS_DEFAULT],
     internalTestRoomsEnabled: true,
@@ -121,6 +124,7 @@ export function configurationFromEnvironment(environment: Record<string, string 
   const configuration = configurationDefault();
   configuration.hostname = environment['HOST'] ?? configuration.hostname;
   configuration.port = configurationParsePort(environment['PORT'], configuration.port);
+  configuration.websocketPath = configurationParsePath(environment['WEBSOCKET_PATH'], configuration.websocketPath);
   configuration.forwardedSecret = configurationParseSecret(environment['FORWARDED_SECRET']);
   configuration.internalTestRoomsEnabled = environment['INTERNAL_TEST_ROOMS'] !== 'false';
   configuration.internalTestRoomsViaProxy = environment['INTERNAL_TEST_ROOMS_VIA_PROXY'] === 'true';
@@ -183,6 +187,20 @@ function configurationParsePort(value: string | undefined, fallback: number): nu
   if (!Number.isInteger(port) || port < 0 || port > 65535)
     throw new Error('PORT must be an integer between 0 and 65535');
   return port;
+}
+
+/**
+ * Parses the WebSocket path from an environment value. The dev relay uses
+ * `/wstest` because the proxy forwards that path unchanged.
+ *
+ * @param value Raw path.
+ * @param fallback Path used when unset.
+ * @returns Path starting with a slash.
+ */
+function configurationParsePath(value: string | undefined, fallback: string): string {
+  if (value === undefined || value === '') return fallback;
+  if (!/^\/[A-Za-z0-9_\-/]{1,63}$/.test(value)) throw new Error('WEBSOCKET_PATH must look like /ws or /wstest');
+  return value;
 }
 
 /**

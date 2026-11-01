@@ -4,7 +4,6 @@ import type { ServerConfiguration } from '../config/server_configuration.ts';
 import type { ConnectionSession, ConnectionUpgradeData } from '../connection/connection_session.ts';
 import { originIsAllowed } from '../network/origin_policy.ts';
 import { ipLimitKey, requestTrustResolve } from '../network/trust_forwarded_request.ts';
-import { PROTOCOL_WEBSOCKET_PATH } from '../shared/protocol_definitions.ts';
 import { ServerCore } from './server_core.ts';
 
 /** Data attached to each Bun WebSocket. */
@@ -80,7 +79,7 @@ function collabWebSocketHandler(core: ServerCore, config: ServerConfiguration): 
 function collabServerFetch(core: ServerCore, request: Request, server: Server<SocketData>): Response | undefined {
   const url = new URL(request.url);
   if (url.pathname === '/healthz' && request.method === 'GET') return new Response('ok\n');
-  if (url.pathname !== PROTOCOL_WEBSOCKET_PATH) return new Response('not found\n', { status: 404 });
+  if (url.pathname !== core.config.websocketPath) return new Response('not found\n', { status: 404 });
   if (request.headers.get('upgrade')?.toLowerCase() !== 'websocket')
     return new Response('websocket upgrade required\n', { status: 426 });
   const upgradeData = collabUpgradeAdmit(core, request, server);

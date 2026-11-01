@@ -16,6 +16,7 @@ export interface TestClientOptions {
   headers?: Record<string, string>;
   hello?: boolean;
   name?: string;
+  path?: string;
 }
 
 /** Test WebSocket client. */
@@ -47,12 +48,13 @@ export class TestClient {
    * hello.
    *
    * @param port Server port.
-   * @param options Headers, hello toggle and display name.
+   * @param options Headers, hello toggle, display name and WebSocket path
+   *   (default `/ws`).
    * @returns Connected client.
    */
   static async connect(port: number, options: TestClientOptions = {}): Promise<TestClient> {
     const headers = { Origin: TEST_ORIGIN, ...(options.headers ?? {}) };
-    const socket = new WebSocket(`ws://127.0.0.1:${port}/ws`, { headers } as any);
+    const socket = new WebSocket(`ws://127.0.0.1:${port}${options.path ?? '/ws'}`, { headers } as any);
     await new Promise<void>((resolve, reject) => {
       socket.addEventListener('open', () => resolve(), { once: true });
       socket.addEventListener('error', () => reject(new Error('connect failed')), { once: true });

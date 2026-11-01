@@ -5,7 +5,7 @@ import { collabServerStart } from './server/server_collab.ts';
 const configuration = configurationFromEnvironment(process.env);
 const server = collabServerStart(configuration);
 console.log(
-  `aiworlded-server listening on ${configuration.hostname}:${server.port} ` +
+  `aiworlded-server listening on ${configuration.hostname}:${server.port}${configuration.websocketPath} ` +
     `(proxy secret ${configuration.forwardedSecret ? 'configured' : 'NOT configured: proxied requests will be rejected'}, ` +
     `internal test rooms ${configuration.internalTestRoomsEnabled ? 'enabled' : 'disabled'}` +
     `${configuration.internalTestRoomsViaProxy ? ' (also via proxy)' : ''}, ` +

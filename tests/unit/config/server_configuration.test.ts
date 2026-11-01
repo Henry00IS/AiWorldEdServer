@@ -32,4 +32,10 @@ describe('server configuration', () => {
     expect(configurationFromEnvironment({ PORT: '8091' }).port).toBe(8091);
     expect(configurationFromEnvironment({}).port).toBe(8081);
   });
+
+  test('WEBSOCKET_PATH defaults to /ws and accepts /wstest', () => {
+    expect(configurationFromEnvironment({}).websocketPath).toBe('/ws');
+    expect(configurationFromEnvironment({ WEBSOCKET_PATH: '/wstest' }).websocketPath).toBe('/wstest');
+    expect(() => configurationFromEnvironment({ WEBSOCKET_PATH: 'wstest' })).toThrow('WEBSOCKET_PATH');
+  });
 });

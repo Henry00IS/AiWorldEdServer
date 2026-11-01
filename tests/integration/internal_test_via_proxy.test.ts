@@ -10,7 +10,7 @@ import { TEST_DUMMY_FORWARDED_SECRET, testConfiguration } from '../support/test_
 let server: CollabServer;
 
 beforeAll(() => {
-  server = collabServerStart(testConfiguration({ internalTestRoomsViaProxy: true }));
+  server = collabServerStart(testConfiguration({ internalTestRoomsViaProxy: true, websocketPath: '/wstest' }));
 });
 
 afterAll(() => server.stop());
@@ -27,15 +27,20 @@ function proxiedHeaders(clientIp: string): Record<string, string> {
 }
 
 describe('internal test rooms via proxy (development relay)', () => {
+  test('the configured WebSocket path is served and /ws is not', async () => {
+    expect((await fetch(`http://127.0.0.1:${server.port}/ws`)).status).toBe(404);
+    expect((await fetch(`http://127.0.0.1:${server.port}/wstest`)).status).not.toBe(404);
+  });
+
   test('proxied connections can create, list and join internal test rooms', async () => {
-    const owner = await TestClient.connect(server.port, { headers: proxiedHeaders('203.0.113.80') });
+    const owner = await TestClient.connect(server.port, { headers: proxiedHeaders('203.0.113.80'), path: '/wstest' });
     expect(owner.welcome.via).toBe('proxy');
     const created = await owner.request(
       { t: 'room.create', name: 'proxied test', private: false, internalTest: true },
       'room.created',
     );
     expect(created.t).toBe('room.created');
-    const joiner = await TestClient.connect(server.port, { headers: proxiedHeaders('203.0.113.81') });
+    const joiner = await TestClient.connect(server.port, { headers: proxiedHeaders('203.0.113.81'), path: '/wstest' });
     const list = await joiner.request({ t: 'room.list' }, 'room.list');
     expect(list.rooms.some((room: { id: string }) => room.id === created.room.id)).toBe(true);
     const joined = await joiner.request(

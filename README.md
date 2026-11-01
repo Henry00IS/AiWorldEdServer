@@ -263,6 +263,7 @@ to off and must never be set on a public relay. Tests use the dummy secret in
 | ------------------------------------ | ------------------------------------------------------------------------------------------------ |
 | `HOST`, `PORT`                       | Listen address (container: `0.0.0.0:8081`)                                                       |
 | `FORWARDED_SECRET`                   | Secret the reverse proxy sends as `X-Forwarded-Secret` (≥16 chars). Without it, proxied requests are refused. |
+| `WEBSOCKET_PATH`                     | WebSocket path (default `/ws`)  |
 | `ALLOWED_ORIGINS`                    | Comma-separated Origin allow list                                                                |
 | `INTERNAL_TEST_ROOMS`                | `false` disables internal test rooms                                                             |
 | `INTERNAL_TEST_ROOMS_VIA_PROXY`      | dev relay only: `true` allows internal test rooms through the proxy (default off)                |
