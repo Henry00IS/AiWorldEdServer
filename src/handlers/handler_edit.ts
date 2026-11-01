@@ -12,6 +12,7 @@ type EditMessage = Extract<ClientMessage, { t: 'edit' }>;
 interface EditLockPlan {
   created: string[];
   deleted: string[];
+  shared: string[];
 }
 
 /** Rejection of an edit. */
@@ -31,7 +32,7 @@ interface EditRejection {
 export function handlerEdit(_core: ServerCore, session: ConnectionSession, message: EditMessage): void {
   const room = sessionSyncedRoom(session, undefined);
   if (!room) return;
-  const plan: EditLockPlan = { created: [], deleted: [] };
+  const plan: EditLockPlan = { created: [], deleted: [], shared: [] };
   const rejection = editLockCheck(room, session.user, message.ops, plan);
   if (rejection)
     return sessionSend(session, {
@@ -42,6 +43,7 @@ export function handlerEdit(_core: ServerCore, session: ConnectionSession, messa
     });
   editRelay(room, session, message);
   room.locks.grant(session.user, plan.created);
+  room.locks.sharedGrant(session.user, plan.shared);
   const released = room.locks.release(session.user, plan.deleted);
   roomBroadcastLocks(room, session, plan.created, released);
 }
@@ -53,7 +55,7 @@ export function handlerEdit(_core: ServerCore, session: ConnectionSession, messa
  * @param room Room.
  * @param user Sender.
  * @param operations Operations of the batch.
- * @param plan Filled with created and deleted ids.
+ * @param plan Filled with created, deleted and newly shared ids.
  * @returns Null when acceptable, otherwise the rejection.
  */
 export function editLockCheck(
@@ -64,16 +66,71 @@ export function editLockCheck(
 ): EditRejection | null {
   const createdInBatch = new Set<string>();
   for (const operation of operations) {
-    const rejection =
-      operation.k === 'create'
-        ? editCheckCreate(room, user, operation.ids, createdInBatch)
-        : editCheckLocked(room, user, operation.ids, createdInBatch);
+    const rejection = editCheckOperation(room, user, operation, createdInBatch, plan);
     if (rejection) return rejection;
     if (operation.k === 'delete') plan.deleted.push(...operation.ids);
   }
   plan.created.push(...[...createdInBatch].filter((id) => room.locks.holderOf(id) !== user));
-  if (!room.locks.withinLimits(room.locks.countFor(user) + plan.created.length, plan.created.length))
-    return { reason: 'lock_limit', ids: [] };
+  plan.shared = room.locks.sharedMissing(
+    user,
+    plan.shared.filter((id) => !createdInBatch.has(id)),
+  );
+  const added = plan.created.length + plan.shared.length;
+  if (!room.locks.withinLimits(room.locks.countFor(user) + added, added)) return { reason: 'lock_limit', ids: [] };
+  return null;
+}
+
+/**
+ * Checks one operation: its target ids and, for creates and reparents, the new
+ * parent chain.
+ *
+ * @param room Room.
+ * @param user Sender.
+ * @param operation Operation.
+ * @param createdInBatch Ids created earlier in the batch.
+ * @param plan Collects the parent chain ids to share.
+ * @returns Rejection or null.
+ */
+function editCheckOperation(
+  room: Room,
+  user: number,
+  operation: EditOperation,
+  createdInBatch: Set<string>,
+  plan: EditLockPlan,
+): EditRejection | null {
+  const rejection =
+    operation.k === 'create'
+      ? editCheckCreate(room, user, operation.ids, createdInBatch)
+      : editCheckLocked(room, user, operation.ids, createdInBatch);
+  if (rejection || operation.p === undefined || (operation.k !== 'create' && operation.k !== 'reparent'))
+    return rejection;
+  return editCheckParents(room, user, operation.p, createdInBatch, plan);
+}
+
+/**
+ * Refuses moving or creating an object inside a container another member
+ * exclusively holds (directly or further up the chain).
+ *
+ * @param room Room.
+ * @param user Sender.
+ * @param chain New parent chain, parent first.
+ * @param createdInBatch Ids created earlier in the batch.
+ * @param plan Collects the chain ids to share.
+ * @returns Rejection or null.
+ */
+function editCheckParents(
+  room: Room,
+  user: number,
+  chain: readonly string[],
+  createdInBatch: ReadonlySet<string>,
+  plan: EditLockPlan,
+): EditRejection | null {
+  const conflicts = room.locks.conflictsFor(
+    user,
+    chain.filter((id) => !createdInBatch.has(id)),
+  );
+  if (conflicts.length > 0) return { reason: 'lock_conflict', ids: conflicts.map((conflict) => conflict.id) };
+  plan.shared.push(...chain);
   return null;
 }
 

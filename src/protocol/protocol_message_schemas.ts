@@ -29,7 +29,10 @@ const SCHEMA_DISPLAY_NAME: Schema = { type: 'string', min: 1, max: 64 };
 const SCHEMA_EDIT_OPERATION: Schema = {
   type: 'object',
   required: { k: { type: 'enum', values: EDIT_KINDS }, ids: SCHEMA_OBJECT_IDS },
-  optional: { d: { type: 'opaque', maxDepth: PROTOCOL_CAPS.opaqueDepth, maxNodes: PROTOCOL_CAPS.opaqueNodes } },
+  optional: {
+    d: { type: 'opaque', maxDepth: PROTOCOL_CAPS.opaqueDepth, maxNodes: PROTOCOL_CAPS.opaqueNodes },
+    p: SCHEMA_OBJECT_IDS,
+  },
 };
 
 /**
@@ -84,7 +87,11 @@ export const CLIENT_MESSAGE_SCHEMAS: Readonly<Record<ClientMessageType, Schema>>
     { password: { type: 'string', min: 1, max: PROTOCOL_CAPS.passwordInputMaximum }, displayName: SCHEMA_DISPLAY_NAME },
   ),
   'room.leave': messageSchema('room.leave'),
-  'lock.acquire': messageSchema('lock.acquire', { ids: SCHEMA_OBJECT_IDS }, { replace: { type: 'bool' } }),
+  'lock.acquire': messageSchema(
+    'lock.acquire',
+    { ids: SCHEMA_OBJECT_IDS },
+    { replace: { type: 'bool' }, shared: SCHEMA_OBJECT_IDS },
+  ),
   'lock.release': messageSchema('lock.release', {}, { ids: SCHEMA_OBJECT_IDS }),
   edit: {
     type: 'object',

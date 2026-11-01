@@ -76,7 +76,7 @@ Every relay supports the live room list (`room.subscribe`); there is no feature 
 | `room.create`       | `name`, `private`, `password?`, `maxUsers?` (clamped to 32, default 16), `internalTest?`, `displayName?` | → `room.created {room, you, name, color}`. Creator becomes owner. One room per connection.                                                                                                                              |
 | `room.join`         | `room`, `discardLocalWork: true`, `password?`, `displayName?`                                            | → `room.joined {room, you, owner, members, locks}`; members are `{user, name, owner, color}`. `discardLocalWork` must be literally `true`: joining always discards local work.                                          |
 | `room.leave`        |                                                                                                          | → `room.left`. If the owner leaves, the room closes.                                                                                                                                                                    |
-| `lock.acquire`      | `ids[]`, `replace?`                                                                                      | All-or-nothing. → `lock.result {ok:true, add, remove}` or `{ok:false, code:'lock_conflict', conflicts:[{id,by}]}` / `lock_limit`. `replace:true` atomically swaps the whole selection (releases held ids not in `ids`). |
+| `lock.acquire`      | `ids[]`, `replace?`, `shared?[]`                                                                         | All-or-nothing. → `lock.result {ok:true, add, remove}` or `{ok:false, code:'lock_conflict', conflicts:[{id,by}]}` / `lock_limit`. `replace:true` atomically swaps the whole selection (releases held ids not in `ids`). |
 | `lock.release`      | `ids?`                                                                                                   | Omit `ids` to release everything.                                                                                                                                                                                       |
 | `edit`              | `seq`, `ops:[{k, ids, d?}]`                                                                              | See edit rules. Rejection: `edit.rejected {seq, reason, ids}`; no ack on success.                                                                                                                                       |
 | `asset.request`     | `name`                                                                                                   | Member asks the owner for an asset (relayed as `asset.request {from, name}`).                                                                                                                                           |
@@ -198,6 +198,22 @@ Assets (textures etc.) are then fetched on demand: member `asset.request` → ow
 - Ids created earlier in the same `edit` count as held. Each `edit` is validated as a whole.
 - After a relayed `delete` the deleted ids' locks are released.
 - The owner follows the same lock rules.
+
+### Hierarchical (shared) locks
+
+The relay does not know the scene hierarchy, so the editor sends it: a selection locks every
+selected object with its whole subtree exclusively (`ids`) and the ancestors of each selected
+object as `shared`. Several members may share an id (siblings stay editable side by side), but
+an exclusive request is refused while another member shares the id (conflict entry
+`{id, by, shared:true}`, meaning `by` edits something inside it) and a shared request is refused
+while another member holds the id exclusively. `replace:true` replaces both kinds; release, leave
+and disconnect free both; both count against the lock limits. `locks` broadcasts and `room.joined`
+list exclusive locks only.
+
+`create` and `reparent` ops may carry `p`, the new parent chain (parent first). The edit is
+rejected with `lock_conflict` when another member holds any of those ids exclusively (ids created
+earlier in the same edit excepted); otherwise the sender gets shared locks on the chain, so nobody
+can grab the new container from a stale view. Ops without `p` keep the old behaviour.
 
 ### Owner disconnect / offline sessions
 

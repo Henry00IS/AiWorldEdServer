@@ -7,6 +7,8 @@ const valid = [
   { t: 'room.create', name: 'Level', private: true, password: 'Tq7#mRw2!xLp', internalTest: true, maxUsers: 4, r: 2 },
   { t: 'room.join', room: 'AbCdEfGhIjKlMn_-', discardLocalWork: true },
   { t: 'lock.acquire', ids: ['brush:1', 'brush.2'], replace: true },
+  { t: 'lock.acquire', ids: ['brush:1'], shared: ['group:1', 'model:1'] },
+  { t: 'edit', seq: 8, ops: [{ k: 'reparent', ids: ['brush:1'], d: {}, p: ['group:1'] }] },
   { t: 'lock.release' },
   {
     t: 'edit',
@@ -31,6 +33,8 @@ test.each([
   ['join without discard', JSON.stringify({ t: 'room.join', room: 'AbCdEfGhIjKlMn_-' })],
   ['discard false', JSON.stringify({ t: 'room.join', room: 'AbCdEfGhIjKlMn_-', discardLocalWork: false })],
   ['bad object id', JSON.stringify({ t: 'lock.acquire', ids: ['bad id with spaces'] })],
+  ['bad shared id', JSON.stringify({ t: 'lock.acquire', ids: ['a'], shared: ['bad id'] })],
+  ['empty parent chain', JSON.stringify({ t: 'edit', seq: 1, ops: [{ k: 'create', ids: ['a'], p: [] }] })],
   ['unknown edit kind', JSON.stringify({ t: 'edit', seq: 1, ops: [{ k: 'chat', ids: ['a'] }] })],
   ['float seq', JSON.stringify({ t: 'edit', seq: 1.5, ops: [{ k: 'transform', ids: ['a'] }] })],
   [

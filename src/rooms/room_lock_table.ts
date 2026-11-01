@@ -1,13 +1,28 @@
 /**
- * Exclusive object locks inside one room. Single-threaded, so every method is
- * atomic.
+ * Object locks inside one room: exclusive locks on the objects a member edits
+ * and shared (intent) locks on their ancestors. Single-threaded, so every
+ * method is atomic.
  */
 import { LimiterSharedBudget } from '../network/limiter_shared_budget.ts';
+import { RoomSharedLockTable } from './room_shared_lock_table.ts';
 
-/** Lock conflict: the object id and the user currently holding it. */
+/**
+ * Lock conflict: the object id and the user currently holding it. `shared`
+ * marks an id the other user only holds a shared lock on (an ancestor of
+ * something they edit), so it must not be shown as held by them.
+ */
 export interface LockConflict {
   id: string;
   by: number;
+  shared?: true;
+}
+
+/** Planned lock changes of one accepted acquire request. */
+interface LockAcquirePlan {
+  added: string[];
+  removed: string[];
+  sharedAdded: string[];
+  sharedRemoved: string[];
 }
 
 /** Outcome of an acquire request. */
@@ -20,6 +35,7 @@ export type LockAcquireResult =
 export class RoomLockTable {
   private readonly holderByObjectId = new Map<string, number>();
   private readonly objectIdsByHolder = new Map<number, Set<string>>();
+  private readonly shared = new RoomSharedLockTable();
 
   /**
    * Creates an empty lock table with per-user and per-room limits.
@@ -36,26 +52,110 @@ export class RoomLockTable {
 
   /**
    * Acquires every id or none. With `replace`, locks the user holds that are
-   * not in `ids` are released in the same step (selection replacement).
+   * not requested are released in the same step (selection replacement), for
+   * both kinds. An exclusive id conflicts with any lock of another user on it;
+   * a shared id conflicts only with another user's exclusive lock.
    *
    * @param user Requesting user id.
-   * @param ids Object ids to lock.
-   * @param replace Whether to release locks outside `ids`.
-   * @returns Added and removed ids, or the conflicts / limit that blocked the
-   *   request.
+   * @param ids Object ids to lock exclusively.
+   * @param replace Whether to release locks outside the request.
+   * @param shared Ancestor ids to lock shared.
+   * @returns Added and removed exclusive ids, or the conflicts / limit that
+   *   blocked the request.
    */
-  acquire(user: number, ids: readonly string[], replace: boolean): LockAcquireResult {
-    const conflicts = this.conflictsFor(user, ids);
-    if (conflicts.length > 0) return { ok: false, reason: 'lock_conflict', conflicts };
+  acquire(user: number, ids: readonly string[], replace: boolean, shared: readonly string[] = []): LockAcquireResult {
     const requested = new Set(ids);
+    const sharedWanted = new Set(shared.filter((id) => !requested.has(id)));
+    const conflicts = [...this.conflictsFor(user, ids), ...this.conflictsShared(user, ids, sharedWanted)];
+    if (conflicts.length > 0) return { ok: false, reason: 'lock_conflict', conflicts };
+    const plan = this.acquirePlan(user, requested, sharedWanted, replace);
+    const delta = plan.added.length - plan.removed.length + plan.sharedAdded.length - plan.sharedRemoved.length;
+    if (!this.withinLimits(this.countFor(user) + delta, delta)) return { ok: false, reason: 'lock_limit' };
+    this.release(user, plan.removed);
+    this.sharedRelease(user, plan.sharedRemoved);
+    this.grant(user, plan.added);
+    this.sharedGrant(user, plan.sharedAdded);
+    return { ok: true, added: plan.added, removed: plan.removed };
+  }
+
+  /**
+   * Lists the conflicts an exclusive and shared request has with other users'
+   * shared and exclusive locks respectively.
+   *
+   * @param user User id.
+   * @param ids Ids requested exclusively.
+   * @param sharedIds Ids requested shared.
+   * @returns Conflicts; exclusive requests blocked by a shared lock are marked
+   *   `shared`.
+   */
+  conflictsShared(user: number, ids: readonly string[], sharedIds: Iterable<string>): LockConflict[] {
+    const conflicts: LockConflict[] = [];
+    for (const id of ids) {
+      const by = this.shared.otherHolder(user, id);
+      if (by !== undefined && this.holderByObjectId.get(id) === undefined) conflicts.push({ id, by, shared: true });
+    }
+    for (const id of sharedIds) {
+      const holder = this.holderByObjectId.get(id);
+      if (holder !== undefined && holder !== user) conflicts.push({ id, by: holder });
+    }
+    return conflicts;
+  }
+
+  /**
+   * Shares ids with the user, consuming the server budget for new entries.
+   *
+   * @param user User id.
+   * @param ids Ids to share.
+   */
+  sharedGrant(user: number, ids: Iterable<string>): void {
+    this.locksServerBudget.consume(this.shared.grant(user, ids));
+  }
+
+  /**
+   * Lists the shared locks a planned grant would add for the user.
+   *
+   * @param user User id.
+   * @param ids Ids to share.
+   * @returns Ids the user neither shares nor holds exclusively yet.
+   */
+  sharedMissing(user: number, ids: Iterable<string>): string[] {
+    const held = this.shared.heldSet(user);
+    return [...new Set(ids)].filter((id) => !held.has(id) && this.holderByObjectId.get(id) !== user);
+  }
+
+  /**
+   * Works out which ids an accepted request adds and removes.
+   *
+   * @param user User id.
+   * @param requested Exclusive ids requested.
+   * @param sharedWanted Shared ids requested.
+   * @param replace Whether ids outside the request are released.
+   * @returns Planned changes.
+   */
+  private acquirePlan(
+    user: number,
+    requested: ReadonlySet<string>,
+    sharedWanted: ReadonlySet<string>,
+    replace: boolean,
+  ): LockAcquirePlan {
     const held = this.heldSet(user);
-    const removed = replace ? [...held].filter((id) => !requested.has(id)) : [];
-    const added = [...requested].filter((id) => !held.has(id));
-    if (!this.withinLimits(held.size - removed.length + added.length, added.length - removed.length))
-      return { ok: false, reason: 'lock_limit' };
-    this.release(user, removed);
-    this.grant(user, added);
-    return { ok: true, added, removed };
+    const sharedHeld = this.shared.heldSet(user);
+    return {
+      added: [...requested].filter((id) => !held.has(id)),
+      removed: replace ? [...held].filter((id) => !requested.has(id)) : [],
+      sharedAdded: [...sharedWanted].filter((id) => !sharedHeld.has(id)),
+      sharedRemoved: replace ? [...sharedHeld].filter((id) => !sharedWanted.has(id)) : [],
+    };
+  }
+
+  /**
+   * Stops sharing ids and returns them to the server budget.
+   *
+   * @param user User id.
+   * @param ids Ids to release, or undefined for all.
+   */
+  private sharedRelease(user: number, ids?: readonly string[]): void {
+    this.locksServerBudget.release(this.shared.release(user, ids));
   }
 
   /**
@@ -76,13 +176,15 @@ export class RoomLockTable {
   }
 
   /**
-   * Releases the given ids (or every lock when omitted) that the user holds.
+   * Releases the given ids (or every lock when omitted) that the user holds,
+   * exclusive and shared.
    *
    * @param user User id.
    * @param ids Ids to release, or undefined for all.
-   * @returns Ids that were actually released.
+   * @returns Exclusive ids that were actually released.
    */
   release(user: number, ids?: readonly string[]): string[] {
+    this.sharedRelease(user, ids);
     const held = this.objectIdsByHolder.get(user);
     if (!held) return [];
     const released = (ids ?? [...held]).filter((id) => held.has(id));
@@ -97,7 +199,8 @@ export class RoomLockTable {
 
   /** Drops every lock of a closing room and returns them to the server budget. */
   releaseEverything(): void {
-    this.locksServerBudget.release(this.holderByObjectId.size);
+    this.locksServerBudget.release(this.holderByObjectId.size + this.shared.countTotal());
+    this.shared.clear();
     this.holderByObjectId.clear();
     this.objectIdsByHolder.clear();
   }
@@ -140,26 +243,26 @@ export class RoomLockTable {
   }
 
   /**
-   * Counts the locks one user holds.
+   * Counts the locks one user holds, exclusive and shared.
    *
    * @param user User id.
    * @returns Number of locks the user holds.
    */
   countFor(user: number): number {
-    return this.objectIdsByHolder.get(user)?.size ?? 0;
+    return (this.objectIdsByHolder.get(user)?.size ?? 0) + this.shared.countFor(user);
   }
 
   /**
-   * Counts every lock in the room.
+   * Counts every lock in the room, exclusive and shared.
    *
    * @returns Total locks in the room.
    */
   countTotal(): number {
-    return this.holderByObjectId.size;
+    return this.holderByObjectId.size + this.shared.countTotal();
   }
 
   /**
-   * Lists every holder with the ids it holds.
+   * Lists every holder with the ids it holds exclusively.
    *
    * @returns Every holder with their ids, for join snapshots.
    */
@@ -178,7 +281,7 @@ export class RoomLockTable {
   withinLimits(userTotalAfter: number, roomDelta: number): boolean {
     return (
       userTotalAfter <= this.locksPerUserMaximum &&
-      this.holderByObjectId.size + roomDelta <= this.locksPerRoomMaximum &&
+      this.countTotal() + roomDelta <= this.locksPerRoomMaximum &&
       this.locksServerBudget.fits(roomDelta)
     );
   }

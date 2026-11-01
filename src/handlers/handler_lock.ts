@@ -26,7 +26,8 @@ export function sessionSyncedRoom(session: ConnectionSession, requestId: number 
 }
 
 /**
- * Atomically acquires a set of locks (all or nothing).
+ * Atomically acquires a set of exclusive locks plus shared locks on their
+ * ancestors (all or nothing).
  *
  * @param _core Relay core.
  * @param session Requester.
@@ -39,7 +40,7 @@ export function handlerLockAcquire(
 ): void {
   const room = sessionSyncedRoom(session, message.r);
   if (!room) return;
-  const result = room.locks.acquire(session.user, message.ids, message.replace === true);
+  const result = room.locks.acquire(session.user, message.ids, message.replace === true, message.shared);
   if (!result.ok) {
     const details = result.reason === 'lock_conflict' ? { conflicts: result.conflicts } : {};
     return sessionSend(session, { t: 'lock.result', r: message.r, ok: false, code: result.reason, ...details });

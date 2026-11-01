@@ -46,11 +46,17 @@ export const STREAM_KINDS = ['snapshot', 'asset'] as const;
 /** Union of stream kinds. */
 export type StreamKind = (typeof STREAM_KINDS)[number];
 
-/** One edit operation; `d` is opaque editor data relayed verbatim. */
+/**
+ * One edit operation; `d` is opaque editor data relayed verbatim. `p` lists the
+ * new parent chain of a `create` or `reparent` (parent first, up to the root):
+ * the relay refuses the edit when another member exclusively holds any of them
+ * and gives the sender a shared lock on them.
+ */
 export interface EditOperation {
   k: EditKind;
   ids: string[];
   d?: unknown;
+  p?: string[];
 }
 
 /**
@@ -75,7 +81,7 @@ export type ClientMessage =
     }
   | { t: 'room.join'; r?: number; room: string; password?: string; discardLocalWork: true; displayName?: string }
   | { t: 'room.leave'; r?: number }
-  | { t: 'lock.acquire'; r?: number; ids: string[]; replace?: boolean }
+  | { t: 'lock.acquire'; r?: number; ids: string[]; replace?: boolean; shared?: string[] }
   | { t: 'lock.release'; r?: number; ids?: string[] }
   | { t: 'edit'; seq: number; ops: EditOperation[] }
   | { t: 'asset.request'; r?: number; name: string }
