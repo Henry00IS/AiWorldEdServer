@@ -4,7 +4,12 @@ import type { ConnectionSession } from '../../src/connection/connection_session.
 import { presenceFlush, presenceOffer, presencePurge } from '../../src/handlers/handler_presence.ts';
 import { Room } from '../../src/rooms/room.ts';
 
-/** Session with a fake socket whose buffer level the test controls. */
+/**
+ * Creates a session with a fake socket whose buffer level the test controls.
+ *
+ * @param user User id of the session.
+ * @returns Session, its socket and the frames it sent.
+ */
 function sessionFake(user: number) {
   const sent: Uint8Array[] = [];
   const socket = {
@@ -25,6 +30,26 @@ function sessionFake(user: number) {
   } as unknown as ConnectionSession;
   outbound.idleListener = () => presenceFlush(session);
   return { session, socket, sent };
+}
+
+/**
+ * Creates a small internal test room.
+ *
+ * @param owner Owner session.
+ * @returns The room.
+ */
+function roomFake(owner: ConnectionSession): Room {
+  return new Room({
+    id: 'r',
+    name: 'room',
+    isPrivate: false,
+    passwordHash: null,
+    internalTest: true,
+    maxUsers: 8,
+    owner,
+    locksPerUser: 10,
+    locksPerRoom: 10,
+  });
 }
 
 test('a busy recipient keeps only the latest frame per sender and gets it once idle', () => {
@@ -56,17 +81,7 @@ test('purge forgets a leaver in every mailbox and in the room', () => {
   const owner = sessionFake(1);
   const other = sessionFake(2);
   const leaver = sessionFake(3);
-  const room = new Room({
-    id: 'r',
-    name: 'room',
-    isPrivate: false,
-    passwordHash: null,
-    internalTest: true,
-    maxUsers: 8,
-    owner: owner.session,
-    locksPerUser: 10,
-    locksPerRoom: 10,
-  });
+  const room = roomFake(owner.session);
   room.memberAdd(other.session);
   other.socket.buffered = 500;
   presenceOffer(other.session, 3, new Uint8Array([1]));

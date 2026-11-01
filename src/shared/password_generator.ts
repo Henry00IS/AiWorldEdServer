@@ -53,6 +53,8 @@ function passwordGenerateCandidate(length: number): string {
 }
 
 /**
+ * Picks one random character from an alphabet.
+ *
  * @param alphabet Characters to choose from.
  * @returns One uniformly random character of the alphabet.
  */

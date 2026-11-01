@@ -6,7 +6,13 @@ import { expect } from 'bun:test';
 import { binaryFrameEncode, binaryFrameParse, binaryFramePayload } from '../../src/shared/binary_frame.ts';
 import type { TestClient } from './test_client.ts';
 
-/** Creates an internal test room and returns its id. */
+/**
+ * Creates an internal test room.
+ *
+ * @param owner Creating client.
+ * @param extra Extra creation request fields.
+ * @returns Room id.
+ */
 export async function roomCreate(owner: TestClient, extra: Record<string, unknown> = {}): Promise<string> {
   const reply = await owner.request(
     { t: 'room.create', name: `test room ${Math.random()}`, private: false, internalTest: true, ...extra },
@@ -16,7 +22,14 @@ export async function roomCreate(owner: TestClient, extra: Record<string, unknow
   return reply.room.id;
 }
 
-/** Owner answers the pending snapshot request with the given bytes. */
+/**
+ * Answers the owner's pending snapshot request with the given bytes.
+ *
+ * @param owner Room owner.
+ * @param snapshot Snapshot bytes.
+ * @param streamId Stream id to use.
+ * @returns User id of the recipient.
+ */
 export async function snapshotSend(owner: TestClient, snapshot: Uint8Array, streamId = 1): Promise<number> {
   const request = await owner.next('snapshot.request');
   owner.send({ t: 'stream.begin', to: request.for, stream: streamId, kind: 'snapshot', size: snapshot.byteLength });
@@ -53,7 +66,12 @@ export async function testRoomJoinSynced(
   return { joiner, received: await streamReceive(joiner) };
 }
 
-/** Collects one stream on the receiving side. */
+/**
+ * Collects one stream on the receiving side.
+ *
+ * @param receiver Receiving client.
+ * @returns Stream payload bytes.
+ */
 export async function streamReceive(receiver: TestClient): Promise<Uint8Array> {
   const begin = await receiver.next('stream.begin');
   const parts: Uint8Array[] = [];

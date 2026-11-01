@@ -27,9 +27,7 @@ export function schemaValidate(schema: Schema, value: unknown, path = '$'): stri
     case 'string':
       return schemaValidateString(schema, value, path);
     case 'int':
-      return Number.isSafeInteger(value) && (value as number) >= schema.min && (value as number) <= schema.max
-        ? null
-        : `${path}: int`;
+      return schemaValidateInt(schema, value, path);
     case 'bool':
       return typeof value === 'boolean' ? null : `${path}: bool`;
     case 'literal':
@@ -41,13 +39,45 @@ export function schemaValidate(schema: Schema, value: unknown, path = '$'): stri
     case 'object':
       return schemaValidateObject(schema, value, path);
     case 'opaque':
-      return schemaOpaqueWithinBounds(value, schema.maxDepth, { remaining: schema.maxNodes })
-        ? null
-        : `${path}: opaque too deep or large`;
+      return schemaValidateOpaque(schema, value, path);
   }
 }
 
 /**
+ * Validates a safe integer value against its range.
+ *
+ * @param schema Integer schema.
+ * @param value Candidate value.
+ * @param path Error path.
+ * @returns Null when valid, otherwise an error description.
+ */
+function schemaValidateInt(schema: Extract<Schema, { type: 'int' }>, value: unknown, path: string): string | null {
+  return Number.isSafeInteger(value) && (value as number) >= schema.min && (value as number) <= schema.max
+    ? null
+    : `${path}: int`;
+}
+
+/**
+ * Validates that an opaque value stays within its depth and node bounds.
+ *
+ * @param schema Opaque schema.
+ * @param value Candidate value.
+ * @param path Error path.
+ * @returns Null when valid, otherwise an error description.
+ */
+function schemaValidateOpaque(
+  schema: Extract<Schema, { type: 'opaque' }>,
+  value: unknown,
+  path: string,
+): string | null {
+  return schemaOpaqueWithinBounds(value, schema.maxDepth, { remaining: schema.maxNodes })
+    ? null
+    : `${path}: opaque too deep or large`;
+}
+
+/**
+ * Validates a string value against its length and pattern constraints.
+ *
  * @param schema String schema.
  * @param value Candidate value.
  * @param path Error path.
@@ -65,6 +95,8 @@ function schemaValidateString(
 }
 
 /**
+ * Validates an array value, its length and every item.
+ *
  * @param schema Array schema.
  * @param value Candidate value.
  * @param path Error path.
@@ -81,6 +113,9 @@ function schemaValidateArray(schema: Extract<Schema, { type: 'array' }>, value: 
 }
 
 /**
+ * Validates a plain object, its required fields and its optional fields,
+ * rejecting unknown keys.
+ *
  * @param schema Object schema.
  * @param value Candidate value.
  * @param path Error path.
@@ -106,6 +141,8 @@ function schemaValidateObject(
 }
 
 /**
+ * Validates the optional fields that are present on an object.
+ *
  * @param optional Optional field schemas.
  * @param record Object being validated.
  * @param path Error path.

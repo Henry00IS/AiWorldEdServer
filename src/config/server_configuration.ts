@@ -1,6 +1,6 @@
 /**
  * Server configuration with production defaults, overridable from the
- * environment.
+ * environment['']
  */
 
 /** Every tunable limit and setting of the relay. */
@@ -54,6 +54,44 @@ export const ALLOWED_ORIGINS_DEFAULT = [
   'views://main_ui',
 ];
 
+/** Default per-connection and server-wide traffic limits. */
+const CONFIGURATION_CONNECTION_LIMITS_DEFAULT = {
+  maxPayloadBytes: 1024 * 1024,
+  streamChunkBytesMaximum: 256 * 1024,
+  handshakeTimeoutMs: 5000,
+  idleTimeoutSeconds: 60,
+  messagesPerSecond: 120,
+  messageBurst: 400,
+  bytesPerSecond: 16 * 1024 * 1024,
+  byteBurst: 32 * 1024 * 1024,
+  connectionsPerIp: 24,
+  connectionsTotal: 2000,
+} satisfies Partial<ServerConfiguration>;
+
+/** Default room, lock, stream, join and presence limits. */
+const CONFIGURATION_ROOM_LIMITS_DEFAULT = {
+  roomsPerIp: 8,
+  roomsTotal: 500,
+  usersPerRoomDefault: 16,
+  usersPerRoomMaximum: 32,
+  locksPerUser: 20_000,
+  locksPerRoom: 100_000,
+  outboundQueueBytesMaximum: 16 * 1024 * 1024,
+  socketBufferHighWaterBytes: 1024 * 1024,
+  snapshotBytesMaximum: 256 * 1024 * 1024,
+  assetBytesMaximum: 64 * 1024 * 1024,
+  streamWindowBytes: 4 * 1024 * 1024,
+  streamsPerRecipient: 8,
+  snapshotTimeoutMs: 60_000,
+  joinFailuresPerIpPerMinute: 10,
+  joinFailuresPerRoomPerMinute: 30,
+  passwordHashConcurrency: 4,
+  roomListMaximum: 200,
+  presencePerSecond: 10,
+  presenceBurst: 20,
+  presenceHighWaterBytes: 64 * 1024,
+} satisfies Partial<ServerConfiguration>;
+
 /**
  * Builds the default configuration.
  *
@@ -66,36 +104,8 @@ export function configurationDefault(): ServerConfiguration {
     forwardedSecret: null,
     allowedOrigins: [...ALLOWED_ORIGINS_DEFAULT],
     internalTestRoomsEnabled: true,
-    maxPayloadBytes: 1024 * 1024,
-    streamChunkBytesMaximum: 256 * 1024,
-    handshakeTimeoutMs: 5000,
-    idleTimeoutSeconds: 60,
-    messagesPerSecond: 120,
-    messageBurst: 400,
-    bytesPerSecond: 16 * 1024 * 1024,
-    byteBurst: 32 * 1024 * 1024,
-    connectionsPerIp: 24,
-    connectionsTotal: 2000,
-    roomsPerIp: 8,
-    roomsTotal: 500,
-    usersPerRoomDefault: 16,
-    usersPerRoomMaximum: 32,
-    locksPerUser: 20_000,
-    locksPerRoom: 100_000,
-    outboundQueueBytesMaximum: 16 * 1024 * 1024,
-    socketBufferHighWaterBytes: 1024 * 1024,
-    snapshotBytesMaximum: 256 * 1024 * 1024,
-    assetBytesMaximum: 64 * 1024 * 1024,
-    streamWindowBytes: 4 * 1024 * 1024,
-    streamsPerRecipient: 8,
-    snapshotTimeoutMs: 60_000,
-    joinFailuresPerIpPerMinute: 10,
-    joinFailuresPerRoomPerMinute: 30,
-    passwordHashConcurrency: 4,
-    roomListMaximum: 200,
-    presencePerSecond: 10,
-    presenceBurst: 20,
-    presenceHighWaterBytes: 64 * 1024,
+    ...CONFIGURATION_CONNECTION_LIMITS_DEFAULT,
+    ...CONFIGURATION_ROOM_LIMITS_DEFAULT,
   };
 }
 
@@ -107,15 +117,18 @@ export function configurationDefault(): ServerConfiguration {
  */
 export function configurationFromEnvironment(environment: Record<string, string | undefined>): ServerConfiguration {
   const configuration = configurationDefault();
-  configuration.hostname = environment.HOST ?? configuration.hostname;
-  configuration.port = configurationParsePort(environment.PORT, configuration.port);
-  configuration.forwardedSecret = configurationParseSecret(environment.FORWARDED_SECRET);
-  configuration.internalTestRoomsEnabled = environment.INTERNAL_TEST_ROOMS !== 'false';
-  if (environment.ALLOWED_ORIGINS) configuration.allowedOrigins = configurationParseList(environment.ALLOWED_ORIGINS);
+  configuration.hostname = environment['HOST'] ?? configuration.hostname;
+  configuration.port = configurationParsePort(environment['PORT'], configuration.port);
+  configuration.forwardedSecret = configurationParseSecret(environment['FORWARDED_SECRET']);
+  configuration.internalTestRoomsEnabled = environment['INTERNAL_TEST_ROOMS'] !== 'false';
+  if (environment['ALLOWED_ORIGINS'])
+    configuration.allowedOrigins = configurationParseList(environment['ALLOWED_ORIGINS']);
   return configuration;
 }
 
 /**
+ * Parses a TCP port from an environment value.
+ *
  * @param value Raw port string.
  * @param fallback Port used when unset.
  * @returns Valid TCP port.
@@ -129,6 +142,8 @@ function configurationParsePort(value: string | undefined, fallback: number): nu
 }
 
 /**
+ * Parses the shared proxy secret from an environment value.
+ *
  * @param value Raw secret.
  * @returns The secret, or null when unset. Rejects secrets shorter than 16
  *   characters.
@@ -140,6 +155,8 @@ function configurationParseSecret(value: string | undefined): string | null {
 }
 
 /**
+ * Splits a comma separated environment value into entries.
+ *
  * @param value Comma separated list.
  * @returns Trimmed non-empty entries.
  */

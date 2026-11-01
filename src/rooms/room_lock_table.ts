@@ -21,6 +21,8 @@ export class RoomLockTable {
   private readonly objectIdsByHolder = new Map<number, Set<string>>();
 
   /**
+   * Creates an empty lock table with per-user and per-room limits.
+   *
    * @param locksPerUserMaximum Most locks one user may hold.
    * @param locksPerRoomMaximum Most locks the whole room may hold.
    */
@@ -88,6 +90,8 @@ export class RoomLockTable {
   }
 
   /**
+   * Lists the requested ids that another user already holds.
+   *
    * @param user User id.
    * @param ids Ids to check.
    * @returns Ids held by another user, with their holder.
@@ -102,6 +106,8 @@ export class RoomLockTable {
   }
 
   /**
+   * Lists the ids the user does not hold.
+   *
    * @param user User id.
    * @param ids Ids to check.
    * @returns Ids the user does not hold.
@@ -111,6 +117,8 @@ export class RoomLockTable {
   }
 
   /**
+   * Looks up the user holding an object lock.
+   *
    * @param id Object id.
    * @returns Holder user id or undefined.
    */
@@ -119,6 +127,8 @@ export class RoomLockTable {
   }
 
   /**
+   * Counts the locks one user holds.
+   *
    * @param user User id.
    * @returns Number of locks the user holds.
    */
@@ -126,17 +136,27 @@ export class RoomLockTable {
     return this.objectIdsByHolder.get(user)?.size ?? 0;
   }
 
-  /** @returns Total locks in the room. */
+  /**
+   * Counts every lock in the room.
+   *
+   * @returns Total locks in the room.
+   */
   countTotal(): number {
     return this.holderByObjectId.size;
   }
 
-  /** @returns Every holder with their ids, for join snapshots. */
+  /**
+   * Lists every holder with the ids it holds.
+   *
+   * @returns Every holder with their ids, for join snapshots.
+   */
   listAll(): { by: number; ids: string[] }[] {
     return [...this.objectIdsByHolder].map(([by, ids]) => ({ by, ids: [...ids] }));
   }
 
   /**
+   * Checks a planned lock change against the per-user and per-room limits.
+   *
    * @param userTotalAfter User lock count after the change.
    * @param roomDelta Change of the room lock count.
    * @returns True when both limits hold.
@@ -148,6 +168,8 @@ export class RoomLockTable {
   }
 
   /**
+   * Returns the live lock set of a user.
+   *
    * @param user User id.
    * @returns The user's live lock set (empty set when none).
    */

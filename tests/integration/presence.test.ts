@@ -3,7 +3,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, test } from 'bun:test
 import { collabServerStart, type CollabServer } from '../../src/server/server_collab.ts';
 import { presenceFrameDecode, presenceFrameEncode, type PresenceEntry } from '../../src/shared/presence_frame.ts';
 import { CLOSE_CODES } from '../../src/shared/protocol_definitions.ts';
-import { TestClient } from '../support/test_client.ts';
+import { TestClient, type TestMessage } from '../support/test_client.ts';
 import { testConfiguration } from '../support/test_configuration.ts';
 import { roomCreate, testRoomJoinSynced } from '../support/test_room.ts';
 
@@ -11,19 +11,33 @@ let server: CollabServer;
 let port = 0;
 const clients: TestClient[] = [];
 
-/** Connects a client that is closed after the test. */
+/**
+ * Connects a client that is closed after the test.
+ *
+ * @param name Optional display name sent with hello.
+ * @returns Connected client.
+ */
 async function connect(name?: string): Promise<TestClient> {
   const client = await TestClient.connect(port, name ? { name } : {});
   clients.push(client);
   return client;
 }
 
-/** Camera entry at a given x. */
+/**
+ * Builds a camera presence entry at a given x position.
+ *
+ * @param x Camera x position.
+ * @returns Presence entry.
+ */
 function camera(x: number): PresenceEntry {
   return { id: 0, position: [x, 1, 2], quaternion: [0, 0, 0, 1], fov: 50 };
 }
 
-/** Owner plus one synced member. */
+/**
+ * Creates a room with an owner and one synced member.
+ *
+ * @returns Owner, member and room id.
+ */
 async function roomPair(): Promise<{ owner: TestClient; member: TestClient; roomId: string }> {
   const owner = await connect('Owner');
   const roomId = await roomCreate(owner);
@@ -32,7 +46,14 @@ async function roomPair(): Promise<{ owner: TestClient; member: TestClient; room
   return { owner, member: joiner, roomId };
 }
 
-/** Collects every presence frame that arrives within a short window. */
+/**
+ * Collects every presence frame that arrives within a short window and removes
+ * them from the inbox.
+ *
+ * @param client Receiving client.
+ * @param windowMs Collection window in milliseconds.
+ * @returns Sender and first camera x of every frame.
+ */
 async function presenceDrain(client: TestClient, windowMs = 150): Promise<{ sender: number; x: number | null }[]> {
   await Bun.sleep(windowMs);
   const frames = client.inbox
@@ -56,36 +77,61 @@ afterAll(async () => {
   await server.stop();
 });
 
+/**
+ * Creates an internal test room with a display name for the owner.
+ *
+ * @param owner Creating client.
+ * @param displayName Requested display name.
+ * @returns The creation reply.
+ */
+function roomCreateNamed(owner: TestClient, displayName: string): Promise<TestMessage> {
+  return owner.request(
+    { t: 'room.create', name: 'colors', private: false, internalTest: true, displayName },
+    'room.created',
+  );
+}
+
+/**
+ * Joins a room with a display name without receiving the snapshot.
+ *
+ * @param client Joining client.
+ * @param roomId Room id.
+ * @param displayName Requested display name.
+ * @returns The join reply.
+ */
+function roomJoinNamed(client: TestClient, roomId: string, displayName: string): Promise<TestMessage> {
+  return client.request({ t: 'room.join', room: roomId, discardLocalWork: true, displayName }, 'room.joined');
+}
+
+/**
+ * Lists the name and color of every member of a join reply, sorted.
+ *
+ * @param joined Join reply.
+ * @returns Sorted name and color pairs.
+ */
+function memberNameColors(joined: TestMessage): [string, number][] {
+  return joined.members.map((member: { name: string; color: number }) => [member.name, member.color]).sort();
+}
+
 describe('names and colors', () => {
   test('display names from create and join, lowest free color slots in every event', async () => {
     const owner = await connect('Old Name');
-    const created = await owner.request(
-      { t: 'room.create', name: 'colors', private: false, internalTest: true, displayName: ' Alice ' },
-      'room.created',
-    );
+    const created = await roomCreateNamed(owner, ' Alice ');
     expect(created).toMatchObject({ name: 'Alice', color: 0 });
     const bob = await connect();
     await testRoomJoinSynced(bob, owner, created.room.id, undefined, { displayName: 'Bob' });
     expect(await owner.next('member.joined')).toMatchObject({ user: bob.user, name: 'Bob', color: 1 });
     const carol = await connect();
-    const joined = await carol.request(
-      { t: 'room.join', room: created.room.id, discardLocalWork: true, displayName: 'Carol' },
-      'room.joined',
-    );
-    expect(joined.members.map((member: { name: string; color: number }) => [member.name, member.color]).sort()).toEqual(
-      [
-        ['Alice', 0],
-        ['Bob', 1],
-        ['Carol', 2],
-      ],
-    );
+    const joined = await roomJoinNamed(carol, created.room.id, 'Carol');
+    expect(memberNameColors(joined)).toEqual([
+      ['Alice', 0],
+      ['Bob', 1],
+      ['Carol', 2],
+    ]);
     bob.close();
     await owner.next('member.left');
     const dave = await connect();
-    await dave.request(
-      { t: 'room.join', room: created.room.id, discardLocalWork: true, displayName: 'Dave' },
-      'room.joined',
-    );
+    await roomJoinNamed(dave, created.room.id, 'Dave');
     expect(await owner.next('member.joined', (message) => message.user === dave.user)).toMatchObject({ color: 1 });
   });
 

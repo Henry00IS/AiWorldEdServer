@@ -38,6 +38,63 @@ import {
   type ClientMessage,
 } from '../shared/protocol_definitions.ts';
 
+/** Messages routed by the content dispatcher rather than the session dispatcher. */
+type ContentMessage = Exclude<
+  ClientMessage,
+  { t: 'ping' | 'room.list' | 'room.create' | 'room.join' | 'room.leave' | 'hello' }
+>;
+
+/** Session fields that start from configuration defaults. */
+type SessionInitialState = Omit<ConnectionSession, 'user' | 'clientIp' | 'ipKey' | 'via' | 'outbound' | 'close'>;
+
+/**
+ * Builds the rate limiters and initial flags of a new session.
+ *
+ * @param config Effective configuration.
+ * @returns Fresh session state.
+ */
+function sessionInitialState(config: ServerConfiguration): SessionInitialState {
+  return {
+    messageBucket: new LimiterTokenBucket(config.messagesPerSecond, config.messageBurst),
+    byteBucket: new LimiterTokenBucket(config.bytesPerSecond, config.byteBurst),
+    presenceBucket: new LimiterTokenBucket(config.presencePerSecond, config.presenceBurst),
+    presencePending: new Map(),
+    presenceHighWaterBytes: config.presenceHighWaterBytes,
+    name: '',
+    helloDone: false,
+    closed: false,
+    room: null,
+    synced: false,
+    awaitingSnapshotBegin: false,
+    snapshotTimer: null,
+    handshakeTimer: null,
+    pendingAsyncOperation: false,
+  };
+}
+
+/**
+ * Lists the effective limits announced in the welcome message.
+ *
+ * @param config Effective configuration.
+ * @returns Limits object.
+ */
+function welcomeLimits(config: ServerConfiguration): object {
+  return {
+    maxPayloadBytes: config.maxPayloadBytes,
+    streamChunkBytes: config.streamChunkBytesMaximum,
+    streamWindowBytes: config.streamWindowBytes,
+    snapshotBytes: config.snapshotBytesMaximum,
+    assetBytes: config.assetBytesMaximum,
+    idsPerMessage: PROTOCOL_CAPS.idsPerMessage,
+    opsPerEdit: PROTOCOL_CAPS.opsPerEdit,
+    messagesPerSecond: config.messagesPerSecond,
+    roomsPerIp: config.roomsPerIp,
+    usersPerRoom: config.usersPerRoomMaximum,
+    locksPerUser: config.locksPerUser,
+    presencePerSecond: config.presencePerSecond,
+  };
+}
+
 /** Socket surface the core needs from the transport. */
 export interface CoreSocket extends OutboundSocket {
   close(code: number, reason: string): void;
@@ -71,7 +128,11 @@ export class ServerCore {
   private nextUserId = 1;
   private readonly pruneTimer: ReturnType<typeof setInterval>;
 
-  /** @param config Effective configuration. */
+  /**
+   * Creates the relay core with its registry and limiters.
+   *
+   * @param config Effective configuration.
+   */
   constructor(readonly config: ServerConfiguration) {
     this.registry = new RoomRegistry(config.roomsPerIp, config.roomsTotal);
     this.connectionsPerIpKey = new LimiterKeyCounter(config.connectionsPerIp);
@@ -167,6 +228,8 @@ export class ServerCore {
   }
 
   /**
+   * Creates the session object for a newly opened socket.
+   *
    * @param socket Transport socket.
    * @param data Upgrade data.
    * @returns Fresh session object.
@@ -186,27 +249,18 @@ export class ServerCore {
       ipKey: data.ipKey,
       via: data.via,
       outbound,
-      messageBucket: new LimiterTokenBucket(config.messagesPerSecond, config.messageBurst),
-      byteBucket: new LimiterTokenBucket(config.bytesPerSecond, config.byteBurst),
-      presenceBucket: new LimiterTokenBucket(config.presencePerSecond, config.presenceBurst),
-      presencePending: new Map(),
-      presenceHighWaterBytes: config.presenceHighWaterBytes,
       close: (code, reason) => socket.close(code, reason),
-      name: '',
-      helloDone: false,
-      closed: false,
-      room: null,
-      synced: false,
-      awaitingSnapshotBegin: false,
-      snapshotTimer: null,
-      handshakeTimer: null,
-      pendingAsyncOperation: false,
+      ...sessionInitialState(config),
     };
     outbound.idleListener = () => presenceFlush(session);
     return session;
   }
 
-  /** @returns Next user id, wrapping within u32 and skipping ids in use. */
+  /**
+   * Allocates the next free user id.
+   *
+   * @returns Next user id, wrapping within u32 and skipping ids in use.
+   */
   private userIdNext(): number {
     do {
       this.nextUserId = this.nextUserId >= 0xffffffff ? 1 : this.nextUserId + 1;
@@ -215,6 +269,8 @@ export class ServerCore {
   }
 
   /**
+   * Routes a binary frame to the presence or stream handler.
+   *
    * @param session Sender.
    * @param frame Binary frame.
    */
@@ -225,6 +281,8 @@ export class ServerCore {
   }
 
   /**
+   * Decodes a text frame and routes it to the handshake or a message handler.
+   *
    * @param session Sender.
    * @param text Text frame.
    */
@@ -254,11 +312,12 @@ export class ServerCore {
   }
 
   /**
+   * Builds the welcome message sent after a successful hello.
+   *
    * @param session Recipient.
    * @returns Welcome message with the effective limits.
    */
   private welcomeMessage(session: ConnectionSession): object {
-    const config = this.config;
     return {
       t: 'welcome',
       protocol: PROTOCOL_ID,
@@ -266,20 +325,7 @@ export class ServerCore {
       user: session.user,
       name: session.name,
       via: session.via,
-      limits: {
-        maxPayloadBytes: config.maxPayloadBytes,
-        streamChunkBytes: config.streamChunkBytesMaximum,
-        streamWindowBytes: config.streamWindowBytes,
-        snapshotBytes: config.snapshotBytesMaximum,
-        assetBytes: config.assetBytesMaximum,
-        idsPerMessage: PROTOCOL_CAPS.idsPerMessage,
-        opsPerEdit: PROTOCOL_CAPS.opsPerEdit,
-        messagesPerSecond: config.messagesPerSecond,
-        roomsPerIp: config.roomsPerIp,
-        usersPerRoom: config.usersPerRoomMaximum,
-        locksPerUser: config.locksPerUser,
-        presencePerSecond: config.presencePerSecond,
-      },
+      limits: welcomeLimits(this.config),
     };
   }
 
@@ -301,6 +347,21 @@ export class ServerCore {
         return void handlerRoomJoin(this, session, message);
       case 'room.leave':
         return handlerRoomLeave(this, session, message);
+      case 'hello':
+        return this.violation(session, 'duplicate hello');
+      default:
+        return this.dispatchContent(session, message);
+    }
+  }
+
+  /**
+   * Routes a validated lock, edit, asset or stream message to its handler.
+   *
+   * @param session Sender.
+   * @param message Validated message.
+   */
+  private dispatchContent(session: ConnectionSession, message: ContentMessage): void {
+    switch (message.t) {
       case 'lock.acquire':
         return handlerLockAcquire(this, session, message);
       case 'lock.release':
@@ -317,8 +378,6 @@ export class ServerCore {
         return handlerStreamEnd(this, session, message);
       case 'stream.abort':
         return handlerStreamAbort(this, session, message);
-      case 'hello':
-        return this.violation(session, 'duplicate hello');
     }
   }
 

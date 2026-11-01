@@ -3,6 +3,9 @@ export class LimiterFailureWindow {
   private readonly windows = new Map<string, { startMs: number; failures: number }>();
 
   /**
+   * Creates a limiter that allows a fixed number of failures per key in each
+   * window.
+   *
    * @param maximumFailures Failures allowed per window.
    * @param windowMs Window length in milliseconds.
    * @param nowMs Clock source in milliseconds.
@@ -14,6 +17,8 @@ export class LimiterFailureWindow {
   ) {}
 
   /**
+   * Reports whether a key has used up its failures for the current window.
+   *
    * @param key Limit key.
    * @returns True when the key has exhausted its failures in the current
    *   window.
@@ -40,6 +45,8 @@ export class LimiterFailureWindow {
   }
 
   /**
+   * Returns the live failure window of a key, dropping it when expired.
+   *
    * @param key Limit key.
    * @returns The live window, or null after removing an expired one.
    */

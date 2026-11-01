@@ -8,6 +8,8 @@ export class RoomRegistry {
   private readonly roomsPerIpKey: LimiterKeyCounter;
 
   /**
+   * Creates an empty registry with per-address and server-wide room limits.
+   *
    * @param roomsPerIpMaximum Rooms one address (or IPv6 /64) may own.
    * @param roomsTotalMaximum Rooms the server hosts at most.
    */
@@ -63,6 +65,8 @@ export class RoomRegistry {
   }
 
   /**
+   * Looks up a live room by id.
+   *
    * @param id Room id.
    * @returns The room or undefined.
    */
@@ -70,12 +74,20 @@ export class RoomRegistry {
     return this.rooms.get(id);
   }
 
-  /** @returns Every live room. */
+  /**
+   * Iterates every live room.
+   *
+   * @returns Every live room.
+   */
   all(): IterableIterator<Room> {
     return this.rooms.values();
   }
 
-  /** @returns Number of live rooms. */
+  /**
+   * Counts the live rooms.
+   *
+   * @returns Number of live rooms.
+   */
   size(): number {
     return this.rooms.size;
   }

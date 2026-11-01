@@ -11,13 +11,21 @@ import {
 import { ALLOWED_ORIGINS_DEFAULT } from '../../src/config/server_configuration.ts';
 import { TEST_DUMMY_FORWARDED_SECRET } from '../support/test_configuration.ts';
 
-const forwarded = (secret: string | null, extra: Record<string, string> = {}) =>
-  new Headers({
+/**
+ * Builds request headers as the proxy would forward them.
+ *
+ * @param secret Forwarded secret header value, or null to omit it.
+ * @param extra Extra or overriding headers.
+ * @returns Request headers.
+ */
+function forwarded(secret: string | null, extra: Record<string, string> = {}): Headers {
+  return new Headers({
     ...(secret === null ? {} : { 'x-forwarded-secret': secret }),
     'x-real-ip': '203.0.113.9',
     'x-forwarded-for': '198.51.100.1, 203.0.113.9',
     ...extra,
   });
+}
 
 test('trust: no secret header is direct and ignores forwarded headers', () => {
   expect(requestTrustResolve(forwarded(null), '192.0.2.5', TEST_DUMMY_FORWARDED_SECRET)).toEqual({

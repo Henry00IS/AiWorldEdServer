@@ -2,8 +2,14 @@
 import { PROTOCOL_ID, PROTOCOL_VERSION } from '../../src/shared/protocol_definitions.ts';
 import { TEST_ORIGIN } from './test_configuration.ts';
 
+/**
+ * Decoded server message. Tests read arbitrary protocol fields, so the shape is
+ * deliberately untyped.
+ */
+export type TestMessage = any;
+
 /** Inbound message as decoded JSON, or a binary frame. */
-export type TestInbound = { kind: 'json'; message: Record<string, any> } | { kind: 'binary'; data: Uint8Array };
+export type TestInbound = { kind: 'json'; message: TestMessage } | { kind: 'binary'; data: Uint8Array };
 
 /** Options for connecting. */
 export interface TestClientOptions {
@@ -18,10 +24,14 @@ export class TestClient {
   closeCode: number | null = null;
   closeReason = '';
   user = 0;
-  welcome: Record<string, any> = {};
+  welcome: TestMessage = {};
   private waiters: (() => void)[] = [];
 
-  /** @param socket Connected socket. */
+  /**
+   * Wraps a connected socket and starts collecting its messages.
+   *
+   * @param socket Connected socket.
+   */
   private constructor(readonly socket: WebSocket) {
     socket.binaryType = 'arraybuffer';
     socket.addEventListener('message', (event) => this.inboxPush(event.data));
@@ -69,14 +79,22 @@ export class TestClient {
     this.user = this.welcome.user;
   }
 
-  /** @param message Object to send as JSON. */
+  /**
+   * Sends an object as a JSON text frame.
+   *
+   * @param message Object to send as JSON.
+   */
   send(message: object): void {
     this.socket.send(JSON.stringify(message));
   }
 
-  /** @param data Raw frame. */
+  /**
+   * Sends a raw text or binary frame.
+   *
+   * @param data Raw frame.
+   */
   sendRaw(data: string | Uint8Array): void {
-    this.socket.send(data);
+    this.socket.send(data as string | Uint8Array<ArrayBuffer>);
   }
 
   /**
@@ -90,15 +108,15 @@ export class TestClient {
    */
   async next(
     type: string,
-    predicate: (message: Record<string, any>) => boolean = () => true,
+    predicate: (message: TestMessage) => boolean = () => true,
     timeoutMs = 3000,
-  ): Promise<Record<string, any>> {
+  ): Promise<TestMessage> {
     const found = await this.waitFor(
       (item) => item.kind === 'json' && (type === '*' || item.message.t === type) && predicate(item.message),
       timeoutMs,
       type,
     );
-    return (found as { message: Record<string, any> }).message;
+    return (found as { message: TestMessage }).message;
   }
 
   /**
@@ -120,13 +138,15 @@ export class TestClient {
    * @param replyType Expected reply type.
    * @returns Reply or error message.
    */
-  async request(message: Record<string, unknown>, replyType: string): Promise<Record<string, any>> {
+  async request(message: Record<string, unknown>, replyType: string): Promise<TestMessage> {
     const requestId = Math.floor(Math.random() * 0x7fffffff);
     this.send({ ...message, r: requestId });
     return this.next('*', (reply) => reply.r === requestId && (reply.t === replyType || reply.t === 'error'));
   }
 
   /**
+   * Waits until the socket closes.
+   *
    * @param timeoutMs Timeout.
    * @returns Close code once the socket closed.
    */
@@ -140,6 +160,8 @@ export class TestClient {
   }
 
   /**
+   * Checks whether a message of a type is already in the inbox.
+   *
    * @param type Message type to look for.
    * @returns True when such a message is already in the inbox.
    */
@@ -153,6 +175,8 @@ export class TestClient {
   }
 
   /**
+   * Waits for the first inbox item that matches and removes it.
+   *
    * @param matcher Inbox matcher (type '*' in next() matches any type).
    * @param timeoutMs Timeout.
    * @param label Label for the timeout error.
@@ -175,7 +199,11 @@ export class TestClient {
     }
   }
 
-  /** @param data Raw message data. */
+  /**
+   * Stores one received frame in the inbox and wakes waiters.
+   *
+   * @param data Raw message data.
+   */
   private inboxPush(data: unknown): void {
     if (typeof data === 'string') this.inbox.push({ kind: 'json', message: JSON.parse(data) });
     else this.inbox.push({ kind: 'binary', data: new Uint8Array(data as ArrayBuffer) });
@@ -189,7 +217,11 @@ export class TestClient {
     for (const waiter of waiters) waiter();
   }
 
-  /** @param maximumMs Longest sleep. */
+  /**
+   * Sleeps until a new frame arrives or the time runs out.
+   *
+   * @param maximumMs Longest sleep.
+   */
   private sleepUntilWake(maximumMs: number): Promise<void> {
     return new Promise((resolve) => {
       const timer = setTimeout(resolve, Math.max(1, maximumMs));

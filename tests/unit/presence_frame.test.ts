@@ -20,10 +20,41 @@ const CAMERA: PresenceEntry = {
 };
 const CHARACTER: PresenceEntry = { id: PRESENCE_ID_CHARACTER, position: [3, 0, -4], quaternion: [0, 0, 0, 1], fov: 0 };
 
-/** Angle in degrees between two unit quaternions. */
+/**
+ * Measures the angle in degrees between two unit quaternions.
+ *
+ * @param a First quaternion.
+ * @param b Second quaternion.
+ * @returns Angle in degrees.
+ */
 function quaternionAngle(a: readonly number[], b: readonly number[]): number {
   const dot = Math.abs(a.reduce((total, value, index) => total + value * (b[index] ?? 0), 0));
   return (2 * Math.acos(Math.min(1, dot)) * 180) / Math.PI;
+}
+
+/**
+ * Creates a deterministic pseudo random generator in the range -1 to 1.
+ *
+ * @param seed Non-zero start value.
+ * @returns Generator returning the next value on every call.
+ */
+function randomSignedSequence(seed: number): () => number {
+  let state = seed;
+  return () => ((state = (state * 16807) % 2147483647) / 2147483647) * 2 - 1;
+}
+
+/**
+ * Copies a frame with one byte replaced.
+ *
+ * @param frame Source frame.
+ * @param offset Byte offset to replace.
+ * @param value New byte value.
+ * @returns Modified copy.
+ */
+function frameByteReplaced(frame: Uint8Array, offset: number, value: number): Uint8Array {
+  const copy = frame.slice();
+  copy[offset] = value;
+  return copy;
 }
 
 describe('presence frame', () => {
@@ -47,8 +78,7 @@ describe('presence frame', () => {
   });
 
   test('quaternions survive smallest-three packing within 0.2 degrees', () => {
-    let seed = 1;
-    const random = () => ((seed = (seed * 16807) % 2147483647) / 2147483647) * 2 - 1;
+    const random = randomSignedSequence(1);
     for (let index = 0; index < 2000; index++) {
       const raw = [random(), random(), random(), random()];
       const length = Math.hypot(...raw);
@@ -66,34 +96,47 @@ describe('presence frame', () => {
   });
 
   test('rejects malformed frames', () => {
-    const good = presenceFrameEncode([CAMERA]);
-    const variant = (offset: number, value: number) => {
-      const copy = good.slice();
-      copy[offset] = value;
-      return copy;
-    };
-    const nonFinite = good.slice();
-    new DataView(nonFinite.buffer).setFloat32(5, Number.NaN);
-    const far = good.slice();
-    new DataView(far.buffer).setFloat32(5, 2e6);
-    const tooMany = presenceFrameEncode(Array.from({ length: 7 }, (_, id) => ({ ...CAMERA, id })));
-    for (const frame of [
-      variant(0, 0),
-      variant(1, 1),
-      variant(2, 9),
-      variant(3, 2),
-      variant(4, 16),
-      variant(21, 0),
-      variant(21, 180),
-      good.subarray(0, 21),
-      new Uint8Array([...good, 0]),
-      nonFinite,
-      far,
-      tooMany,
-      presenceFrameEncode([CAMERA, CAMERA]),
-      presenceFrameEncode([{ ...CHARACTER, fov: 60 }]),
-    ])
-      expect(presenceFrameCheck(frame)).toBe(false);
+    for (const frame of framesMalformed(presenceFrameEncode([CAMERA]))) expect(presenceFrameCheck(frame)).toBe(false);
     expect(PRESENCE_CLIENT_FRAME_BYTES_MAXIMUM).toBe(4 + 6 * PRESENCE_ENTRY_BYTES);
   });
 });
+
+/**
+ * Copies a frame with one big-endian float replaced.
+ *
+ * @param frame Source frame.
+ * @param offset Byte offset of the float.
+ * @param value New float value.
+ * @returns Modified copy.
+ */
+function frameFloatReplaced(frame: Uint8Array, offset: number, value: number): Uint8Array {
+  const copy = frame.slice();
+  new DataView(copy.buffer).setFloat32(offset, value);
+  return copy;
+}
+
+/**
+ * Builds malformed variants of a valid one-camera frame.
+ *
+ * @param good Valid one-camera client frame.
+ * @returns Frames the check must reject.
+ */
+function framesMalformed(good: Uint8Array): Uint8Array[] {
+  const tooMany = presenceFrameEncode(Array.from({ length: 7 }, (_, id) => ({ ...CAMERA, id })));
+  return [
+    frameByteReplaced(good, 0, 0),
+    frameByteReplaced(good, 1, 1),
+    frameByteReplaced(good, 2, 9),
+    frameByteReplaced(good, 3, 2),
+    frameByteReplaced(good, 4, 16),
+    frameByteReplaced(good, 21, 0),
+    frameByteReplaced(good, 21, 180),
+    good.subarray(0, 21),
+    new Uint8Array([...good, 0]),
+    frameFloatReplaced(good, 5, Number.NaN),
+    frameFloatReplaced(good, 5, 2e6),
+    tooMany,
+    presenceFrameEncode([CAMERA, CAMERA]),
+    presenceFrameEncode([{ ...CHARACTER, fov: 60 }]),
+  ];
+}

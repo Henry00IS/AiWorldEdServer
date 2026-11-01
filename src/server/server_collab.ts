@@ -1,5 +1,5 @@
 /** Bun.serve wiring: HTTP upgrade gatekeeping and WebSocket event forwarding. */
-import type { Server, ServerWebSocket } from 'bun';
+import type { Server, ServerWebSocket, WebSocketHandler } from 'bun';
 import type { ServerConfiguration } from '../config/server_configuration.ts';
 import type { ConnectionSession, ConnectionUpgradeData } from '../connection/connection_session.ts';
 import { originIsAllowed } from '../network/origin_policy.ts';
@@ -31,22 +31,7 @@ export function collabServerStart(config: ServerConfiguration): CollabServer {
     hostname: config.hostname,
     port: config.port,
     fetch: (request, bunServer) => collabServerFetch(core, request, bunServer),
-    websocket: {
-      maxPayloadLength: config.maxPayloadBytes,
-      idleTimeout: config.idleTimeoutSeconds,
-      sendPings: true,
-      perMessageDeflate: false,
-      backpressureLimit: config.socketBufferHighWaterBytes * 4,
-      closeOnBackpressureLimit: false,
-      open: (socket) => collabSocketOpen(core, socket),
-      message: (socket, message) => {
-        if (socket.data.session) core.sessionMessage(socket.data.session, message);
-      },
-      drain: (socket) => {
-        if (socket.data.session) core.sessionDrain(socket.data.session);
-      },
-      close: (socket) => collabSocketClose(core, socket),
-    },
+    websocket: collabWebSocketHandler(core, config),
   });
   return {
     port: server.port ?? config.port,
@@ -55,6 +40,32 @@ export function collabServerStart(config: ServerConfiguration): CollabServer {
       core.shutdown();
       await server.stop(true);
     },
+  };
+}
+
+/**
+ * Builds the Bun WebSocket options that forward socket events to the core.
+ *
+ * @param core Relay core.
+ * @param config Effective configuration.
+ * @returns WebSocket handler options.
+ */
+function collabWebSocketHandler(core: ServerCore, config: ServerConfiguration): WebSocketHandler<SocketData> {
+  return {
+    maxPayloadLength: config.maxPayloadBytes,
+    idleTimeout: config.idleTimeoutSeconds,
+    sendPings: true,
+    perMessageDeflate: false,
+    backpressureLimit: config.socketBufferHighWaterBytes * 4,
+    closeOnBackpressureLimit: false,
+    open: (socket) => collabSocketOpen(core, socket),
+    message: (socket, message) => {
+      if (socket.data.session) core.sessionMessage(socket.data.session, message);
+    },
+    drain: (socket) => {
+      if (socket.data.session) core.sessionDrain(socket.data.session);
+    },
+    close: (socket) => collabSocketClose(core, socket),
   };
 }
 

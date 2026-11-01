@@ -4,6 +4,8 @@ export class LimiterTokenBucket {
   private lastRefillMs: number;
 
   /**
+   * Creates a full token bucket.
+   *
    * @param ratePerSecond Tokens added per second.
    * @param burst Bucket capacity.
    * @param nowMs Clock source in milliseconds.

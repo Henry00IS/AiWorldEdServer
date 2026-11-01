@@ -8,24 +8,51 @@
 import { binaryFrameEncode } from '../src/shared/binary_frame.ts';
 import { PROTOCOL_ID, PROTOCOL_VERSION } from '../src/shared/protocol_definitions.ts';
 
-const url = process.argv[2] ?? process.env.PUBLIC_WS_URL ?? 'wss://aiworlded.00labs.net/ws';
+const url = process.argv[2] ?? process.env['PUBLIC_WS_URL'] ?? 'wss://aiworlded.00labs.net/ws';
 const origin = 'https://henry00is.github.io';
 /**
  * Expected trust verdict; 'proxy' through the reverse proxy, 'direct' when testing a local
  * server.
  */
-const expectedVia = process.env.EXPECT_VIA ?? 'proxy';
+const expectedVia = process.env['EXPECT_VIA'] ?? 'proxy';
 
 /** Minimal client with an inbox. */
-async function clientOpen(): Promise<{
-  send: (m: object) => void;
-  raw: (d: Uint8Array) => void;
-  next: (t: string) => Promise<any>;
-  close: () => void;
-}> {
+interface VerifyClient {
+  readonly send: (m: object) => void;
+  readonly raw: (d: Uint8Array) => void;
+  readonly next: (t: string) => Promise<any>;
+  readonly close: () => void;
+}
+
+/**
+ * Waits for the first inbox message of a type and removes it.
+ *
+ * @param inbox Received messages.
+ * @param type Message type to wait for.
+ * @returns The message.
+ * @throws When the server sends an error or nothing arrives within 10 seconds.
+ */
+async function inboxNext(inbox: any[], type: string): Promise<any> {
+  for (const deadline = Date.now() + 10_000; Date.now() < deadline; await Bun.sleep(10)) {
+    const index = inbox.findIndex((message) => message.t === type || message.t === 'error');
+    if (index >= 0) {
+      const [message] = inbox.splice(index, 1);
+      if (message.t === 'error') throw new Error(`server error: ${JSON.stringify(message)}`);
+      return message;
+    }
+  }
+  throw new Error(`timeout waiting for ${type}`);
+}
+
+/**
+ * Opens a socket that appends every received message to an inbox.
+ *
+ * @param inbox Inbox to fill.
+ * @returns The connected socket.
+ */
+async function socketOpen(inbox: any[]): Promise<WebSocket> {
   const socket = new WebSocket(url, { headers: { Origin: origin } } as any);
   socket.binaryType = 'arraybuffer';
-  const inbox: any[] = [];
   socket.addEventListener('message', (event) =>
     inbox.push(typeof event.data === 'string' ? JSON.parse(event.data) : { t: '#binary' }),
   );
@@ -33,18 +60,23 @@ async function clientOpen(): Promise<{
     socket.addEventListener('open', resolve, { once: true });
     socket.addEventListener('error', () => reject(new Error(`cannot connect to ${url}`)), { once: true });
   });
-  const next = async (type: string) => {
-    for (const deadline = Date.now() + 10_000; Date.now() < deadline; await Bun.sleep(10)) {
-      const index = inbox.findIndex((message) => message.t === type || message.t === 'error');
-      if (index >= 0) {
-        const [message] = inbox.splice(index, 1);
-        if (message.t === 'error') throw new Error(`server error: ${JSON.stringify(message)}`);
-        return message;
-      }
-    }
-    throw new Error(`timeout waiting for ${type}`);
+  return socket;
+}
+
+/**
+ * Connects a minimal client with an inbox.
+ *
+ * @returns The client.
+ */
+async function clientOpen(): Promise<VerifyClient> {
+  const inbox: any[] = [];
+  const socket = await socketOpen(inbox);
+  return {
+    send: (m) => socket.send(JSON.stringify(m)),
+    raw: (d) => socket.send(d as Uint8Array<ArrayBuffer>),
+    next: (type) => inboxNext(inbox, type),
+    close: () => socket.close(),
   };
-  return { send: (m) => socket.send(JSON.stringify(m)), raw: (d) => socket.send(d), next, close: () => socket.close() };
 }
 
 const hello = { t: 'hello', protocol: PROTOCOL_ID, version: PROTOCOL_VERSION, client: 'verify-public/1' };

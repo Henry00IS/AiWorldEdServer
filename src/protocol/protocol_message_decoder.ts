@@ -25,6 +25,8 @@ export function protocolMessageDecode(text: string): DecodeResult {
 }
 
 /**
+ * Parses JSON without throwing.
+ *
  * @param text Raw text.
  * @returns Parsed value, or undefined on syntax errors.
  */

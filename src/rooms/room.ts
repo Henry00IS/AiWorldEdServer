@@ -52,7 +52,11 @@ export class Room {
   readonly presenceLatest = new Map<number, Uint8Array>();
   closed = false;
 
-  /** @param options Room parameters; the owner becomes the first member. */
+  /**
+   * Creates a room with its owner as the first member.
+   *
+   * @param options Room parameters; the owner becomes the first member.
+   */
   constructor(options: RoomOptions) {
     this.id = options.id;
     this.name = options.name;
@@ -90,6 +94,8 @@ export class Room {
   }
 
   /**
+   * Looks up the color slot of a member.
+   *
    * @param user Member user id.
    * @returns The member's color slot (0 for unknown users).
    */
@@ -98,6 +104,8 @@ export class Room {
   }
 
   /**
+   * Builds the map key of a stream from its recipient and id.
+   *
    * @param to Recipient user id.
    * @param id Stream id.
    * @returns Map key of the stream.
@@ -107,6 +115,8 @@ export class Room {
   }
 
   /**
+   * Counts the streams in flight to one member.
+   *
    * @param to Recipient user id.
    * @returns Number of active streams to that member.
    */
@@ -128,12 +138,20 @@ export class Room {
     return removed;
   }
 
-  /** @returns Public description used in list and join replies. */
+  /**
+   * Describes the room for list and join replies.
+   *
+   * @returns Public description used in list and join replies.
+   */
   describe(): { id: string; name: string; private: boolean; users: number; maxUsers: number } {
     return { id: this.id, name: this.name, private: this.isPrivate, users: this.members.size, maxUsers: this.maxUsers };
   }
 
-  /** @returns Member listing for join replies. */
+  /**
+   * Lists the members for join replies.
+   *
+   * @returns Member listing for join replies.
+   */
   memberList(): RoomMemberEntry[] {
     return [...this.members.values()].map((member) => ({
       user: member.user,

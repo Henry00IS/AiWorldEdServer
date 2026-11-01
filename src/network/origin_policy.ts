@@ -16,6 +16,9 @@ export function originIsAllowed(origin: string | null, allowedOrigins: readonly 
 }
 
 /**
+ * Matches an origin against one allow list entry, where a trailing `:*` allows
+ * any port.
+ *
  * @param origin Lower-case origin.
  * @param entry Lower-case allow list entry.
  * @returns True when the origin matches the entry.

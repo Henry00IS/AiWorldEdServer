@@ -54,6 +54,8 @@ export function secretEqualsConstantTime(presented: string, expected: string): b
 }
 
 /**
+ * Reads the client address that the trusted proxy forwarded.
+ *
  * @param headers Request headers from the trusted proxy.
  * @returns Client address from X-Real-IP, else the last X-Forwarded-For hop,
  *   else null.

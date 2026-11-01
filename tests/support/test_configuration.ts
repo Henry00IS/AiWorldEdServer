@@ -10,6 +10,8 @@ export const TEST_DUMMY_FORWARDED_SECRET = 'dummy-test-secret-0000-not-real';
 export const TEST_ORIGIN = 'http://localhost:5173';
 
 /**
+ * Builds a server configuration for tests on an ephemeral loopback port.
+ *
  * @param overrides Fields to override.
  * @returns Test configuration bound to an ephemeral loopback port.
  */

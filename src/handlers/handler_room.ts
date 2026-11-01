@@ -61,6 +61,24 @@ export async function handlerRoomCreate(
     if (message.private && passwordHash === null && !session.closed) sessionSendError(session, 'busy', message.r);
     return;
   }
+  roomCreateCommit(core, session, message, passwordHash);
+}
+
+/**
+ * Creates the reserved room, makes the creator its synced owner and confirms
+ * the creation.
+ *
+ * @param core Relay core.
+ * @param session Creator.
+ * @param message Validated request.
+ * @param passwordHash Password hash of a private room, or null.
+ */
+function roomCreateCommit(
+  core: ServerCore,
+  session: ConnectionSession,
+  message: RoomCreateMessage,
+  passwordHash: string | null,
+): void {
   sessionDisplayNameApply(session, message.displayName);
   const room = roomInstantiate(core, session, message, passwordHash);
   core.registry.reservationCommit(room);
@@ -77,6 +95,9 @@ export async function handlerRoomCreate(
 }
 
 /**
+ * Checks a room creation request against the session state, name rules,
+ * test-room rules and password policy.
+ *
  * @param core Relay core.
  * @param session Creator.
  * @param message Request.
@@ -102,6 +123,8 @@ function roomCreateRejection(
 }
 
 /**
+ * Creates the room object for a validated creation request.
+ *
  * @param core Relay core.
  * @param session Owner.
  * @param message Validated request.
@@ -129,6 +152,8 @@ function roomInstantiate(
 }
 
 /**
+ * Generates a random room id that no live room uses.
+ *
  * @param core Relay core.
  * @returns A random 16 character base64url id not in use.
  */
@@ -207,6 +232,8 @@ export async function handlerRoomJoin(
 }
 
 /**
+ * Checks the optional display name of a create or join request.
+ *
  * @param rawName Display name from a create or join request, if any.
  * @returns Null when absent or valid, otherwise the invalid_name error with
  *   field "displayName".
@@ -230,6 +257,8 @@ function sessionDisplayNameApply(session: ConnectionSession, rawName: string | u
 }
 
 /**
+ * Checks whether a session may join a room before the password is verified.
+ *
  * @param session Joiner.
  * @param room Target room, if it exists.
  * @returns Error code, or null when the join may proceed.
@@ -288,6 +317,23 @@ function roomMemberAdd(core: ServerCore, session: ConnectionSession, room: Room,
     () => roomMembershipEnd(core, session, 'snapshot_timeout'),
     core.config.snapshotTimeoutMs,
   );
+  roomJoinedSend(session, room, requestId);
+  roomBroadcast(
+    room,
+    { t: 'member.joined', user: session.user, name: session.name, color: room.colorOf(session.user) },
+    session.user,
+  );
+  sessionSend(room.owner, { t: 'snapshot.request', for: session.user });
+}
+
+/**
+ * Sends the join confirmation with the room, its members and its locks.
+ *
+ * @param session Joiner.
+ * @param room Joined room.
+ * @param requestId Request id to echo.
+ */
+function roomJoinedSend(session: ConnectionSession, room: Room, requestId: number | undefined): void {
   sessionSend(session, {
     t: 'room.joined',
     r: requestId,
@@ -297,12 +343,6 @@ function roomMemberAdd(core: ServerCore, session: ConnectionSession, room: Room,
     members: room.memberList(),
     locks: room.locks.listAll(),
   });
-  roomBroadcast(
-    room,
-    { t: 'member.joined', user: session.user, name: session.name, color: room.colorOf(session.user) },
-    session.user,
-  );
-  sessionSend(room.owner, { t: 'snapshot.request', for: session.user });
 }
 
 /**

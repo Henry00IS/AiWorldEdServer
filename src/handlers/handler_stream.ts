@@ -53,6 +53,20 @@ export function handlerStreamBegin(core: ServerCore, session: ConnectionSession,
       stream: message.stream,
       detail: problem,
     });
+  streamRegister(room, target, message);
+  streamBeginForward(session, target, message);
+  if (message.size === 0)
+    streamFinish(room, session, target, room.streams.get(Room.streamKey(target.user, message.stream)) as RoomStream);
+}
+
+/**
+ * Records a new stream in the room and marks a snapshot as begun.
+ *
+ * @param room Room.
+ * @param target Recipient.
+ * @param message Validated stream header.
+ */
+function streamRegister(room: Room, target: ConnectionSession, message: StreamBeginMessage): void {
   room.streams.set(Room.streamKey(target.user, message.stream), {
     to: target.user,
     id: message.stream,
@@ -64,6 +78,16 @@ export function handlerStreamBegin(core: ServerCore, session: ConnectionSession,
     ended: false,
   });
   if (message.kind === 'snapshot') target.awaitingSnapshotBegin = false;
+}
+
+/**
+ * Forwards a stream header to the recipient.
+ *
+ * @param session Owner.
+ * @param target Recipient.
+ * @param message Validated stream header.
+ */
+function streamBeginForward(session: ConnectionSession, target: ConnectionSession, message: StreamBeginMessage): void {
   sessionSend(target, {
     t: 'stream.begin',
     from: session.user,
@@ -73,11 +97,12 @@ export function handlerStreamBegin(core: ServerCore, session: ConnectionSession,
     ...(message.name === undefined ? {} : { name: message.name }),
     ...(message.mime === undefined ? {} : { mime: message.mime }),
   });
-  if (message.size === 0)
-    streamFinish(room, session, target, room.streams.get(Room.streamKey(target.user, message.stream)) as RoomStream);
 }
 
 /**
+ * Checks a stream header from the owner against the recipient, stream id and
+ * limits.
+ *
  * @param core Relay core.
  * @param room Room.
  * @param target Recipient.
@@ -125,6 +150,9 @@ export function handlerStreamChunk(core: ServerCore, session: ConnectionSession,
 }
 
 /**
+ * Checks one stream chunk against the declared size and the flow control
+ * window.
+ *
  * @param core Relay core.
  * @param stream Stream state.
  * @param payloadBytes Chunk payload size.

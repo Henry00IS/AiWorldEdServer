@@ -2,7 +2,11 @@
 export class LimiterKeyCounter {
   private readonly counts = new Map<string, number>();
 
-  /** @param maximumPerKey Largest count allowed per key. */
+  /**
+   * Creates a counter that caps the concurrent count per key.
+   *
+   * @param maximumPerKey Largest count allowed per key.
+   */
   constructor(private readonly maximumPerKey: number) {}
 
   /**
@@ -30,6 +34,8 @@ export class LimiterKeyCounter {
   }
 
   /**
+   * Reports the current count of a key.
+   *
    * @param key Limit key.
    * @returns Current count.
    */
@@ -37,7 +43,11 @@ export class LimiterKeyCounter {
     return this.counts.get(key) ?? 0;
   }
 
-  /** @returns Number of tracked keys. */
+  /**
+   * Reports how many keys currently have a non-zero count.
+   *
+   * @returns Number of tracked keys.
+   */
   keyCount(): number {
     return this.counts.size;
   }

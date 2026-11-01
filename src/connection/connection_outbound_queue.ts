@@ -17,7 +17,7 @@ export interface OutboundSocket {
 type OutboundItem =
   | { kind: 'text'; data: string; bytes: number }
   | { kind: 'edit'; data: string; bytes: number }
-  | { kind: 'binary'; data: Uint8Array; bytes: number; onDelivered?: () => void };
+  | { kind: 'binary'; data: Uint8Array; bytes: number; onDelivered?: (() => void) | undefined };
 
 /** Bounded, coalescing outbound queue. */
 export class ConnectionOutboundQueue {
@@ -29,6 +29,8 @@ export class ConnectionOutboundQueue {
   idleListener: (() => void) | null = null;
 
   /**
+   * Creates an empty outbound queue for one socket.
+   *
    * @param socket Destination socket.
    * @param maximumQueuedBytes Byte cap before the consumer is declared too
    *   slow.
@@ -71,12 +73,20 @@ export class ConnectionOutboundQueue {
     this.push({ kind: 'binary', data, bytes: data.byteLength, onDelivered });
   }
 
-  /** @returns Bytes waiting in the queue. */
+  /**
+   * Reports how many bytes are waiting to be sent.
+   *
+   * @returns Bytes waiting in the queue.
+   */
   bytesQueued(): number {
     return this.queuedBytes;
   }
 
-  /** @returns Frames waiting in the queue. */
+  /**
+   * Reports how many frames are waiting to be sent.
+   *
+   * @returns Frames waiting in the queue.
+   */
   length(): number {
     return this.items.length - this.head;
   }
@@ -117,7 +127,12 @@ export class ConnectionOutboundQueue {
     if (this.length() === 0) this.idleListener?.();
   }
 
-  /** @param item Item to enqueue. */
+  /**
+   * Appends an item, or marks the queue overflowed when the byte cap would be
+   * exceeded.
+   *
+   * @param item Item to enqueue.
+   */
   private push(item: OutboundItem): void {
     if (this.overflowed) return;
     if (this.queuedBytes + item.bytes > this.maximumQueuedBytes) {
