@@ -1,0 +1,14 @@
+/** @type {import('prettier').Config} */
+export default {
+  endOfLine: 'lf',
+  printWidth: 120,
+  jsdocPrintWidth: 80,
+  tsdoc: true,
+  jsdocDescriptionWithDot: true,
+  semi: true,
+  singleQuote: true,
+  tabWidth: 2,
+  trailingComma: 'all',
+  useTabs: false,
+  plugins: ['prettier-plugin-jsdoc'],
+};

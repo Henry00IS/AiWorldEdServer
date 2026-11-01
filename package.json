@@ -8,10 +8,20 @@
     "start": "bun src/main.ts",
     "dev": "bun --watch src/main.ts",
     "test": "bun test",
-    "typecheck": "tsc --noEmit"
+    "testrun": "bun test",
+    "typecheck": "tsc --noEmit",
+    "typecheck:strict": "tsc --project tsconfig.strict.json --noEmit",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "audit:agents": "bun scripts/audit_agents_compliance.ts",
+    "audit:agents:strict": "bun scripts/audit_agents_compliance.ts --strict",
+    "ci": "bun run format:check && bun run typecheck && bun run typecheck:strict && bun run testrun && bun run audit:agents:strict"
   },
   "devDependencies": {
     "@types/bun": "latest",
-    "typescript": "^5.9.0"
+    "prettier": "^3.9.6",
+    "prettier-plugin-jsdoc": "^1.8.1",
+    "typescript": "^7.0.2",
+    "typescript-compiler-api": "npm:typescript@5.9.3"
   }
 }
