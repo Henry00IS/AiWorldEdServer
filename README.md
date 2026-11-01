@@ -6,6 +6,9 @@ it only negotiates between the room owner (who has the project on disk) and the
 other users, relays edits through short-lived per-recipient queues, and enforces
 selection locks.
 
+Contributors and agents: read [AGENTS.md](AGENTS.md) for the code standards and
+server rules before changing anything.
+
 Public endpoint: `wss://aiworlded.00labs.net/ws` (TLS terminated by the reverse proxy, proxied to `192.0.2.10:8081`).
 
 ```
