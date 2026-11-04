@@ -1,9 +1,10 @@
 /**
  * Plain HTTP side of transfer links: `GET` and `HEAD` on
  * `<WEBSOCKET_PATH>/transfer/<link>` stream the file from the owner's editor.
- * Responses are downloads by default (`Content-Disposition: attachment`);
- * `?inline` serves images, video and audio inline for embedding. Every response
- * forbids sniffing and scripting and allows GET from any origin.
+ * Safe browser-renderable types (raster images, video, audio, PDF) open inline,
+ * everything else downloads; `?download` always downloads. A single `Range` is
+ * served as 206 so players can seek. Every response forbids sniffing and
+ * scripting and allows GET from any origin.
  */
 import { handlerTransferLinkOwner } from '../handlers/handler_transfer.ts';
 import type { ServerCore } from './server_core.ts';
@@ -12,26 +13,44 @@ import { transferMimeSanitize, transferNameAscii, transferNameSanitize } from '.
 import {
   transferDownloadEnd,
   transferDownloadInfo,
+  transferDownloadRange,
   transferDownloadStart,
   transferStreamCreate,
+  type TransferDownload,
 } from '../transfer/transfer_stream.ts';
 
 /** Headers on every transfer response. */
 const TRANSFER_HEADERS_COMMON: Readonly<Record<string, string>> = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
-  'Access-Control-Expose-Headers': 'Content-Disposition, Content-Length, Content-Type',
+  'Access-Control-Allow-Headers': 'Range',
+  'Access-Control-Expose-Headers': 'Accept-Ranges, Content-Disposition, Content-Length, Content-Range, Content-Type',
   'Cross-Origin-Resource-Policy': 'cross-origin',
   'X-Content-Type-Options': 'nosniff',
-  'Content-Security-Policy': "default-src 'none'; img-src 'self'; media-src 'self'; sandbox",
   'Referrer-Policy': 'no-referrer',
   'Cache-Control': 'no-store',
 };
+/** CSP of every response; PDF viewers are plugins, which `sandbox` blocks. */
+const TRANSFER_CSP = "default-src 'none'; img-src 'self'; media-src 'self'";
+/** Types a browser renders without running content of the file. */
+const TRANSFER_INLINE_TYPES = new Set([
+  'image/png',
+  'image/jpeg',
+  'image/gif',
+  'image/webp',
+  'image/avif',
+  'image/bmp',
+  'video/mp4',
+  'video/webm',
+  'video/ogg',
+  'application/pdf',
+]);
 /** Messages of refused downloads; `{limit}` becomes the size cap. */
 const TRANSFER_STATUS_TEXT: Readonly<Record<number, string>> = {
   404: 'This link is no longer available.',
   405: 'Only GET and HEAD are allowed.',
   413: 'This file exceeds the {limit} limit.',
+  416: 'The requested range is not available.',
   502: 'The sender sent invalid data.',
   503: 'Too many downloads right now, try again later.',
   504: 'The sender did not answer.',
@@ -65,11 +84,58 @@ export async function transferHttpServe(core: ServerCore, request: Request, link
   request.signal.addEventListener('abort', () => transferDownloadEnd(download, null), { once: true });
   const info = await transferDownloadInfo(download);
   if (!info.ok) return transferHttpStatus(info.status, owner.limits.sizeMaximum);
-  const inline = new URL(request.url).searchParams.has('inline');
+  const inline = !new URL(request.url).searchParams.has('download');
   const headers = transferHttpHeaders(info, link, inline);
-  if (request.method === 'GET') return new Response(transferStreamCreate(download), { headers });
+  if (request.method === 'GET') return transferHttpGet(download, request.headers.get('range'), info.size, headers);
   transferDownloadEnd(download, null);
   return new Response(null, { headers });
+}
+
+/**
+ * Streams a `GET`, the whole file or one requested range.
+ *
+ * @param download Download whose info arrived.
+ * @param header `Range` header, or null.
+ * @param size File size.
+ * @param headers Headers of the whole file.
+ * @returns 200, 206 or 416 response.
+ */
+function transferHttpGet(
+  download: TransferDownload,
+  header: string | null,
+  size: number,
+  headers: Record<string, string>,
+): Response {
+  if (header === null) return new Response(transferStreamCreate(download), { headers });
+  const range = transferHttpRange(header, size);
+  if (range === null) {
+    transferDownloadEnd(download, null);
+    return transferHttpStatus(416, 0, { 'Content-Range': `bytes */${size}` });
+  }
+  transferDownloadRange(download, range.start, range.end);
+  const partial = { 'Content-Range': `bytes ${range.start}-${range.end - 1}/${size}` };
+  Object.assign(headers, partial, { 'Content-Length': String(range.end - range.start) });
+  return new Response(transferStreamCreate(download), { status: 206, headers });
+}
+
+/**
+ * Parses a single `bytes=` range against the file size.
+ *
+ * @param header `Range` header value.
+ * @param size File size.
+ * @returns First byte and end (exclusive), or null when invalid, unsatisfiable
+ *   or more than one range.
+ */
+export function transferHttpRange(header: string, size: number): { start: number; end: number } | null {
+  const match = /^bytes=(\d*)-(\d*)$/.exec(header.trim());
+  if (match === null || (match[1] === '' && match[2] === '')) return null;
+  if (match[1] === '') {
+    const suffix = Number(match[2]);
+    return suffix > 0 && size > 0 ? { start: Math.max(0, size - suffix), end: size } : null;
+  }
+  const start = Number(match[1]);
+  const last = match[2] === '' ? size - 1 : Math.min(Number(match[2]), size - 1);
+  return start < size && start <= last ? { start, end: last + 1 } : null;
 }
 
 /**
@@ -77,7 +143,7 @@ export async function transferHttpServe(core: ServerCore, request: Request, link
  *
  * @param info Announced size, name and type.
  * @param link Link id, the fallback name.
- * @param inline True for `?inline`.
+ * @param inline False for `?download`.
  * @returns Headers.
  */
 export function transferHttpHeaders(
@@ -86,15 +152,14 @@ export function transferHttpHeaders(
   inline: boolean,
 ): Record<string, string> {
   const mime = transferMimeSanitize(info.mime);
+  const shown = inline && transferInlineAllowed(mime);
   return {
     ...TRANSFER_HEADERS_COMMON,
+    'Content-Security-Policy': shown && mime === 'application/pdf' ? TRANSFER_CSP : `${TRANSFER_CSP}; sandbox`,
     'Content-Type': mime,
     'Content-Length': String(info.size),
-    'Content-Disposition': transferHttpDisposition(
-      transferNameSanitize(info.name, link),
-      inline && transferInlineAllowed(mime),
-    ),
-    'Accept-Ranges': 'none',
+    'Content-Disposition': transferHttpDisposition(transferNameSanitize(info.name, link), shown),
+    'Accept-Ranges': 'bytes',
   };
 }
 
@@ -112,15 +177,14 @@ export function transferHttpDisposition(name: string, inline: boolean): string {
 }
 
 /**
- * Returns whether a type may be served inline: images except SVG, video and
- * audio.
+ * Returns whether a type opens inline: raster images, video, audio and PDF,
+ * never SVG, HTML, XML, scripts or other active types.
  *
  * @param mime Sanitized type.
  * @returns True when inline is allowed.
  */
-function transferInlineAllowed(mime: string): boolean {
-  if (mime === 'image/svg+xml') return false;
-  return mime.startsWith('image/') || mime.startsWith('video/') || mime.startsWith('audio/');
+export function transferInlineAllowed(mime: string): boolean {
+  return TRANSFER_INLINE_TYPES.has(mime) || mime.startsWith('audio/');
 }
 
 /**
@@ -140,10 +204,17 @@ export function transferHttpStatusText(status: number, sizeMaximum: number): str
  *
  * @param status HTTP status.
  * @param sizeMaximum Size cap in bytes, for 413.
+ * @param extra Extra headers.
  * @returns Response.
  */
-function transferHttpStatus(status: number, sizeMaximum = 0): Response {
-  const headers = { ...TRANSFER_HEADERS_COMMON, 'Content-Type': 'text/html; charset=utf-8' };
+function transferHttpStatus(status: number, sizeMaximum = 0, extra: Record<string, string> = {}): Response {
+  const csp = `${TRANSFER_CSP}; sandbox`;
+  const headers = {
+    ...TRANSFER_HEADERS_COMMON,
+    'Content-Security-Policy': csp,
+    'Content-Type': 'text/html; charset=utf-8',
+    ...extra,
+  };
   if (status === 405) Object.assign(headers, { Allow: 'GET, HEAD, OPTIONS' });
   if (status === 503) Object.assign(headers, { 'Retry-After': '5' });
   const text = transferHttpStatusText(status, sizeMaximum);

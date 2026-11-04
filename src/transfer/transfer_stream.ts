@@ -15,7 +15,10 @@ export interface TransferDownload {
   readonly q: number;
   readonly owner: TransferOwner;
   size: number;
+  /** Next byte to request. */
   offset: number;
+  /** End of the served range (exclusive). */
+  end: number;
   /** Bytes of the chunk requested from the owner, 0 when none. */
   requested: number;
   controller: ReadableStreamDefaultController<Uint8Array> | null;
@@ -39,6 +42,7 @@ export function transferDownloadStart(owner: TransferOwner, link: string): Trans
     owner,
     size: 0,
     offset: 0,
+    end: 0,
     requested: 0,
     controller: null,
     infoResolve: null,
@@ -85,7 +89,20 @@ export function transferInfoReceived(
   transferTimerClear(download);
   download.infoResolve = null;
   download.size = info.size;
+  download.end = info.size;
   resolve({ ok: true, ...info });
+}
+
+/**
+ * Narrows a download whose info arrived to one byte range.
+ *
+ * @param download Download.
+ * @param start First byte.
+ * @param end Last byte plus one.
+ */
+export function transferDownloadRange(download: TransferDownload, start: number, end: number): void {
+  download.offset = start;
+  download.end = end;
 }
 
 /**
@@ -99,7 +116,7 @@ export function transferStreamCreate(download: TransferDownload): ReadableStream
     {
       start: (controller) => {
         download.controller = controller;
-        if (download.size === 0) transferDownloadEnd(download, null);
+        if (download.offset >= download.end) transferDownloadEnd(download, null);
       },
       pull: () => transferPull(download),
       cancel: () => transferDownloadEnd(download, null),
@@ -141,7 +158,7 @@ export function transferChunkReceived(
   }
   download.controller?.enqueue(payload.slice());
   transferPullResolve(download);
-  if (download.offset >= download.size) transferDownloadEnd(download, null);
+  if (download.offset >= download.end) transferDownloadEnd(download, null);
   else transferTimerArm(download);
   return 'ok';
 }
@@ -208,7 +225,7 @@ function transferPump(owner: TransferOwner): void {
   const download = owner.wanting.shift();
   if (download === undefined) return;
   owner.inFlight = download;
-  download.requested = Math.min(owner.limits.chunkBytes, download.size - download.offset);
+  download.requested = Math.min(owner.limits.chunkBytes, download.end - download.offset);
   owner.send({ t: 'transfer.chunk', q: download.q, offset: download.offset, length: download.requested });
   transferTimerArm(download);
 }

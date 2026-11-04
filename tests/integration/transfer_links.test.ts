@@ -133,8 +133,9 @@ describe('transfer links', () => {
     expect(headers['content-type']).toBe('application/pdf');
     expect([String(file.bytes.length), undefined]).toContain(headers['content-length']);
     expect(headers['content-disposition']).toBe(
-      `attachment; filename="Bericht _ _ _.pdf"; filename*=UTF-8''${encodeURIComponent('Bericht – Ü 🌴.pdf')}`,
+      `inline; filename="Bericht _ _ _.pdf"; filename*=UTF-8''${encodeURIComponent('Bericht – Ü 🌴.pdf')}`,
     );
+    expect(headers['accept-ranges']).toBe('bytes');
     expect(headers['x-content-type-options']).toBe('nosniff');
     expect(headers['content-security-policy']).toContain("default-src 'none'");
     expect(headers['access-control-allow-origin']).toBe('*');
@@ -152,10 +153,77 @@ describe('transfer links', () => {
     );
     await interval();
     const image = await editor.share({ bytes: new Uint8Array([1, 2]), name: 'a.png', mime: 'image/png' });
-    const inline = await fetch(`${urlOf(image)}?inline`, { method: 'HEAD' });
+    const inline = await fetch(urlOf(image), { method: 'HEAD' });
     expect(inline.headers.get('content-disposition')).toStartWith('inline;');
+    expect(inline.headers.get('content-security-policy')).toEndWith('; sandbox');
     expect(inline.headers.get('content-length')).toBe('2');
+    const forced = await fetch(`${urlOf(image)}?download`, { method: 'HEAD' });
+    expect(forced.headers.get('content-disposition')).toStartWith('attachment;');
+  });
+
+  test('active types such as SVG always download in a sandbox', async () => {
+    const editor = await editorConnect();
+    const svg = await editor.share({ bytes: new Uint8Array([1]), name: 'a.svg', mime: 'image/svg+xml' });
+    const vector = await fetch(urlOf(svg), { method: 'HEAD' });
+    expect(vector.headers.get('content-disposition')).toStartWith('attachment;');
+    expect(vector.headers.get('content-security-policy')).toEndWith('; sandbox');
     expect(editor.chunkLog).toEqual([]);
+  });
+
+  test('a single byte range answers 206 with the exact bytes; invalid ranges 416', async () => {
+    const editor = await editorConnect();
+    const file = fileOf(CHUNK * 3 + 7, 'clip.mp4', 'video/mp4');
+    const link = await editor.share(file);
+    const size = file.bytes.length;
+    const cases: [string, number, number][] = [
+      [`bytes=${CHUNK + 5}-${CHUNK * 2 + 9}`, CHUNK + 5, CHUNK * 2 + 10],
+      [`bytes=${size - 3}-`, size - 3, size],
+      ['bytes=-100', size - 100, size],
+      [`bytes=0-${size * 2}`, 0, size],
+    ];
+    for (const [range, start, end] of cases) {
+      const response = await fetch(urlOf(link), { headers: { Range: range } });
+      expect(response.status).toBe(206);
+      expect(response.headers.get('content-range')).toBe(`bytes ${start}-${end - 1}/${size}`);
+      expect(response.headers.get('content-disposition')).toStartWith('inline;');
+      expect(sha256(new Uint8Array(await response.arrayBuffer()))).toBe(sha256(file.bytes.subarray(start, end)));
+    }
+  });
+
+  test('several, reversed, foreign or unsatisfiable ranges answer 416', async () => {
+    const editor = await editorConnect();
+    const link = await editor.share(fileOf(CHUNK + 7));
+    const size = CHUNK + 7;
+    for (const range of [`bytes=${size}-`, 'bytes=0-1,4-5', 'bytes=5-2', 'items=0-1', 'bytes=-0']) {
+      const response = await fetch(urlOf(link), { headers: { Range: range } });
+      expect(response.status).toBe(416);
+      expect(response.headers.get('content-range')).toBe(`bytes */${size}`);
+      await response.arrayBuffer();
+    }
+    expect(editor.chunkLog).toEqual([]);
+    expect(server.core.sessions.get(editor.user)?.transfer?.downloads.size ?? 0).toBe(0);
+  });
+
+  test('ranges opened and aborted in a row free the slot promptly', async () => {
+    const editor = await editorConnect();
+    const file = fileOf(CHUNK * 8);
+    const link = await editor.share(file);
+    for (let index = 0; index < 5; index++) {
+      const abort = new AbortController();
+      const response = await fetch(urlOf(link), {
+        signal: abort.signal,
+        headers: { Range: `bytes=${index * CHUNK}-` },
+      });
+      await response.body?.getReader().read();
+      abort.abort();
+    }
+    const started = Date.now();
+    const response = await fetch(urlOf(link), { headers: { Range: `bytes=${CHUNK * 6}-` } });
+    expect(sha256(new Uint8Array(await response.arrayBuffer()))).toBe(sha256(file.bytes.subarray(CHUNK * 6)));
+    expect(Date.now() - started).toBeLessThan(300);
+    expect(editor.maxOutstanding).toBe(1);
+    await Bun.sleep(20);
+    expect(server.core.sessions.get(editor.user)?.transfer?.downloads.size ?? 0).toBe(0);
   });
 
   test('files above 100 MiB answer 413, empty files 200', async () => {

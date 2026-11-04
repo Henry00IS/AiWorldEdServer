@@ -174,8 +174,9 @@ relay answers plain HTTP `GET` and `HEAD` on `<WEBSOCKET_PATH>/transfer/<id>` (f
 `https://relay.example.com/ws/transfer/<id>`) by streaming the file from that editor in
 256 KiB chunks, one chunk in flight per editor connection. Nothing is stored on the relay. A
 link stops working when its editor disconnects, after one hour, or when the relay restarts.
-Downloads are attachments; add `?inline` to show images, video and audio in place (for
-`<img>`/`<video>` embedding). The proxy must forward plain HTTP requests on paths below
+Raster images, video, audio and PDF open in place, other files download; `?download` always
+downloads. Single `Range` requests are answered with 206, so videos can seek; the proxy must pass
+the `Range` header through. The proxy must forward plain HTTP requests on paths below
 `WEBSOCKET_PATH` (the examples above do) and should not buffer the responses.
 
 ## Security checklist

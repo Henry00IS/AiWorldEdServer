@@ -269,10 +269,15 @@ owner's connection closes or the relay restarts, so a connection holds at most 7
 8 bytes each. Unknown, expired and revoked links answer 404.
 
 Responses carry `Content-Type` (only a plain `type/subtype`, else `application/octet-stream`),
-`Content-Length` (always on `HEAD`; Bun 1.4 streams `GET` bodies chunked),
-`Content-Disposition: attachment; filename="…"; filename*=UTF-8''…`, `X-Content-Type-Options: nosniff`,
-a `sandbox` CSP, `Cache-Control: no-store` and `Access-Control-Allow-Origin: *`. `?inline` serves
-images (except SVG), video and audio inline. The relay sanitizes the announced name
+`Content-Length` (always on `HEAD`; Bun 1.4 streams `GET` bodies chunked, `Content-Range` still
+carries the full size), `Content-Disposition: inline|attachment; filename="…"; filename*=UTF-8''…`,
+`X-Content-Type-Options: nosniff`, a CSP without scripts (with `sandbox` except for inline PDF, whose
+viewer is a plugin), `Cache-Control: no-store` and `Access-Control-Allow-Origin: *`. Raster images
+(PNG, JPEG, GIF, WebP, AVIF, BMP), MP4/WebM/Ogg video, audio and PDF open inline; SVG, HTML, XML,
+scripts and everything else download. `?download` always downloads. `Accept-Ranges: bytes`: one
+`Range: bytes=a-b` (also `a-` and `-n`) answers 206 with `Content-Range` and is streamed by asking
+the editor for chunks at that offset; several ranges or an unsatisfiable one answer 416. An aborted
+range frees the in-flight slot as soon as its pending chunk arrives. The relay sanitizes the announced name
 (`src/shared/transfer_file_policy.ts`, shared with the editor): last path segment only, no control,
 bidi or Windows-invalid characters, no trailing dots or spaces, at most 255 characters with the
 extension kept; empty names and reserved device names (`CON`, `NUL`, `COM1`, …) become the link id.
