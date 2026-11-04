@@ -6,7 +6,6 @@ import {
   STREAM_KINDS,
   TRANSFER_LINK_PATTERN,
   TRANSFER_NAME_LENGTH_MAXIMUM,
-  TRANSFER_SIZE_MAXIMUM,
   VERIFY_VERDICTS,
   type ClientMessageType,
 } from '../shared/protocol_definitions.ts';
@@ -46,7 +45,7 @@ const SCHEMA_ASSET_NAME: Schema = {
 const SCHEMA_TRANSFER_QUERY: Schema = { type: 'int', min: 1, max: 0xffffffff };
 const SCHEMA_TRANSFER_NAME: Schema = { type: 'string', min: 0, max: TRANSFER_NAME_LENGTH_MAXIMUM * 4 };
 const SCHEMA_TRANSFER_MIME: Schema = { type: 'string', min: 0, max: 255 };
-const SCHEMA_TRANSFER_SIZE: Schema = { type: 'int', min: 0, max: TRANSFER_SIZE_MAXIMUM };
+const SCHEMA_TRANSFER_SIZE: Schema = { type: 'int', min: 0, max: Number.MAX_SAFE_INTEGER };
 const SCHEMA_CHAT_FILE: Schema = {
   type: 'object',
   required: {
@@ -210,7 +209,7 @@ export const CLIENT_MESSAGE_SCHEMAS: Readonly<Record<ClientMessageType, Schema>>
     required: {
       t: { type: 'literal', value: 'transfer.info' },
       q: SCHEMA_TRANSFER_QUERY,
-      size: { type: 'int', min: 0, max: Number.MAX_SAFE_INTEGER },
+      size: SCHEMA_TRANSFER_SIZE,
       name: SCHEMA_TRANSFER_NAME,
       mime: SCHEMA_TRANSFER_MIME,
     },

@@ -116,7 +116,8 @@ export function transferStreamCreate(download: TransferDownload): ReadableStream
  * @param offset Offset from the frame.
  * @param payload Chunk bytes.
  * @returns 'ok', 'stale' for a chunk nobody waits for (late after a timeout),
- *   or 'invalid' for a wrong offset or length.
+ *   or 'invalid' for a wrong offset or length, which fails only this download
+ *   with a 502.
  */
 export function transferChunkReceived(
   owner: TransferOwner,
@@ -126,7 +127,11 @@ export function transferChunkReceived(
 ): 'ok' | 'stale' | 'invalid' {
   const download = owner.inFlight;
   if (download === null || download.q !== q || download.requested === 0) return 'stale';
-  if (offset !== download.offset || payload.byteLength !== download.requested) return 'invalid';
+  if (offset !== download.offset || payload.byteLength !== download.requested) {
+    download.requested = 0;
+    transferDownloadEnd(download, 502);
+    return 'invalid';
+  }
   transferTimerClear(download);
   download.requested = 0;
   download.offset += payload.byteLength;

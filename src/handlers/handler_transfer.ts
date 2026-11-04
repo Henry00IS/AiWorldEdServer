@@ -90,9 +90,11 @@ function transferOwnerOf(core: ServerCore, session: ConnectionSession): Transfer
  */
 export function handlerTransferChunk(core: ServerCore, session: ConnectionSession, frame: Uint8Array): void {
   const chunk = transferFrameParse(frame);
-  if (chunk === null || session.transfer === null) return core.violation(session, 'invalid transfer chunk');
+  if (chunk === null || session.transfer === null) {
+    return abuseRecord(core, session, TRANSFER_ABUSE_POINTS_STALE, 'invalid transfer chunk');
+  }
   const result = transferChunkReceived(session.transfer, chunk.q, chunk.offset, chunk.payload);
-  if (result === 'invalid') return core.violation(session, 'transfer chunk out of order');
+  if (result === 'invalid') abuseRecord(core, session, TRANSFER_ABUSE_POINTS_STALE, 'transfer chunk out of order');
   if (result === 'stale') abuseRecord(core, session, TRANSFER_ABUSE_POINTS_STALE, 'unexpected transfer chunk');
 }
 

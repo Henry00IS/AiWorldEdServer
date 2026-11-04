@@ -166,7 +166,11 @@ describe('transfer links', () => {
       mime: 'a/b',
       size: 100 * 1024 * 1024 + 1,
     });
-    expect((await fetch(urlOf(huge))).status).toBe(413);
+    const refused = await fetch(urlOf(huge));
+    expect(refused.status).toBe(413);
+    expect(refused.headers.get('content-type')).toBe('text/html; charset=utf-8');
+    expect(await refused.text()).toContain('This file exceeds the 100 MiB limit.');
+    expect(editor.socket.readyState).toBe(WebSocket.OPEN);
     editor.files.delete(huge);
     expect((await fetch(urlOf(huge))).status).toBe(404);
     await interval();
@@ -174,6 +178,21 @@ describe('transfer links', () => {
     const response = await fetch(urlOf(empty));
     expect(response.status).toBe(200);
     expect((await response.arrayBuffer()).byteLength).toBe(0);
+  });
+
+  test('a short or misplaced chunk fails only that download, the sender stays connected', async () => {
+    const editor = await editorConnect();
+    const short = await editor.share({ ...fileOf(CHUNK + 10), size: CHUNK * 2 });
+    const failed = fetch(urlOf(short)).then((response) => response.arrayBuffer());
+    await expect(failed).rejects.toThrow();
+    await interval();
+    const file = fileOf(CHUNK + 5);
+    const good = await editor.share(file);
+    const body = new Uint8Array(await (await fetch(urlOf(good))).arrayBuffer());
+    expect(sha256(body)).toBe(sha256(file.bytes));
+    editor.socket.send(new Uint8Array([0xa7, 3, 0]));
+    await Bun.sleep(30);
+    expect(editor.socket.readyState).toBe(WebSocket.OPEN);
   });
 
   test('five concurrent downloads interleave with one chunk in flight', async () => {
@@ -241,6 +260,9 @@ describe('transfer links', () => {
     expect(await alice.request({ t: 'chat', text: 'x', file: foreign }, 'chat.sent')).toMatchObject({
       code: 'transfer_unavailable',
     });
+    await Bun.sleep(60);
+    const huge = { ...file, size: 101 * 1024 * 1024 };
+    expect((await alice.request({ t: 'chat', text: 'big', file: huge }, 'chat.sent')).file.size).toBe(huge.size);
     alice.close();
   });
 });

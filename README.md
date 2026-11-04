@@ -243,7 +243,8 @@ come only from the headers.
 
 Nothing is uploaded ahead of time. On a request the relay sends the owner `transfer.get {q, link}`;
 the owner answers `transfer.info {q, size, name, mime}` or `transfer.missing {q}` within
-20 s (else 504). Files above 100 MiB get 413. The relay then asks for
+20 s (else 504). Files above 100 MiB get 413; the size is only checked here, because the sender
+is not trusted, and a chat `file` may announce any size. The relay then asks for
 256 KiB chunks with `transfer.chunk {q, offset, length}` and the owner answers each with a binary
 frame:
 
@@ -258,8 +259,8 @@ offset 12 ...  exactly `length` bytes
 
 Across all downloads of one connection exactly one chunk is in flight; the next one is requested
 only when the HTTP response has taken the previous one, so concurrent downloads interleave and a
-slow downloader only slows itself. A wrong offset or length closes the connection with `4001`; late
-answers count toward the abuse score. At most `TRANSFER_DOWNLOADS_PER_OWNER` (16) downloads per
+slow downloader only slows itself. A wrong offset or length, or a malformed chunk frame, fails only
+that download (502) and counts toward the abuse score like late answers; the sender stays connected. At most `TRANSFER_DOWNLOADS_PER_OWNER` (16) downloads per
 connection run at once (503 beyond that). A stalled owner or downloader ends the download.
 
 A connection may create one link per 5 s (`transfer_rate_limited {retryAfterMs}`, which also adds
@@ -275,6 +276,8 @@ images (except SVG), video and audio inline. The relay sanitizes the announced n
 (`src/shared/transfer_file_policy.ts`, shared with the editor): last path segment only, no control,
 bidi or Windows-invalid characters, no trailing dots or spaces, at most 255 characters with the
 extension kept; empty names and reserved device names (`CON`, `NUL`, `COM1`, …) become the link id.
+Refused downloads (404, 413, 502, 503, 504) answer a small HTML page with a readable reason, e.g.
+"This file exceeds the 100 MiB limit."
 
 ### Flow control
 

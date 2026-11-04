@@ -27,13 +27,14 @@ const TRANSFER_HEADERS_COMMON: Readonly<Record<string, string>> = {
   'Referrer-Policy': 'no-referrer',
   'Cache-Control': 'no-store',
 };
-/** Status texts of refused downloads. */
+/** Messages of refused downloads; `{limit}` becomes the size cap. */
 const TRANSFER_STATUS_TEXT: Readonly<Record<number, string>> = {
-  404: 'not found',
-  405: 'method not allowed',
-  413: 'file too large',
-  503: 'too many downloads, try again later',
-  504: 'the owner did not answer',
+  404: 'This link is no longer available.',
+  405: 'Only GET and HEAD are allowed.',
+  413: 'This file exceeds the {limit} limit.',
+  502: 'The sender sent invalid data.',
+  503: 'Too many downloads right now, try again later.',
+  504: 'The sender did not answer.',
 };
 
 /**
@@ -63,7 +64,7 @@ export async function transferHttpServe(core: ServerCore, request: Request, link
   if (download === null) return transferHttpStatus(503);
   request.signal.addEventListener('abort', () => transferDownloadEnd(download, null), { once: true });
   const info = await transferDownloadInfo(download);
-  if (!info.ok) return transferHttpStatus(info.status);
+  if (!info.ok) return transferHttpStatus(info.status, owner.limits.sizeMaximum);
   const inline = new URL(request.url).searchParams.has('inline');
   const headers = transferHttpHeaders(info, link, inline);
   if (request.method === 'GET') return new Response(transferStreamCreate(download), { headers });
@@ -123,14 +124,29 @@ function transferInlineAllowed(mime: string): boolean {
 }
 
 /**
- * Builds a plain text error response.
+ * Returns the human-readable message of a refused download.
  *
  * @param status HTTP status.
+ * @param sizeMaximum Size cap in bytes, for 413.
+ * @returns Message.
+ */
+export function transferHttpStatusText(status: number, sizeMaximum: number): string {
+  const limit = `${Math.round((sizeMaximum / 1048576) * 100) / 100} MiB`;
+  return (TRANSFER_STATUS_TEXT[status] ?? 'The download failed.').replace('{limit}', limit);
+}
+
+/**
+ * Builds a small HTML error page.
+ *
+ * @param status HTTP status.
+ * @param sizeMaximum Size cap in bytes, for 413.
  * @returns Response.
  */
-function transferHttpStatus(status: number): Response {
-  const headers = { ...TRANSFER_HEADERS_COMMON, 'Content-Type': 'text/plain; charset=utf-8' };
+function transferHttpStatus(status: number, sizeMaximum = 0): Response {
+  const headers = { ...TRANSFER_HEADERS_COMMON, 'Content-Type': 'text/html; charset=utf-8' };
   if (status === 405) Object.assign(headers, { Allow: 'GET, HEAD, OPTIONS' });
   if (status === 503) Object.assign(headers, { 'Retry-After': '5' });
-  return new Response(`${TRANSFER_STATUS_TEXT[status] ?? 'error'}\n`, { status, headers });
+  const text = transferHttpStatusText(status, sizeMaximum);
+  const body = `<!doctype html><meta charset="utf-8"><title>${status}</title><p>${text}</p>\n`;
+  return new Response(body, { status, headers });
 }
