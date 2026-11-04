@@ -20,6 +20,7 @@ import { handlerLockAcquire, handlerLockRelease, handlerLockRenew, leasesSweep }
 import { handlerSelect } from '../handlers/handler_select.ts';
 import { handlerTransfer, handlerTransferChunk, transferSessionClosed } from '../handlers/handler_transfer.ts';
 import { TransferLinkCodec } from '../transfer/transfer_link_codec.ts';
+import { ServerOnlineStats, SERVER_ONLINE_STATS_CAPABILITY } from './server_online_stats.ts';
 import { helloNegotiate, helloRefuse } from '../handlers/handler_hello.ts';
 import { PROTOCOL_VERSION_MAXIMUM, PROTOCOL_VERSION_MINIMUM } from '../shared/protocol_versioning.ts';
 import { LimiterAbuseCarry, type LimiterAbuseScore } from '../network/limiter_abuse_score.ts';
@@ -271,6 +272,11 @@ export class ServerCore {
   readonly abuseCarry: LimiterAbuseCarry;
   /** Issues and checks transfer link tokens with this process's secret. */
   readonly transferCodec = new TransferLinkCodec();
+  /**
+   * Broadcasts the live connection count to members with the `stats`
+   * capability.
+   */
+  readonly onlineStats = new ServerOnlineStats(this.sessions);
   private readonly pruneTimer: ReturnType<typeof setInterval>;
   private readonly leaseTimer: ReturnType<typeof setInterval>;
 
@@ -328,6 +334,7 @@ export class ServerCore {
   sessionOpen(socket: CoreSocket, data: ConnectionUpgradeData): ConnectionSession {
     const session = this.sessionCreate(socket, data);
     this.sessions.set(session.user, session);
+    this.onlineStats.changed();
     session.handshakeTimer = setTimeout(
       () => session.close(CLOSE_CODES.handshakeTimeout, 'handshake timeout'),
       this.config.handshakeTimeoutMs,
@@ -376,6 +383,7 @@ export class ServerCore {
     this.abuseCarry.sessionClosed(session.ipKey, session.limits.abuse);
     session.outbound.clear();
     this.sessions.delete(session.user);
+    this.onlineStats.changed();
     this.connectionsPerIpKey.release(session.ipKey);
   }
 
@@ -383,6 +391,7 @@ export class ServerCore {
   shutdown(): void {
     clearInterval(this.pruneTimer);
     clearInterval(this.leaseTimer);
+    this.onlineStats.stop();
     this.roomListSubscriptions.stop();
     for (const session of [...this.sessions.values()]) session.close(CLOSE_CODES.shuttingDown, 'server shutting down');
   }
@@ -514,6 +523,7 @@ export class ServerCore {
       name: session.name,
       via: session.via,
       limits: welcomeLimits(this.config),
+      ...(session.protocol.caps.has(SERVER_ONLINE_STATS_CAPABILITY) ? { online: this.onlineStats.count() } : {}),
     };
   }
 

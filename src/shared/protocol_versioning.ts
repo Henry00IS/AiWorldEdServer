@@ -20,8 +20,10 @@ export const PROTOCOL_VERSION_LIMIT = 0xffff;
  *
  * - `select`: selection presence, `selected {by, ids}` messages.
  * - `transfer`: transfer links (`transfer.*` messages) and files in chat.
+ * - `stats`: `online` (open relay connections) in the welcome, then `stats
+ *   {online}` when it changes, at most once every 5 seconds.
  */
-export const PROTOCOL_CAPABILITIES = ['select', 'transfer'] as const;
+export const PROTOCOL_CAPABILITIES = ['select', 'transfer', 'stats'] as const;
 /** Union of capability names this relay knows. */
 export type ProtocolCapability = (typeof PROTOCOL_CAPABILITIES)[number];
 /** Wire format of a capability name: lowercase, dot-separated words. */
