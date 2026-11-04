@@ -1,5 +1,6 @@
 /** Per-connection state. */
 import type { LimiterAbuseScore } from '../network/limiter_abuse_score.ts';
+import type { TransferOwner } from '../transfer/transfer_owner.ts';
 import type { LimiterTokenBucket } from '../network/limiter_token_bucket.ts';
 import type { Room } from '../rooms/room.ts';
 import type { ConnectionOutboundQueue } from './connection_outbound_queue.ts';
@@ -80,6 +81,8 @@ export interface ConnectionSession {
   readonly verify: ConnectionVerifyState;
   /** Edit, lease and selection limits and the abuse score. */
   readonly limits: ConnectionEditLimits;
+  /** Transfer links and downloads, created with the first link. */
+  transfer: TransferOwner | null;
 }
 
 /**

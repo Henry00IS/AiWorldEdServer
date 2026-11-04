@@ -17,6 +17,7 @@ export interface TestClientOptions {
   hello?: boolean;
   name?: string;
   path?: string;
+  caps?: string[];
 }
 
 /** Test WebSocket client. */
@@ -50,8 +51,8 @@ export class TestClient {
    * hello.
    *
    * @param port Server port.
-   * @param options Headers, hello toggle, display name and WebSocket path
-   *   (default `/ws`).
+   * @param options Headers, hello toggle, display name, WebSocket path (default
+   *   `/ws`) and capabilities.
    * @returns Connected client.
    */
   static async connect(port: number, options: TestClientOptions = {}): Promise<TestClient> {
@@ -62,7 +63,7 @@ export class TestClient {
       socket.addEventListener('error', () => reject(new Error('connect failed')), { once: true });
     });
     const client = new TestClient(socket);
-    if (options.hello !== false) await client.hello(options.name);
+    if (options.hello !== false) await client.hello(options.name, options.caps);
     return client;
   }
 
@@ -70,14 +71,15 @@ export class TestClient {
    * Sends hello and waits for welcome.
    *
    * @param name Optional display name.
+   * @param caps Capabilities (default `select`).
    */
-  async hello(name?: string): Promise<void> {
+  async hello(name?: string, caps: string[] = ['select']): Promise<void> {
     this.send({
       t: 'hello',
       protocol: PROTOCOL_ID,
       version: PROTOCOL_VERSION,
       client: 'aiworlded-tests/1',
-      caps: ['select'],
+      caps,
       ...(name ? { name } : {}),
     });
     this.welcome = await this.next('welcome');

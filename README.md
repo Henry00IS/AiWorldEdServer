@@ -85,7 +85,8 @@ cut to 12; a missing or invalid one becomes `User N` (`N` = user id modulo 10^7)
 `limits` reports the effective limits (payload, chunk, window, snapshot/asset sizes, ids per
 message, ops per edit, messages per second, rooms per IP, room entries per IP per minute, users per room, locks per user, presence
 rate, `roomListMaximum`, `roomListPushIntervalMs`, and the chat limits `chatIntervalMs`, `chatTextLength`
-and `chatTextLines`).
+and `chatTextLines`, and the transfer link limits `transferIntervalMs`, `transferLifetimeMs` and
+`transferBytes`).
 Every relay supports the live room list (`room.subscribe`). Optional features added later are capability flags.
 
 ### Client → server
@@ -100,7 +101,10 @@ Every relay supports the live room list (`room.subscribe`). Optional features ad
 | `room.join`         | `room`, `discardLocalWork: true`, `password?`, `displayName?`                                            | → `room.joined {room, you, name, color, owner, members, locks}` (`name` is the joiner's final, unique name); members are `{user, name, owner, color}`. `discardLocalWork` must be literally `true`: joining always discards local work. A room of another protocol version → `protocol_mismatch {roomProtocol, yourProtocol, message}`. |
 | `room.leave`        |                                                                                                          | → `room.left`. If the owner leaves, the room closes.                                                                                                                                                                                                                                                                                    |
 | `name.set`          | `name`                                                                                                   | Outside a room → `name.changed {name}`. Inside a room → error `name_locked`: a member's name is fixed until it leaves.                                                                                                                                                                                                                  |
-| `chat`              | `text` (≤8192 UTF-16 units on the wire)                                                                  | Room members only. → `chat.sent {id, from, name, color, text, at}`; others get `chat` with the same fields. See Chat.                                                                                                                                                                                                                   |
+| `chat`              | `text` (≤8192 UTF-16 units on the wire), `file?`                                                         | Room members only. `file {link, name, size, mime}` attaches one of the sender's live transfer links. → `chat.sent {id, from, name, color, text, at}`; others get `chat` with the same fields. See Chat.                                                                                                                                 |
+| `transfer.create`   |                                                                                                          | `transfer` capability. → `transfer.created {link, expiresInMs}` or `transfer_rate_limited {retryAfterMs}`. See Transfer links.                                                                                                                                                                                                          |
+| `transfer.info`     | `q`, `size`, `name`, `mime`                                                                              | Answer to `transfer.get` (no `r`). See Transfer links.                                                                                                                                                                                                                                                                                  |
+| `transfer.missing`  | `q`                                                                                                      | Answer to `transfer.get` when the file is gone (no `r`).                                                                                                                                                                                                                                                                                |
 | `select`            | `ids[]` (≤256, may be empty)                                                                             | Never locks. Relayed as `selected {by, ids}` to members with the `select` capability. 10/s (burst 20) per member; floods are dropped.                                                                                                                                                                                                   |
 | `lock.acquire`      | `lease`, `ids[]`, `replace?`, `shared?[]`                                                                | Starts (or extends) the member's one edit operation. All-or-nothing. → `lock.result {ok:true, add, remove}` or `{ok:false, code}` with `lock_conflict {conflicts:[{id,by,shared?}]}`, `lock_limit`, `lock_unverified {why}`, `lease_busy`, `lease_stale`, `rate_limited`, `throttled`. See Edit leases.                                 |
 | `verify.result`     | `q`, `v: ok\|invalid\|deleted`                                                                           | Owner only: answer to a relay `verify` query (see Owner verification). Does not count against the owner's rate limits.                                                                                                                                                                                                                  |
@@ -127,9 +131,11 @@ max 256 ops per edit; `d` is opaque JSON (max depth 32, max 200k nodes) relayed 
 | `room.subscribed {rooms, intervalMs}`, `room.unsubscribed`                                                               | replies to `room.subscribe` / `room.unsubscribe`                                                                                     |
 | `room.list.update {rooms, removed}`                                                                                      | live list: new or changed entries, removed room ids                                                                                  |
 | `member.joined {user, name, color}`, `member.left {user}`                                                                | membership                                                                                                                           |
-| `chat {id, from, name, color, text, at}`                                                                                 | chat message of another member                                                                                                       |
+| `chat {id, from, name, color, text, at, file?}`                                                                          | chat message of another member; `file` as sanitized by the relay                                                                     |
 | `locks {by, add?, remove?, expired?}`                                                                                    | lock changes of another user; `expired:true` (sent to the holder too) when a lease timed out: revert previews to the committed state |
 | `selected {by, ids}`                                                                                                     | selection of another member (`select` capability only)                                                                               |
+| `transfer.created {link, expiresInMs}`                                                                                   | reply to `transfer.create`                                                                                                           |
+| `transfer.get {q, link}`, `transfer.chunk {q, offset, length}`                                                           | somebody downloads one of your links: answer with `transfer.info` / `transfer.missing`, then with binary transfer chunks             |
 | `lock.result`                                                                                                            | reply to `lock.acquire` / `lock.release`                                                                                             |
 | `edits {list:[{from, seq, ops}]}`                                                                                        | relayed edits in relay order; own edits are acked as `{from:you, seq}` without ops                                                   |
 | `edit.rejected {seq, reason, ids, why?}`                                                                                 | `lock_conflict`, `lock_limit`, `lock_unverified`, `outside_lease`, `lease_stale`, `rate_limited`, `throttled`                        |
@@ -150,6 +156,7 @@ Error codes: `not_in_room`, `not_synced`, `not_owner`, `already_in_room`, `busy`
 `too_many_attempts`, `room_not_found`, `room_full`, `room_limit_ip`, `room_limit_server`,
 `internal_test_forbidden`, `stream_invalid {detail}`, `name_locked`, `invalid_chat {reason}`
 (`empty`, `too_long`, `too_many_lines`), `chat_rate_limited {retryAfterMs}`,
+`transfer_rate_limited {retryAfterMs}`, `transfer_unavailable` (chat `file` link not live or not the sender's),
 `protocol_unsupported {versions, message}`, `protocol_mismatch {roomProtocol, yourProtocol, message}`.
 
 Display names are unique per room: a joiner whose name (compared NFKC-normalized and case-insensitively)
@@ -224,6 +231,50 @@ one, and the mailbox is delivered only while the recipient's outbound queue is e
 buffer is below 64 KiB. Presence therefore never delays edits or streams and never builds a backlog. The
 latest frame of every member is handed to a joiner once its snapshot is complete. A member's presence
 is forgotten when it leaves; clients drop it on `member.left`.
+
+### Transfer links
+
+Capability `transfer`. An editor shares a file it keeps in memory: `transfer.create` returns a
+`link` (43 base64url characters; user id, link counter and a 192-bit HMAC under a secret the relay
+generates at start, so links are unguessable and need no stored state). Anybody can download it
+with plain HTTP `GET` (or `HEAD`) on `<WEBSOCKET_PATH>/transfer/<link>`, e.g.
+`https://relay.example.com/ws/transfer/<link>`. There is no file extension in the URL; name and type
+come only from the headers.
+
+Nothing is uploaded ahead of time. On a request the relay sends the owner `transfer.get {q, link}`;
+the owner answers `transfer.info {q, size, name, mime}` or `transfer.missing {q}` within
+20 s (else 504). Files above 100 MiB get 413. The relay then asks for
+256 KiB chunks with `transfer.chunk {q, offset, length}` and the owner answers each with a binary
+frame:
+
+```
+offset 0  u8   magic 0xA7
+offset 1  u8   kind  3 (transfer chunk)
+offset 2  u16  reserved, must be 0
+offset 4  u32  q (big endian, != 0)
+offset 8  u32  byte offset (big endian)
+offset 12 ...  exactly `length` bytes
+```
+
+Across all downloads of one connection exactly one chunk is in flight; the next one is requested
+only when the HTTP response has taken the previous one, so concurrent downloads interleave and a
+slow downloader only slows itself. A wrong offset or length closes the connection with `4001`; late
+answers count toward the abuse score. At most `TRANSFER_DOWNLOADS_PER_OWNER` (16) downloads per
+connection run at once (503 beyond that). A stalled owner or downloader ends the download.
+
+A connection may create one link per 5 s (`transfer_rate_limited {retryAfterMs}`, which also adds
+abuse points; a throttled session waits at least 1 s). Links live one hour and die when the
+owner's connection closes or the relay restarts, so a connection holds at most 720 live links,
+8 bytes each. Unknown, expired and revoked links answer 404.
+
+Responses carry `Content-Type` (only a plain `type/subtype`, else `application/octet-stream`),
+`Content-Length` (always on `HEAD`; Bun 1.4 streams `GET` bodies chunked),
+`Content-Disposition: attachment; filename="…"; filename*=UTF-8''…`, `X-Content-Type-Options: nosniff`,
+a `sandbox` CSP, `Cache-Control: no-store` and `Access-Control-Allow-Origin: *`. `?inline` serves
+images (except SVG), video and audio inline. The relay sanitizes the announced name
+(`src/shared/transfer_file_policy.ts`, shared with the editor): last path segment only, no control,
+bidi or Windows-invalid characters, no trailing dots or spaces, at most 255 characters with the
+extension kept; empty names and reserved device names (`CON`, `NUL`, `COM1`, …) become the link id.
 
 ### Flow control
 
@@ -406,6 +457,7 @@ The protocol has to stay stable for years across many editor builds, so changes 
 | Room list pushes | 1000 subscribers, at most one update per 500 ms per subscriber, low priority                          |
 | Presence         | 10 frames/s per member (burst 20), latest-only per sender per recipient, 116 bytes max                |
 | Chat             | 1 message per 5 s per session, 2000 code points, 20 lines, 64 waiting per recipient, no history       |
+| Transfer links   | 1 link per 5 s per connection, 1 h lifetime, 100 MiB per file, 16 downloads, 1 chunk in flight        |
 | Owner verify     | 5 s timeout, 10/s (burst 20) per member, 50/s (burst 100) per room, 64 msgs / 4 MiB held per member   |
 | Edit leases      | 1 running per member, 5 s without renew/progress, 60 s idle, 600 s total; 10 new/s, 4 renews/s        |
 | Edits            | one-shot 20/s per member, 200/s per room; live 60/s; created + deleted ids 10 000/s (burst 250 000)   |
@@ -418,7 +470,7 @@ Other measures: versioned hello handshake with capability negotiation; strict sc
 (no zip bombs, low CPU); only the owner can stream and only to members of its room; a joiner
 receives only a snapshot it was promised. The relay can't be used as a general pipe: every text
 frame must be a known AiWorldEd message and binary frames must belong to an open, size-declared stream
-or be a well-formed presence frame from a synced room member.
+or be a well-formed presence frame from a synced room member, or a transfer chunk the relay asked for.
 
 ### Proxy trust model
 

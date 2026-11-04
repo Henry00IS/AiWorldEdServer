@@ -6,7 +6,7 @@
 import { describe, expect, test } from 'bun:test';
 import { helloNegotiate } from '../../../src/handlers/handler_hello.ts';
 import { protocolMessageDecode } from '../../../src/protocol/protocol_message_decoder.ts';
-import { binaryFrameEncode } from '../../../src/shared/binary_frame.ts';
+import { binaryFrameEncode, transferFrameEncode } from '../../../src/shared/binary_frame.ts';
 import { presenceFrameCheck, presenceFrameEncode, presenceFrameRelay } from '../../../src/shared/presence_frame.ts';
 import type { ClientMessage } from '../../../src/shared/protocol_definitions.ts';
 import { PROTOCOL_GOLDEN_VECTORS_V2 as V2, type GoldenVerdict } from '../../../src/shared/protocol_golden_vectors.ts';
@@ -53,7 +53,12 @@ describe('protocol v2 golden vectors', () => {
   test('binary frames match the encoders byte for byte', () => {
     const frame = presenceFrameEncode([{ id: 0, position: [1, 2, 3], quaternion: [0, 0, 0, 1], fov: 90 }]);
     expect(presenceFrameCheck(frame)).toBe(true);
-    const encoded = [binaryFrameEncode(1, 7, new Uint8Array([1, 2, 3])), frame, presenceFrameRelay(frame, 7)];
+    const encoded = [
+      binaryFrameEncode(1, 7, new Uint8Array([1, 2, 3])),
+      frame,
+      presenceFrameRelay(frame, 7),
+      transferFrameEncode(5, 262144, new Uint8Array([1, 2, 3])),
+    ];
     expect(encoded.map(hexOf)).toEqual(V2.binary.map((vector) => vector.hex));
   });
 });

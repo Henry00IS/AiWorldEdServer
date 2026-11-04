@@ -9,7 +9,9 @@ import { sessionSend, sessionSendError, type ConnectionSession } from '../connec
 import type { Room } from '../rooms/room.ts';
 import type { ServerCore } from '../server/server_core.ts';
 import { chatTextNormalize } from '../shared/chat_text_policy.ts';
-import type { ChatMessageEntry, ClientMessage } from '../shared/protocol_definitions.ts';
+import type { ChatFileAttachment, ChatMessageEntry, ClientMessage } from '../shared/protocol_definitions.ts';
+import { transferMimeSanitize, transferNameSanitize } from '../shared/transfer_file_policy.ts';
+import { handlerTransferLinkOwner } from './handler_transfer.ts';
 
 /** Client chat message. */
 type ChatClientMessage = Extract<ClientMessage, { t: 'chat' }>;
@@ -29,6 +31,8 @@ export function handlerChat(core: ServerCore, session: ConnectionSession, messag
   const now = Date.now();
   const text = chatAdmit(core, session, message, now);
   if (text === null) return;
+  const file = chatFile(core, session, message);
+  if (file === null) return sessionSendError(session, 'transfer_unavailable', message.r);
   session.chatLastAt = now;
   const entry: ChatMessageEntry = {
     id: ++room.chatSequence,
@@ -37,9 +41,33 @@ export function handlerChat(core: ServerCore, session: ConnectionSession, messag
     color: room.colorOf(session.user),
     text,
     at: now,
+    ...(file === undefined ? {} : { file }),
   };
   sessionSend(session, { t: 'chat.sent', ...(message.r === undefined ? {} : { r: message.r }), ...entry });
   chatRelay(core, room, session, entry);
+}
+
+/**
+ * Checks and cleans a shared file: the link must be live and the sender must
+ * have agreed on `transfer`; name and type are sanitized like the download
+ * headers.
+ *
+ * @param core Relay core.
+ * @param session Sender.
+ * @param message Validated chat message.
+ * @returns Clean attachment, undefined without one, or null when refused.
+ */
+function chatFile(
+  core: ServerCore,
+  session: ConnectionSession,
+  message: ChatClientMessage,
+): ChatFileAttachment | undefined | null {
+  const file = message.file;
+  if (file === undefined) return undefined;
+  if (!session.protocol.caps.has('transfer') || handlerTransferLinkOwner(core, file.link) !== session.transfer)
+    return null;
+  const name = transferNameSanitize(file.name, file.link);
+  return { link: file.link, name, size: file.size, mime: transferMimeSanitize(file.mime) };
 }
 
 /**

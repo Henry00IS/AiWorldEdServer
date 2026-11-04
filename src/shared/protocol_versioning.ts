@@ -19,8 +19,9 @@ export const PROTOCOL_VERSION_LIMIT = 0xffff;
  * capability both it and the relay announced:
  *
  * - `select`: selection presence, `selected {by, ids}` messages.
+ * - `transfer`: transfer links (`transfer.*` messages) and files in chat.
  */
-export const PROTOCOL_CAPABILITIES = ['select'] as const;
+export const PROTOCOL_CAPABILITIES = ['select', 'transfer'] as const;
 /** Union of capability names this relay knows. */
 export type ProtocolCapability = (typeof PROTOCOL_CAPABILITIES)[number];
 /** Wire format of a capability name: lowercase, dot-separated words. */

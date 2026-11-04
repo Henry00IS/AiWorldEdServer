@@ -24,6 +24,50 @@ export const BINARY_FRAME_HEADER_BYTES = 12;
  * character pose).
  */
 export const BINARY_FRAME_KIND_PRESENCE = 2;
+/**
+ * Binary frame kind: one chunk of a transfer link download, sent by the link
+ * owner. Header: [4..7] transfer query id `q` (u32 BE), [8..11] byte offset of
+ * the chunk in the file (u32 BE).
+ */
+export const BINARY_FRAME_KIND_TRANSFER_CHUNK = 3;
+
+/** Bytes the relay asks for per transfer chunk (256 KiB). */
+export const TRANSFER_CHUNK_BYTES = 256 * 1024;
+/** Largest file a transfer link may serve (100 MiB). */
+export const TRANSFER_SIZE_MAXIMUM = 100 * 1024 * 1024;
+/** How long a transfer link works, the same as a chat message lives (one hour). */
+export const TRANSFER_LINK_LIFETIME_MS = 60 * 60 * 1000;
+/** Minimum time between two links of one connection. */
+export const TRANSFER_CREATE_INTERVAL_MS = 5000;
+/** Path segment after the WebSocket path under which links are served. */
+export const TRANSFER_PATH_SEGMENT = 'transfer';
+/**
+ * A transfer link id: a 43 character base64url token with no file extension;
+ * the name and type of the file only travel in the response headers.
+ */
+export const TRANSFER_LINK_PATTERN = /^[A-Za-z0-9_-]{43}$/;
+/**
+ * A MIME type the relay serves as is; anything else is
+ * application/octet-stream.
+ */
+export const TRANSFER_MIME_PATTERN = /^[a-z0-9][a-z0-9!#$&^_.+-]{0,126}\/[a-z0-9][a-z0-9!#$&^_.+-]{0,126}$/;
+/**
+ * Longest served file name in characters, extension included. Owners may send
+ * up to four times as much; the relay cleans and shortens it.
+ */
+export const TRANSFER_NAME_LENGTH_MAXIMUM = 255;
+
+/**
+ * File shared in a chat message: the sender's transfer link plus what the file
+ * is. Members build the download URL from their own relay URL, so a message can
+ * never point anywhere else.
+ */
+export interface ChatFileAttachment {
+  link: string;
+  name: string;
+  size: number;
+  mime: string;
+}
 
 /** WebSocket close codes used by the relay. */
 export const CLOSE_CODES = {
@@ -173,7 +217,7 @@ export type ClientMessage =
   | { t: 'room.join'; r?: number; room: string; password?: string; discardLocalWork: true; displayName?: string }
   | { t: 'room.leave'; r?: number }
   | { t: 'name.set'; r?: number; name: string }
-  | { t: 'chat'; r?: number; text: string }
+  | { t: 'chat'; r?: number; text: string; file?: ChatFileAttachment }
   | { t: 'lock.acquire'; r?: number; lease: number; ids: string[]; replace?: boolean; shared?: string[] }
   | { t: 'lock.release'; r?: number; ids?: string[] }
   | { t: 'lock.renew'; lease: number }
@@ -184,7 +228,33 @@ export type ClientMessage =
   | { t: 'asset.missing'; to: number; name: string }
   | { t: 'stream.begin'; to: number; stream: number; kind: StreamKind; size: number; name?: string; mime?: string }
   | { t: 'stream.end'; to: number; stream: number }
-  | { t: 'stream.abort'; to: number; stream: number; reason?: string };
+  | { t: 'stream.abort'; to: number; stream: number; reason?: string }
+  | { t: 'transfer.create'; r?: number }
+  | { t: 'transfer.info'; q: number; size: number; name: string; mime: string }
+  | { t: 'transfer.missing'; q: number };
+
+/**
+ * Transfer links (capability `transfer`): the owner asks for a link with
+ * `transfer.create` and gets `transfer.created {link, expiresInMs}`. When
+ * somebody downloads the link the relay sends `transfer.get {q, link}`; the
+ * owner answers `transfer.info {q, size, name, mime}` or `transfer.missing
+ * {q}`. The relay then asks for one `transfer.chunk {q, offset, length}` at a
+ * time across all downloads of the connection and the owner answers each with a
+ * binary transfer chunk frame. Nothing is stored on the relay.
+ */
+export interface TransferGetMessage {
+  t: 'transfer.get';
+  q: number;
+  link: string;
+}
+
+/** Relay request for one chunk of a download. */
+export interface TransferChunkMessage {
+  t: 'transfer.chunk';
+  q: number;
+  offset: number;
+  length: number;
+}
 
 /** Union of client message type names. */
 export type ClientMessageType = ClientMessage['t'];
@@ -260,7 +330,9 @@ export type ErrorCode =
   | 'chat_rate_limited'
   | 'busy'
   | 'protocol_unsupported'
-  | 'protocol_mismatch';
+  | 'protocol_mismatch'
+  | 'transfer_rate_limited'
+  | 'transfer_unavailable';
 
 /**
  * One chat message as members receive it. `id` grows per room, `at` is the
@@ -275,6 +347,8 @@ export interface ChatMessageEntry {
   color: number;
   text: string;
   at: number;
+  /** Shared file, when the message carries one (capability `transfer`). */
+  file?: ChatFileAttachment;
 }
 
 /** Pushed to the other room members for every chat message. */

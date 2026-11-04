@@ -7,7 +7,14 @@ import {
   CHAT_TEXT_LENGTH_MAXIMUM,
   CHAT_TEXT_LINES_MAXIMUM,
 } from '../shared/chat_text_policy.ts';
-import { LOCK_LEASE_MS, PROTOCOL_WEBSOCKET_PATH } from '../shared/protocol_definitions.ts';
+import {
+  LOCK_LEASE_MS,
+  PROTOCOL_WEBSOCKET_PATH,
+  TRANSFER_CHUNK_BYTES,
+  TRANSFER_CREATE_INTERVAL_MS,
+  TRANSFER_LINK_LIFETIME_MS,
+  TRANSFER_SIZE_MAXIMUM,
+} from '../shared/protocol_definitions.ts';
 
 /** Every tunable limit and setting of the relay. */
 export interface ServerConfiguration {
@@ -151,6 +158,18 @@ export interface ServerConfiguration {
   abuseDisconnectScore: number;
   /** How long an address may not rejoin the room it was closed for abuse in. */
   abuseRoomCooldownMs: number;
+  /** How long a transfer link works at most; it also dies with its connection. */
+  transferLinkLifetimeMs: number;
+  /** Minimum time between two transfer links of one connection. */
+  transferCreateIntervalMs: number;
+  /** Largest file a transfer link serves; larger files get 413. */
+  transferSizeMaximum: number;
+  /** Bytes the relay asks the link owner for per chunk (one chunk in flight). */
+  transferChunkBytes: number;
+  /** Concurrent downloads of one owner connection; more get 503. */
+  transferDownloadsPerOwner: number;
+  /** How long the relay waits for the owner's file info or next chunk. */
+  transferReplyTimeoutMs: number;
 }
 
 /**
@@ -253,6 +272,15 @@ const CONFIGURATION_EDIT_LIMITS_DEFAULT = {
   abuseRoomCooldownMs: 60_000,
 } satisfies Partial<ServerConfiguration>;
 
+const CONFIGURATION_TRANSFER_LIMITS_DEFAULT = {
+  transferLinkLifetimeMs: TRANSFER_LINK_LIFETIME_MS,
+  transferCreateIntervalMs: TRANSFER_CREATE_INTERVAL_MS,
+  transferSizeMaximum: TRANSFER_SIZE_MAXIMUM,
+  transferChunkBytes: TRANSFER_CHUNK_BYTES,
+  transferDownloadsPerOwner: 16,
+  transferReplyTimeoutMs: 20_000,
+} satisfies Partial<ServerConfiguration>;
+
 /**
  * Builds the default configuration.
  *
@@ -274,5 +302,6 @@ export function configurationDefault(): ServerConfiguration {
     ...CONFIGURATION_CONNECTION_LIMITS_DEFAULT,
     ...CONFIGURATION_ROOM_LIMITS_DEFAULT,
     ...CONFIGURATION_EDIT_LIMITS_DEFAULT,
+    ...CONFIGURATION_TRANSFER_LIMITS_DEFAULT,
   };
 }

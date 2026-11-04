@@ -18,6 +18,8 @@ import { handlerNameSet } from '../handlers/handler_name.ts';
 import { handlerPresence, presenceFlush } from '../handlers/handler_presence.ts';
 import { handlerLockAcquire, handlerLockRelease, handlerLockRenew, leasesSweep } from '../handlers/handler_lock.ts';
 import { handlerSelect } from '../handlers/handler_select.ts';
+import { handlerTransfer, handlerTransferChunk, transferSessionClosed } from '../handlers/handler_transfer.ts';
+import { TransferLinkCodec } from '../transfer/transfer_link_codec.ts';
 import { helloNegotiate, helloRefuse } from '../handlers/handler_hello.ts';
 import { PROTOCOL_VERSION_MAXIMUM, PROTOCOL_VERSION_MINIMUM } from '../shared/protocol_versioning.ts';
 import { LimiterAbuseCarry, type LimiterAbuseScore } from '../network/limiter_abuse_score.ts';
@@ -49,6 +51,7 @@ import { handlerRoomSubscribe, handlerRoomUnsubscribe } from '../handlers/handle
 import { displayNameFallback, displayNameNormalize, DISPLAY_NAME_LENGTH_MAXIMUM } from '../shared/room_name_policy.ts';
 import {
   BINARY_FRAME_KIND_PRESENCE,
+  BINARY_FRAME_KIND_TRANSFER_CHUNK,
   CLOSE_CODES,
   PROTOCOL_ID,
   type ClientMessage,
@@ -118,6 +121,7 @@ function sessionInitialState(config: ServerConfiguration): SessionInitialState {
     handshakeTimer: null,
     pendingAsyncOperation: false,
     verify: sessionVerifyState(config),
+    transfer: null,
   };
 }
 
@@ -194,6 +198,9 @@ function welcomeLimitsRooms(config: ServerConfiguration): object {
     chatIntervalMs: config.chatIntervalMs,
     chatTextLength: config.chatTextLengthMaximum,
     chatTextLines: config.chatTextLinesMaximum,
+    transferIntervalMs: config.transferCreateIntervalMs,
+    transferLifetimeMs: config.transferLinkLifetimeMs,
+    transferBytes: config.transferSizeMaximum,
   };
 }
 
@@ -262,6 +269,8 @@ export class ServerCore {
   passwordHashesInFlight = 0;
   private nextUserId = 1;
   readonly abuseCarry: LimiterAbuseCarry;
+  /** Issues and checks transfer link tokens with this process's secret. */
+  readonly transferCodec = new TransferLinkCodec();
   private readonly pruneTimer: ReturnType<typeof setInterval>;
   private readonly leaseTimer: ReturnType<typeof setInterval>;
 
@@ -363,6 +372,7 @@ export class ServerCore {
     if (session.handshakeTimer) clearTimeout(session.handshakeTimer);
     this.roomListSubscriptions.unsubscribe(session);
     roomMembershipEnd(this, session, 'disconnected');
+    transferSessionClosed(session);
     this.abuseCarry.sessionClosed(session.ipKey, session.limits.abuse);
     session.outbound.clear();
     this.sessions.delete(session.user);
@@ -450,6 +460,7 @@ export class ServerCore {
   private sessionBinary(session: ConnectionSession, frame: Uint8Array): void {
     if (!session.helloDone) return this.violation(session, 'binary before hello');
     if (frame[1] === BINARY_FRAME_KIND_PRESENCE) return handlerPresence(this, session, frame);
+    if (frame[1] === BINARY_FRAME_KIND_TRANSFER_CHUNK) return handlerTransferChunk(this, session, frame);
     handlerStreamChunk(this, session, frame);
   }
 
@@ -580,6 +591,10 @@ export class ServerCore {
         return handlerStreamEnd(this, session, message);
       case 'stream.abort':
         return handlerStreamAbort(this, session, message);
+      case 'transfer.create':
+      case 'transfer.info':
+      case 'transfer.missing':
+        return handlerTransfer(this, session, message);
     }
   }
 

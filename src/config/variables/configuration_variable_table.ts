@@ -220,6 +220,22 @@ const CONFIGURATION_VARIABLES_LIMITS: readonly ConfigurationVariable[] = [
     64 * 1024 * MEBIBYTE,
     'Bytes queued for slow receivers on the whole relay; caps memory use.',
   ),
+  new ConfigurationVariableInteger(
+    'TRANSFER_SIZE_MAXIMUM',
+    'limits',
+    'transferSizeMaximum',
+    0,
+    100 * MEBIBYTE,
+    'Largest file a transfer link serves, in bytes (at most 100 MiB).',
+  ),
+  new ConfigurationVariableInteger(
+    'TRANSFER_DOWNLOADS_PER_OWNER',
+    'limits',
+    'transferDownloadsPerOwner',
+    1,
+    1000,
+    'Concurrent downloads of the transfer links of one connection.',
+  ),
 ];
 
 /** Development switches. */

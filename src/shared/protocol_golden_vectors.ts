@@ -43,6 +43,8 @@ export interface GoldenVersionVectors {
 
 /** Room id used in the vectors. */
 const ROOM = 'AbCdEfGhIjKlMnOp';
+/** A transfer link id of the right shape. */
+const LINK = 'Tr4nsferL1nkTr4nsferL1nkTr4nsferL1nk_-AbCdE';
 
 /**
  * Client frames of protocol version 2 ('refuse' = valid frame, version refused
@@ -126,6 +128,23 @@ const GOLDEN_CLIENT_V2: readonly GoldenClientVector[] = [
   { name: 'unknown type', verdict: 'reject', frame: '{"t":"proxy.connect","host":"example.com"}' },
   { name: 'chat', verdict: 'accept', frame: '{"t":"chat","text":"hi"}' },
   { name: 'ping', verdict: 'accept', frame: '{"t":"ping","r":9}' },
+  { name: 'transfer.create', verdict: 'accept', frame: '{"t":"transfer.create","r":3}' },
+  {
+    name: 'transfer.info',
+    verdict: 'accept',
+    frame: '{"t":"transfer.info","q":5,"size":1048576,"name":"shot.png","mime":"image/png"}',
+  },
+  { name: 'transfer.missing', verdict: 'accept', frame: '{"t":"transfer.missing","q":5}' },
+  {
+    name: 'transfer.info with r',
+    verdict: 'reject',
+    frame: '{"t":"transfer.info","r":1,"q":5,"size":1,"name":"a","mime":"a/b"}',
+  },
+  {
+    name: 'chat with file',
+    verdict: 'accept',
+    frame: `{"t":"chat","text":"shot.png","file":{"link":"${LINK}","name":"shot.png","size":1048576,"mime":"image/png"}}`,
+  },
 ];
 
 /** Server frames of protocol version 2. */
@@ -147,6 +166,10 @@ const GOLDEN_SERVER_V2: readonly GoldenServerVector[] = [
   },
   { name: 'selected', frame: '{"t":"selected","by":2,"ids":["brush_1"]}' },
   { name: 'lease expired', frame: '{"t":"locks","by":2,"remove":["brush_2"],"expired":true}' },
+  { name: 'transfer.created', frame: `{"t":"transfer.created","r":3,"link":"${LINK}","expiresInMs":3600000}` },
+  { name: 'transfer.get', frame: `{"t":"transfer.get","q":5,"link":"${LINK}"}` },
+  { name: 'transfer.chunk', frame: '{"t":"transfer.chunk","q":5,"offset":262144,"length":262144}' },
+  { name: 'transfer_rate_limited', frame: '{"t":"error","r":4,"code":"transfer_rate_limited","retryAfterMs":4200}' },
 ];
 
 /** Binary frames of protocol version 2. */
@@ -154,6 +177,7 @@ const GOLDEN_BINARY_V2: readonly GoldenBinaryVector[] = [
   { name: 'stream chunk stream 1 peer 7 payload 010203', hex: 'a70100000000000100000007010203' },
   { name: 'presence client camera 0 at 1,2,3 fov 90', hex: 'a7020101003f8000004000000040400000e00802005a' },
   { name: 'presence relayed from user 7', hex: 'a702010100000007003f8000004000000040400000e00802005a' },
+  { name: 'transfer chunk q 5 offset 262144 payload 010203', hex: 'a70300000000000500040000010203' },
 ];
 
 /** All vectors of protocol version 2. */

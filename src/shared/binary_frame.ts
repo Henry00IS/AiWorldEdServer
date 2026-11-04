@@ -1,11 +1,13 @@
 /**
  * Fixed 12 byte header for binary stream chunks: [0] magic 0xA7, [1] kind,
  * [2..3] reserved (0), [4..7] stream id (u32 BE), [8..11] peer user id (u32 BE;
- * recipient when sent by a client, sender when relayed).
+ * recipient when sent by a client, sender when relayed). Transfer chunks (kind
+ * 3) carry the download query id in [4..7] and the byte offset in [8..11].
  */
 import {
   BINARY_FRAME_HEADER_BYTES,
   BINARY_FRAME_KIND_STREAM_CHUNK,
+  BINARY_FRAME_KIND_TRANSFER_CHUNK,
   BINARY_FRAME_MAGIC,
 } from './protocol_definitions.ts';
 
@@ -75,4 +77,49 @@ export function binaryFrameEncode(stream: number, peer: number, payload: Uint8Ar
  */
 export function binaryFramePayload(frame: Uint8Array): Uint8Array {
   return frame.subarray(BINARY_FRAME_HEADER_BYTES);
+}
+
+/** Decoded transfer chunk frame. */
+export interface BinaryTransferChunk {
+  /** Download query id. */
+  q: number;
+  /** Byte offset of the chunk in the file. */
+  offset: number;
+  /** Chunk bytes (a view into the frame). */
+  payload: Uint8Array;
+}
+
+/**
+ * Builds a transfer chunk frame.
+ *
+ * @param q Download query id.
+ * @param offset Byte offset of the chunk.
+ * @param payload Chunk bytes.
+ * @returns Encoded frame.
+ */
+export function transferFrameEncode(q: number, offset: number, payload: Uint8Array): Uint8Array {
+  const frame = new Uint8Array(BINARY_FRAME_HEADER_BYTES + payload.byteLength);
+  const view = new DataView(frame.buffer);
+  frame[0] = BINARY_FRAME_MAGIC;
+  frame[1] = BINARY_FRAME_KIND_TRANSFER_CHUNK;
+  view.setUint32(4, q);
+  view.setUint32(8, offset);
+  frame.set(payload, BINARY_FRAME_HEADER_BYTES);
+  return frame;
+}
+
+/**
+ * Parses a transfer chunk frame.
+ *
+ * @param frame Raw frame.
+ * @returns Decoded chunk, or null when malformed.
+ */
+export function transferFrameParse(frame: Uint8Array): BinaryTransferChunk | null {
+  if (frame.byteLength < BINARY_FRAME_HEADER_BYTES) return null;
+  if (frame[0] !== BINARY_FRAME_MAGIC || frame[1] !== BINARY_FRAME_KIND_TRANSFER_CHUNK) return null;
+  if (frame[2] !== 0 || frame[3] !== 0) return null;
+  const view = new DataView(frame.buffer, frame.byteOffset, BINARY_FRAME_HEADER_BYTES);
+  const q = view.getUint32(4);
+  if (q === 0) return null;
+  return { q, offset: view.getUint32(8), payload: frame.subarray(BINARY_FRAME_HEADER_BYTES) };
 }

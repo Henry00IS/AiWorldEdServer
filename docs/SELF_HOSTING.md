@@ -96,6 +96,8 @@ as unset. Booleans accept `true`/`1`/`yes`/`on` and `false`/`0`/`no`/`off`.
 | `ROOM_ENTRY_BURST_PER_IP` | limits | 10 | 1 to 100000 | Room creations and joins one address may make in a burst. |
 | `MAX_PAYLOAD_BYTES` | limits | 1048576 | 524288 to 67108864 | Largest single WebSocket message, in bytes. |
 | `OUTBOUND_BACKLOG_BYTES_TOTAL` | limits | 268435456 | 16777216 to 68719476736 | Bytes queued for slow receivers on the whole relay; caps memory use. |
+| `TRANSFER_SIZE_MAXIMUM` | limits | 104857600 | 0 to 104857600 | Largest file a transfer link serves, in bytes (at most 100 MiB). |
+| `TRANSFER_DOWNLOADS_PER_OWNER` | limits | 16 | 1 to 1000 | Concurrent downloads of the transfer links of one connection. |
 | `INTERNAL_TEST_ROOMS` | testing | false | true / false | Allow hidden internal test rooms for direct (non-proxied) connections. Development only. |
 | `INTERNAL_TEST_ROOMS_VIA_PROXY` | testing | false | true / false | Also allow internal test rooms through the proxy. Development relay only. |
 
@@ -127,7 +129,7 @@ Caddy (obtains and renews certificates automatically):
 
 ```caddyfile
 relay.example.com {
-	reverse_proxy /ws 127.0.0.1:8081 {
+	reverse_proxy /ws* 127.0.0.1:8081 {
 		header_up X-Real-IP {remote_host}
 		header_up X-Forwarded-Secret {env.RELAY_FORWARDED_SECRET}
 	}
@@ -147,18 +149,34 @@ server {
         proxy_pass http://127.0.0.1:8081;
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection "upgrade";
+        proxy_set_header Connection $connection_upgrade;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-Secret "same-value-as-FORWARDED_SECRET";
         proxy_read_timeout 1h;
+        proxy_buffering off;
         client_max_body_size 64m;
     }
 }
 ```
 
+where `$connection_upgrade` comes from
+`map $http_upgrade $connection_upgrade { default upgrade; '' close; }` in the `http` block,
+so plain HTTP requests reach the relay too.
+
 with the relay started as `HOST=127.0.0.1 TRUST_PROXY=true FORWARDED_SECRET=<same value>`.
 Drop the secret lines on both sides if the relay only listens on `127.0.0.1`.
+
+## Transfer links
+
+Editors can share files from memory through the relay: an editor asks for a link and the
+relay answers plain HTTP `GET` and `HEAD` on `<WEBSOCKET_PATH>/transfer/<id>` (for example
+`https://relay.example.com/ws/transfer/<id>`) by streaming the file from that editor in
+256 KiB chunks, one chunk in flight per editor connection. Nothing is stored on the relay. A
+link stops working when its editor disconnects, after one hour, or when the relay restarts.
+Downloads are attachments; add `?inline` to show images, video and audio in place (for
+`<img>`/`<video>` embedding). The proxy must forward plain HTTP requests on paths below
+`WEBSOCKET_PATH` (the examples above do) and should not buffer the responses.
 
 ## Security checklist
 

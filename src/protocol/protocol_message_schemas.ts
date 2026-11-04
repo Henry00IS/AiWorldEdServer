@@ -4,6 +4,9 @@ import {
   PROTOCOL_ID,
   SELECT_IDS_MAXIMUM,
   STREAM_KINDS,
+  TRANSFER_LINK_PATTERN,
+  TRANSFER_NAME_LENGTH_MAXIMUM,
+  TRANSFER_SIZE_MAXIMUM,
   VERIFY_VERDICTS,
   type ClientMessageType,
 } from '../shared/protocol_definitions.ts';
@@ -39,6 +42,19 @@ const SCHEMA_ASSET_NAME: Schema = {
   min: 1,
   max: PROTOCOL_CAPS.assetNameMaximum,
   pattern: /^[^\p{Cc}]+$/u,
+};
+const SCHEMA_TRANSFER_QUERY: Schema = { type: 'int', min: 1, max: 0xffffffff };
+const SCHEMA_TRANSFER_NAME: Schema = { type: 'string', min: 0, max: TRANSFER_NAME_LENGTH_MAXIMUM * 4 };
+const SCHEMA_TRANSFER_MIME: Schema = { type: 'string', min: 0, max: 255 };
+const SCHEMA_TRANSFER_SIZE: Schema = { type: 'int', min: 0, max: TRANSFER_SIZE_MAXIMUM };
+const SCHEMA_CHAT_FILE: Schema = {
+  type: 'object',
+  required: {
+    link: { type: 'string', min: 43, max: 43, pattern: TRANSFER_LINK_PATTERN },
+    name: SCHEMA_TRANSFER_NAME,
+    size: SCHEMA_TRANSFER_SIZE,
+    mime: SCHEMA_TRANSFER_MIME,
+  },
 };
 const SCHEMA_PROTOCOL_VERSION: Schema = { type: 'int', min: 1, max: PROTOCOL_VERSION_LIMIT };
 const SCHEMA_CAPABILITIES: Schema = {
@@ -127,7 +143,11 @@ export const CLIENT_MESSAGE_SCHEMAS: Readonly<Record<ClientMessageType, Schema>>
   ),
   'room.leave': messageSchema('room.leave'),
   'name.set': messageSchema('name.set', { name: SCHEMA_DISPLAY_NAME }),
-  chat: messageSchema('chat', { text: { type: 'string', min: 1, max: CHAT_TEXT_WIRE_MAXIMUM } }),
+  chat: messageSchema(
+    'chat',
+    { text: { type: 'string', min: 1, max: CHAT_TEXT_WIRE_MAXIMUM } },
+    { file: SCHEMA_CHAT_FILE },
+  ),
   'lock.acquire': messageSchema(
     'lock.acquire',
     { lease: SCHEMA_LEASE_ID, ids: SCHEMA_OBJECT_IDS },
@@ -183,5 +203,20 @@ export const CLIENT_MESSAGE_SCHEMAS: Readonly<Record<ClientMessageType, Schema>>
     type: 'object',
     required: { t: { type: 'literal', value: 'stream.abort' }, to: SCHEMA_USER_ID, stream: SCHEMA_STREAM_ID },
     optional: { reason: { type: 'string', min: 1, max: 200, pattern: /^[\x20-\x7e]+$/ } },
+  },
+  'transfer.create': messageSchema('transfer.create'),
+  'transfer.info': {
+    type: 'object',
+    required: {
+      t: { type: 'literal', value: 'transfer.info' },
+      q: SCHEMA_TRANSFER_QUERY,
+      size: { type: 'int', min: 0, max: Number.MAX_SAFE_INTEGER },
+      name: SCHEMA_TRANSFER_NAME,
+      mime: SCHEMA_TRANSFER_MIME,
+    },
+  },
+  'transfer.missing': {
+    type: 'object',
+    required: { t: { type: 'literal', value: 'transfer.missing' }, q: SCHEMA_TRANSFER_QUERY },
   },
 };

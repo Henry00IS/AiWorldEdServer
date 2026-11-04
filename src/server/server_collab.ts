@@ -1,4 +1,5 @@
 /** Bun.serve wiring: HTTP upgrade gatekeeping and WebSocket event forwarding. */
+import { transferHttpPrefix, transferHttpServe } from './server_transfer_http.ts';
 import type { Server, ServerWebSocket, TLSOptions, WebSocketHandler } from 'bun';
 import type { ServerConfiguration } from '../config/server_configuration.ts';
 import type { ConnectionSession, ConnectionUpgradeData } from '../connection/connection_session.ts';
@@ -116,9 +117,12 @@ function collabServerFetch(
   state: CollabServerState,
   request: Request,
   server: Server<SocketData>,
-): Response | undefined {
+): Response | Promise<Response> | undefined {
   const url = new URL(request.url);
   if (url.pathname === '/healthz' && request.method === 'GET') return new Response('ok\n');
+  const transferPrefix = transferHttpPrefix(state.core.config.websocketPath);
+  if (url.pathname.startsWith(transferPrefix))
+    return transferHttpServe(state.core, request, url.pathname.slice(transferPrefix.length));
   if (url.pathname !== state.core.config.websocketPath) return new Response('not found\n', { status: 404 });
   if (request.headers.get('upgrade')?.toLowerCase() !== 'websocket')
     return new Response('websocket upgrade required\n', { status: 426 });
