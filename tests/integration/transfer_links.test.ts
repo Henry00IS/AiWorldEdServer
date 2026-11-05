@@ -161,6 +161,44 @@ describe('transfer links', () => {
     expect(forced.headers.get('content-disposition')).toStartWith('attachment;');
   });
 
+  test('Discordbot and browsers get the same raw media headers (no HTML card)', async () => {
+    const editor = await editorConnect();
+    const image = await editor.share({ bytes: new Uint8Array([1, 2, 3]), name: 'l52Zk.jpg', mime: 'image/jpeg' });
+    await interval();
+    const ogg = await editor.share({
+      bytes: new Uint8Array(32),
+      name: 'VMDL_Move_1_AoE2.ogg',
+      mime: 'audio/ogg',
+    });
+    await interval();
+    const mp4 = await editor.share({ bytes: new Uint8Array(64), name: 'clip.mp4', mime: 'video/mp4' });
+    const discordUa = 'Mozilla/5.0 (compatible; Discordbot/2.0; +https://discordapp.com)';
+    for (const [link, mime, name] of [
+      [image, 'image/jpeg', 'l52Zk.jpg'],
+      [ogg, 'audio/ogg', 'VMDL_Move_1_AoE2.ogg'],
+      [mp4, 'video/mp4', 'clip.mp4'],
+    ] as const) {
+      const browser = await fetch(urlOf(link), { method: 'HEAD' });
+      const bot = await fetch(urlOf(link), { method: 'HEAD', headers: { 'User-Agent': discordUa } });
+      expect(browser.status).toBe(200);
+      expect(bot.status).toBe(200);
+      expect(bot.headers.get('content-type')).toBe(mime);
+      expect(browser.headers.get('content-type')).toBe(mime);
+      expect(bot.headers.get('content-type')).toBe(browser.headers.get('content-type'));
+      expect(bot.headers.get('content-disposition')).toBe(browser.headers.get('content-disposition'));
+      expect(bot.headers.get('content-disposition')).toStartWith('inline;');
+      expect(bot.headers.get('content-disposition')).toContain(`filename="${name}"`);
+      expect(bot.headers.get('content-type')).not.toContain('text/html');
+      expect(bot.headers.get('accept-ranges')).toBe('bytes');
+      const ranged = await fetch(urlOf(link), {
+        headers: { Range: 'bytes=0-1', 'User-Agent': discordUa },
+      });
+      expect(ranged.status).toBe(206);
+      expect(ranged.headers.get('content-type')).toBe(mime);
+      expect(ranged.headers.get('content-disposition')).toStartWith('inline;');
+    }
+  });
+
   test('active types such as SVG always download in a sandbox', async () => {
     const editor = await editorConnect();
     const svg = await editor.share({ bytes: new Uint8Array([1]), name: 'a.svg', mime: 'image/svg+xml' });
