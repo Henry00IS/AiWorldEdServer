@@ -161,6 +161,11 @@ export const CLIENT_MESSAGE_SCHEMAS: Readonly<Record<ClientMessageType, Schema>>
       ids: { type: 'array', items: SCHEMA_OBJECT_ID, min: 0, max: SELECT_IDS_MAXIMUM },
     },
   },
+  typing: {
+    type: 'object',
+    required: { t: { type: 'literal', value: 'typing' } },
+    optional: { stop: { type: 'bool' } },
+  },
   edit: {
     type: 'object',
     required: {

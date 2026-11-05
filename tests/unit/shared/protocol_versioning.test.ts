@@ -23,6 +23,7 @@ test('negotiation fails without overlap in either direction', () => {
 test('capabilities are intersected in relay order and unknown ones dropped', () => {
   expect(protocolCapabilitiesAgree(['zzz', 'select', 'select'])).toEqual(['select']);
   expect(protocolCapabilitiesAgree([])).toEqual([]);
+  expect(protocolCapabilitiesAgree(['typing', 'select', 'stats'])).toEqual(['select', 'stats', 'typing']);
 });
 
 test('refusal messages tell who needs to update', () => {

@@ -150,6 +150,8 @@ export interface ServerConfiguration {
   selectsPerSecond: number;
   /** Burst of selection presence messages of one member. */
   selectBurst: number;
+  /** How long a typing flag stays set without another signal (ms). */
+  typingExpiryMs: number;
   /** Abuse score points that decay per second. */
   abuseDecayPerSecond: number;
   /** Abuse score at which lock, edit and select messages are refused. */
@@ -266,6 +268,7 @@ const CONFIGURATION_EDIT_LIMITS_DEFAULT = {
   bulkIdBurst: 250_000,
   selectsPerSecond: 10,
   selectBurst: 20,
+  typingExpiryMs: 10_000,
   abuseDecayPerSecond: 1,
   abuseThrottleScore: 20,
   abuseDisconnectScore: 60,

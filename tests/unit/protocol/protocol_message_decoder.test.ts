@@ -11,6 +11,8 @@ const valid = [
   { t: 'lock.renew', lease: 2 },
   { t: 'select', ids: ['brush:1', 'group:1'] },
   { t: 'select', ids: [] },
+  { t: 'typing' },
+  { t: 'typing', stop: true },
   { t: 'edit', seq: 8, ops: [{ k: 'reparent', ids: ['brush:1'], d: {}, p: ['group:1'] }] },
   { t: 'lock.release' },
   { t: 'verify.result', q: 4294967295, v: 'deleted' },

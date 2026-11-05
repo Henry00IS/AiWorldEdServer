@@ -18,6 +18,7 @@ import { handlerNameSet } from '../handlers/handler_name.ts';
 import { handlerPresence, presenceFlush } from '../handlers/handler_presence.ts';
 import { handlerLockAcquire, handlerLockRelease, handlerLockRenew, leasesSweep } from '../handlers/handler_lock.ts';
 import { handlerSelect } from '../handlers/handler_select.ts';
+import { handlerTyping } from '../handlers/handler_typing.ts';
 import { handlerTransfer, handlerTransferChunk, transferSessionClosed } from '../handlers/handler_transfer.ts';
 import { TransferLinkCodec } from '../transfer/transfer_link_codec.ts';
 import { ServerOnlineStats, SERVER_ONLINE_STATS_CAPABILITY } from './server_online_stats.ts';
@@ -574,6 +575,8 @@ export class ServerCore {
         return handlerLockRenew(this, session, message);
       case 'select':
         return handlerSelect(this, session, message);
+      case 'typing':
+        return handlerTyping(this, session, message);
       case 'verify.result':
         return handlerVerifyResult(this, session, message, bytes);
       default:

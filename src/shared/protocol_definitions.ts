@@ -179,6 +179,17 @@ export interface SelectedMessage {
 }
 
 /**
+ * Chat typing presence for members that negotiated the `typing` capability.
+ * `users` lists the room members currently flagged as typing (user ids). The
+ * relay resets each flag on every signal and clears it after a short countdown
+ * or when the member leaves.
+ */
+export interface TypingMessage {
+  t: 'typing';
+  users: number[];
+}
+
+/**
  * Messages a client may send. `r` is an optional request id echoed in replies
  * and errors.
  */
@@ -222,6 +233,7 @@ export type ClientMessage =
   | { t: 'lock.release'; r?: number; ids?: string[] }
   | { t: 'lock.renew'; lease: number }
   | { t: 'select'; ids: string[] }
+  | { t: 'typing'; stop?: boolean }
   | { t: 'edit'; seq: number; ops: EditOperation[]; lease?: number }
   | { t: 'verify.result'; q: number; v: VerifyVerdict }
   | { t: 'asset.request'; r?: number; name: string }

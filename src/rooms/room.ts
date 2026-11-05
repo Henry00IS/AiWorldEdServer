@@ -86,6 +86,11 @@ export class Room {
   /** Id of the last chat message sent in the room (chat itself is not kept). */
   chatSequence = 0;
   /**
+   * Countdown handles for members flagged as typing. Cleared on leave and when
+   * the countdown expires.
+   */
+  readonly typingTimers = new Map<number, ReturnType<typeof setTimeout>>();
+  /**
    * Members waiting for the owner to answer a verify query, by query id; at
    * most one per member.
    */

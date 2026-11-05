@@ -8,6 +8,7 @@ import { passwordPolicyEvaluate } from '../shared/password_policy.ts';
 import type { ClientMessage } from '../shared/protocol_definitions.ts';
 import { displayNameNormalize, displayNameUnique, roomNameNormalize } from '../shared/room_name_policy.ts';
 import { chatPurge } from './handler_chat.ts';
+import { typingClear, typingClearAll } from './handler_typing.ts';
 import { presencePurge } from './handler_presence.ts';
 import { verifyCancel } from './handler_verify.ts';
 
@@ -464,6 +465,8 @@ export function roomMembershipEnd(
  */
 function roomMemberRemove(room: Room, session: ConnectionSession): void {
   verifyCancel(session, null);
+  // Clear typing before leave so the leaver cannot appear in a later typing list.
+  typingClear(room, session.user);
   room.memberDelete(session.user);
   presencePurge(room, session);
   sessionRoomStateReset(session);
@@ -483,6 +486,7 @@ function roomMemberRemove(room: Room, session: ConnectionSession): void {
 function roomClose(core: ServerCore, room: Room): void {
   room.closed = true;
   core.registry.remove(room);
+  typingClearAll(room);
   room.streams.clear();
   room.locks.releaseEverything();
   room.presenceLatest.clear();
