@@ -52,7 +52,24 @@ describe('typing presence', () => {
     const { owner, joiner } = await roomPair();
     joiner.send({ t: 'typing' });
     expect(await owner.next('typing')).toMatchObject({ users: [joiner.user] });
-    expect(await joiner.next('typing')).toMatchObject({ users: [joiner.user] });
+    // Sender must not see their own id.
+    expect(await joiner.next('typing')).toMatchObject({ users: [] });
+  });
+
+  test('each recipient omits their own user id from the typing list', async () => {
+    const { owner, joiner, roomId } = await roomPair();
+    const third = await connect();
+    await testRoomJoinSynced(third, owner, roomId);
+    owner.send({ t: 'typing' });
+    expect(await joiner.next('typing')).toMatchObject({ users: [owner.user] });
+    expect(await third.next('typing')).toMatchObject({ users: [owner.user] });
+    expect(await owner.next('typing')).toMatchObject({ users: [] });
+    joiner.send({ t: 'typing' });
+    expect(await owner.next('typing')).toMatchObject({ users: [joiner.user] });
+    expect(await third.next('typing')).toMatchObject({
+      users: [owner.user, joiner.user].sort((a, b) => a - b),
+    });
+    expect(await joiner.next('typing')).toMatchObject({ users: [owner.user] });
   });
 
   test('another signal resets the countdown without a duplicate start broadcast', async () => {
@@ -96,6 +113,7 @@ describe('typing presence', () => {
     await testRoomJoinSynced(capable, owner, roomId);
     capable.send({ t: 'typing' });
     expect(await owner.next('typing')).toMatchObject({ users: [capable.user] });
+    expect(await capable.next('typing')).toMatchObject({ users: [] });
     await Bun.sleep(50);
     expect(plain.has('typing')).toBe(false);
   });

@@ -180,9 +180,9 @@ export interface SelectedMessage {
 
 /**
  * Chat typing presence for members that negotiated the `typing` capability.
- * `users` lists the room members currently flagged as typing (user ids). The
- * relay resets each flag on every signal and clears it after a short countdown
- * or when the member leaves.
+ * `users` lists the room members currently flagged as typing (user ids), with
+ * the recipient's own id omitted. The relay resets each flag on every signal
+ * and clears it after a short countdown or when the member leaves.
  */
 export interface TypingMessage {
   t: 'typing';

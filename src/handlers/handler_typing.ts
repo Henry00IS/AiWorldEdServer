@@ -4,10 +4,10 @@
  * typing user ids whenever the set changes. Only members that negotiated the
  * `typing` capability send or receive these messages. Leaving clears the flag
  * before the leave is announced so a leaver cannot appear in a later list.
+ * Each recipient's own user id is omitted from the list they receive.
  */
 import type { ConnectionSession } from '../connection/connection_session.ts';
 import type { Room } from '../rooms/room.ts';
-import { roomBroadcastCapable } from '../rooms/room_broadcast.ts';
 import type { ServerCore } from '../server/server_core.ts';
 import type { ClientMessage } from '../shared/protocol_definitions.ts';
 import { abuseThrottled } from './handler_abuse.ts';
@@ -92,11 +92,16 @@ function typingTimerReplace(core: ServerCore, room: Room, user: number): void {
 }
 
 /**
- * Broadcasts the current typing user ids to capable members.
+ * Broadcasts the current typing user ids to capable members, omitting each
+ * recipient's own id so nobody sees themselves as typing.
  *
  * @param room Room.
  */
 function typingBroadcast(room: Room): void {
   const users = [...room.typingTimers.keys()].sort((a, b) => a - b);
-  roomBroadcastCapable(room, 'typing', { t: 'typing', users });
+  for (const member of room.members.values()) {
+    if (member.closed || !member.protocol.caps.has('typing')) continue;
+    const filtered = users.filter((id) => id !== member.user);
+    member.outbound.pushText(JSON.stringify({ t: 'typing', users: filtered }));
+  }
 }
