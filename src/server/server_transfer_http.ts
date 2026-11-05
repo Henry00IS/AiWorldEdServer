@@ -6,8 +6,10 @@
  * served as 206 so players can seek. Every response forbids sniffing and
  * scripting and allows GET from any origin.
  *
- * All clients, including Discord's crawler, receive the same raw media bytes
- * and headers. There is no HTML Open Graph card path.
+ * Safe raster images always stream as raw media (including to Discordbot).
+ * For other types, Discord's crawler alone may receive a tiny Open Graph HTML
+ * card (filename + size); `?raw=1` / `?download` and ordinary clients always
+ * get the raw byte stream. Active types and size limits stay enforced.
  */
 import { handlerTransferLinkOwner } from '../handlers/handler_transfer.ts';
 import type { ServerCore } from './server_core.ts';
@@ -90,7 +92,18 @@ export async function transferHttpServe(core: ServerCore, request: Request, link
   request.signal.addEventListener('abort', () => transferDownloadEnd(download, null), { once: true });
   const info = await transferDownloadInfo(download);
   if (!info.ok) return transferHttpStatus(info.status, owner.limits.sizeMaximum);
-  const inline = !new URL(request.url).searchParams.has('download');
+  const url = new URL(request.url);
+  // Images stay raw for Discordbot (direct embeds). Non-image types get a title
+  // card unless ?raw=1 / ?download, which always stream bytes.
+  if (
+    transferHttpIsDiscordbot(request) &&
+    !transferHttpWantsRaw(url) &&
+    !transferHttpIsSafeRasterImage(info.mime)
+  ) {
+    transferDownloadEnd(download, null);
+    return transferHttpDiscordUnfurl(url, info, link, request.method === 'HEAD');
+  }
+  const inline = !url.searchParams.has('download');
   const headers = transferHttpHeaders(info, link, inline);
   if (request.method === 'GET') return transferHttpGet(download, request.headers.get('range'), info.size, headers);
   transferDownloadEnd(download, null);
@@ -191,6 +204,120 @@ export function transferHttpDisposition(name: string, inline: boolean): string {
  */
 export function transferInlineAllowed(mime: string): boolean {
   return TRANSFER_INLINE_TYPES.has(mime) || mime.startsWith('audio/');
+}
+
+
+/** True when the crawler User-Agent looks like Discord's link preview bot. */
+export function transferHttpIsDiscordbot(request: Request): boolean {
+  return /Discordbot/i.test(request.headers.get('user-agent') ?? '');
+}
+
+/** True when the client asked for the raw byte stream instead of an HTML card. */
+export function transferHttpWantsRaw(url: URL): boolean {
+  return url.searchParams.has('raw') || url.searchParams.has('download');
+}
+
+/**
+ * True for safe raster images that Discord embeds from a direct media URL.
+ * SVG and other active image types are excluded.
+ *
+ * @param mime Announced MIME type.
+ * @returns True when Discordbot should receive raw bytes.
+ */
+export function transferHttpIsSafeRasterImage(mime: string): boolean {
+  const sanitized = transferMimeSanitize(mime);
+  return sanitized.startsWith('image/') && sanitized !== 'image/svg+xml';
+}
+
+/**
+ * Absolute URL of the raw media bytes for Open Graph tags (`?raw=1`).
+ *
+ * @param requestUrl Request URL of the transfer link.
+ * @returns Absolute raw URL.
+ */
+export function transferHttpRawUrl(requestUrl: URL): string {
+  const raw = new URL(requestUrl.href);
+  raw.search = '';
+  raw.searchParams.set('raw', '1');
+  return raw.toString();
+}
+
+/**
+ * Escapes text for an HTML attribute value.
+ *
+ * @param value Raw text.
+ * @returns Escaped text.
+ */
+function transferHttpEscapeAttr(value: string): string {
+  return value
+    .replace(/&/gu, '&amp;')
+    .replace(/"/gu, '&quot;')
+    .replace(/</gu, '&lt;')
+    .replace(/>/gu, '&gt;');
+}
+
+/**
+ * Builds a tiny Open Graph HTML card for Discord's crawler for non-image
+ * transfers. Metadata comes from the owner's announcement only. `?raw=1` in
+ * the body link avoids recursive HTML cards when Discord follows the file.
+ * Filename is the title; description is the human size (no MIME chatter).
+ *
+ * @param requestUrl Incoming request URL.
+ * @param info Announced size, name and type.
+ * @param link Link id.
+ * @param headOnly True for HEAD.
+ * @returns HTML (or empty-body HEAD) response.
+ */
+export function transferHttpDiscordUnfurl(
+  requestUrl: URL,
+  info: { size: number; name: string; mime: string },
+  link: string,
+  headOnly: boolean,
+): Response {
+  const name = transferNameSanitize(info.name, link);
+  const rawUrl = transferHttpRawUrl(requestUrl);
+  const title = transferHttpEscapeAttr(name);
+  const description = transferHttpEscapeAttr(transferHttpHumanSize(info.size));
+  const pageUrl = transferHttpEscapeAttr(requestUrl.toString().split('?')[0] ?? requestUrl.toString());
+  const tags: string[] = [
+    '<meta charset="utf-8">',
+    '<meta property="og:site_name" content="AiWorldEd">',
+    `<meta property="og:title" content="${title}">`,
+    `<meta property="og:description" content="${description}">`,
+    `<meta property="og:url" content="${pageUrl}">`,
+    '<meta property="og:type" content="website">',
+    '<meta name="theme-color" content="#F5A623">',
+    '<meta name="twitter:card" content="summary">',
+  ];
+  const body =
+    `<!doctype html><html><head>${tags.join('')}<title>${title}</title></head>` +
+    `<body><p>${title}</p><p>${description}</p>` +
+    `<p><a href="${transferHttpEscapeAttr(rawUrl)}">Open file</a></p></body></html>\n`;
+  const headers = {
+    ...TRANSFER_HEADERS_COMMON,
+    'Content-Security-Policy': `${TRANSFER_CSP}; sandbox`,
+    'Content-Type': 'text/html; charset=utf-8',
+    'Content-Length': String(new TextEncoder().encode(body).byteLength),
+  };
+  return new Response(headOnly ? null : body, { status: 200, headers });
+}
+
+/**
+ * Formats a byte size for Open Graph descriptions.
+ *
+ * @param bytes Size.
+ * @returns Short size text.
+ */
+function transferHttpHumanSize(bytes: number): string {
+  if (bytes < 1000) return `${bytes} B`;
+  let value = bytes / 1000;
+  const units = ['KB', 'MB', 'GB'];
+  let unit = 0;
+  while (value >= 1000 && unit < units.length - 1) {
+    value /= 1000;
+    unit += 1;
+  }
+  return `${value.toFixed(2)} ${units[unit]}`;
 }
 
 /**

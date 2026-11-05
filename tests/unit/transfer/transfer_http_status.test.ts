@@ -1,10 +1,14 @@
 /** Human-readable messages of refused transfer downloads. */
 import { describe, expect, test } from 'bun:test';
 import {
+  transferHttpDiscordUnfurl,
   transferHttpDisposition,
   transferHttpHeaders,
+  transferHttpIsDiscordbot,
+  transferHttpIsSafeRasterImage,
   transferHttpRange,
   transferHttpStatusText,
+  transferHttpWantsRaw,
   transferInlineAllowed,
 } from '../../../src/server/server_transfer_http.ts';
 
@@ -75,5 +79,63 @@ describe('transfer raw media headers', () => {
   test('disposition preserves sanitized original names', () => {
     expect(transferHttpDisposition('report.pdf', true)).toStartWith('inline;');
     expect(transferHttpDisposition('report.pdf', false)).toStartWith('attachment;');
+  });
+});
+
+describe('transfer Discord unfurl', () => {
+  test('detects Discordbot, raw query and safe raster images', () => {
+    expect(
+      transferHttpIsDiscordbot(
+        new Request('https://example.test/ws/transfer/x', {
+          headers: { 'user-agent': 'Mozilla/5.0 (compatible; Discordbot/2.0; +https://discordapp.com)' },
+        }),
+      ),
+    ).toBe(true);
+    expect(transferHttpIsDiscordbot(new Request('https://example.test/x', { headers: { 'user-agent': 'Mozilla/5.0' } }))).toBe(
+      false,
+    );
+    expect(transferHttpWantsRaw(new URL('https://example.test/ws/transfer/x?raw=1'))).toBe(true);
+    expect(transferHttpWantsRaw(new URL('https://example.test/ws/transfer/x?download=1'))).toBe(true);
+    expect(transferHttpWantsRaw(new URL('https://example.test/ws/transfer/x'))).toBe(false);
+    expect(transferHttpIsSafeRasterImage('image/jpeg')).toBe(true);
+    expect(transferHttpIsSafeRasterImage('image/png')).toBe(true);
+    expect(transferHttpIsSafeRasterImage('image/svg+xml')).toBe(false);
+    expect(transferHttpIsSafeRasterImage('audio/ogg')).toBe(false);
+    expect(transferHttpIsSafeRasterImage('video/mp4')).toBe(false);
+  });
+
+  test('non-image card uses escaped filename and size without MIME chatter', async () => {
+    const response = transferHttpDiscordUnfurl(
+      new URL('https://example.test/wsdev/transfer/abcd'),
+      { size: 2_120_000, name: 'Song & "great".mp3', mime: 'audio/mpeg' },
+      'abcd',
+      false,
+    );
+    expect(response.status).toBe(200);
+    expect(response.headers.get('content-type')).toStartWith('text/html');
+    expect(response.headers.get('content-disposition')).toBeNull();
+    const body = await response.text();
+    expect(body).toContain('og:title');
+    expect(body).toContain('Song &amp;');
+    expect(body).toContain('2.12 MB');
+    expect(body).not.toContain('audio/mpeg');
+    expect(body).toContain('?raw=1');
+    expect(body).not.toContain('og:image');
+    expect(body).not.toContain('og:video');
+    expect(body).not.toContain('<script');
+  });
+
+  test('image card helper is unused for safe rasters (no og:image site card)', async () => {
+    // Safe images never call unfurl in serve(); if invoked, still no recursive raw image tag required.
+    const response = transferHttpDiscordUnfurl(
+      new URL('https://example.test/ws/transfer/img1'),
+      { size: 1000, name: 'shot.png', mime: 'image/png' },
+      'img1',
+      false,
+    );
+    const body = await response.text();
+    expect(body).toContain('shot.png');
+    expect(body).toContain('?raw=1');
+    expect(body).not.toContain('og:image');
   });
 });
