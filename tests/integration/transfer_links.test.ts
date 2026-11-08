@@ -174,13 +174,42 @@ describe('transfer links', () => {
     const mp4 = await editor.share({ bytes: new Uint8Array(64), name: 'clip.mp4', mime: 'video/mp4' });
     const discordUa = 'Mozilla/5.0 (compatible; Discordbot/2.0; +https://discordapp.com)';
 
-    await discordImageCheck(image, discordUa);
+    const imageBrowser = await fetch(urlOf(image), { method: 'HEAD' });
+    const imageBot = await fetch(urlOf(image), { method: 'HEAD', headers: { 'User-Agent': discordUa } });
+    expect(imageBrowser.headers.get('content-type')).toBe('image/jpeg');
+    expect(imageBot.headers.get('content-type')).toBe('image/jpeg');
+    expect(imageBot.headers.get('content-disposition')).toBe(imageBrowser.headers.get('content-disposition'));
+    expect(imageBot.headers.get('content-disposition')).toStartWith('inline;');
+    expect(imageBot.headers.get('content-type')).not.toContain('text/html');
+    const imageRange = await fetch(urlOf(image), {
+      headers: { Range: 'bytes=0-1', 'User-Agent': discordUa },
+    });
+    expect(imageRange.status).toBe(206);
+    expect(imageRange.headers.get('content-type')).toBe('image/jpeg');
 
     for (const [link, mime, name] of [
       [ogg, 'audio/ogg', 'VMDL_Move_1_AoE2.ogg'],
       [mp4, 'video/mp4', 'clip.mp4'],
     ] as const) {
-      await discordOtherCheck(link, mime, name, discordUa);
+      const browser = await fetch(urlOf(link), { method: 'HEAD' });
+      expect(browser.status).toBe(200);
+      expect(browser.headers.get('content-type')).toBe(mime);
+      expect(browser.headers.get('content-disposition')).toStartWith('inline;');
+      expect(browser.headers.get('content-disposition')).toContain(`filename="${name}"`);
+
+      const bot = await fetch(urlOf(link), { headers: { 'User-Agent': discordUa } });
+      expect(bot.status).toBe(200);
+      expect(bot.headers.get('content-type')).toStartWith('text/html');
+      const body = await bot.text();
+      expect(body).toContain(name);
+      expect(body).toContain('og:title');
+      expect(body).toContain('?raw=1');
+      expect(body).not.toContain(mime);
+
+      const raw = await fetch(`${urlOf(link)}?raw=1`, { method: 'HEAD', headers: { 'User-Agent': discordUa } });
+      expect(raw.headers.get('content-type')).toBe(mime);
+      expect(raw.headers.get('content-disposition')).toStartWith('inline;');
+      expect(raw.headers.get('accept-ranges')).toBe('bytes');
     }
   });
 
@@ -357,53 +386,3 @@ describe('transfer links', () => {
     alice.close();
   });
 });
-
-/**
- * Checks direct image responses for browsers and Discord.
- *
- * @param image Image link.
- * @param discordUa Discord crawler user agent.
- */
-async function discordImageCheck(image: string, discordUa: string): Promise<void> {
-  const imageBrowser = await fetch(urlOf(image), { method: 'HEAD' });
-  const imageBot = await fetch(urlOf(image), { method: 'HEAD', headers: { 'User-Agent': discordUa } });
-  expect(imageBrowser.headers.get('content-type')).toBe('image/jpeg');
-  expect(imageBot.headers.get('content-type')).toBe('image/jpeg');
-  expect(imageBot.headers.get('content-disposition')).toBe(imageBrowser.headers.get('content-disposition'));
-  expect(imageBot.headers.get('content-disposition')).toStartWith('inline;');
-  expect(imageBot.headers.get('content-type')).not.toContain('text/html');
-  const imageRange = await fetch(urlOf(image), {
-    headers: { Range: 'bytes=0-1', 'User-Agent': discordUa },
-  });
-  expect(imageRange.status).toBe(206);
-  expect(imageRange.headers.get('content-type')).toBe('image/jpeg');
-}
-/**
- * Checks non-image crawler responses.
- *
- * @param link Transfer link.
- * @param mime Expected MIME type.
- * @param name Expected filename.
- * @param discordUa Discord crawler user agent.
- */
-async function discordOtherCheck(link: string, mime: string, name: string, discordUa: string): Promise<void> {
-  const browser = await fetch(urlOf(link), { method: 'HEAD' });
-  expect(browser.status).toBe(200);
-  expect(browser.headers.get('content-type')).toBe(mime);
-  expect(browser.headers.get('content-disposition')).toStartWith('inline;');
-  expect(browser.headers.get('content-disposition')).toContain(`filename="${name}"`);
-
-  const bot = await fetch(urlOf(link), { headers: { 'User-Agent': discordUa } });
-  expect(bot.status).toBe(200);
-  expect(bot.headers.get('content-type')).toStartWith('text/html');
-  const body = await bot.text();
-  expect(body).toContain(name);
-  expect(body).toContain('og:title');
-  expect(body).toContain('?raw=1');
-  expect(body).not.toContain(mime);
-
-  const raw = await fetch(`${urlOf(link)}?raw=1`, { method: 'HEAD', headers: { 'User-Agent': discordUa } });
-  expect(raw.headers.get('content-type')).toBe(mime);
-  expect(raw.headers.get('content-disposition')).toStartWith('inline;');
-  expect(raw.headers.get('accept-ranges')).toBe('bytes');
-}

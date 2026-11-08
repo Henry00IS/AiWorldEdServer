@@ -52,6 +52,7 @@ describe('typing presence', () => {
     const { owner, joiner } = await roomPair();
     joiner.send({ t: 'typing' });
     expect(await owner.next('typing')).toMatchObject({ users: [joiner.user] });
+    // Sender must not see their own id.
     expect(await joiner.next('typing')).toMatchObject({ users: [] });
   });
 
