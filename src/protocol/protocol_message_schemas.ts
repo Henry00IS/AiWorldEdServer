@@ -1,3 +1,4 @@
+import { COMPATIBILITY_REASONS } from '../shared/compatibility_identity.ts';
 /** Closed schemas for every client message of protocol version 2. */
 import {
   EDIT_KINDS,
@@ -29,6 +30,7 @@ export const PROTOCOL_CAPS = {
   assetNameMaximum: 512,
 } as const;
 
+const SCHEMA_CUSTOM_KEYS: Schema = { type: 'array', min: 1, max: 256, items: { type: 'string', min: 1, max: 256 } };
 const SCHEMA_REQUEST_ID: Schema = { type: 'int', min: 0, max: 0x7fffffff };
 const SCHEMA_USER_ID: Schema = { type: 'int', min: 1, max: 0xffffffff };
 const SCHEMA_LEASE_ID: Schema = { type: 'int', min: 1, max: Number.MAX_SAFE_INTEGER };
@@ -103,6 +105,17 @@ function messageSchema(
   };
 }
 
+/** Strict metadata schema for kind-4 binary envelopes (not the payload). */
+export const CUSTOM_GUARD_SCHEMA: Schema = {
+  type: 'object',
+  required: {},
+  optional: {
+    broadcast: { type: 'bool' },
+    lease: SCHEMA_LEASE_ID,
+    ids: { type: 'array', items: SCHEMA_OBJECT_ID, min: 1, max: 256 },
+  },
+};
+
 /** Schema per client message type. */
 export const CLIENT_MESSAGE_SCHEMAS: Readonly<Record<ClientMessageType, Schema>> = {
   hello: {
@@ -138,8 +151,29 @@ export const CLIENT_MESSAGE_SCHEMAS: Readonly<Record<ClientMessageType, Schema>>
   'room.join': messageSchema(
     'room.join',
     { room: SCHEMA_ROOM_ID, discardLocalWork: { type: 'literal', value: true } },
-    { password: { type: 'string', min: 1, max: PROTOCOL_CAPS.passwordInputMaximum }, displayName: SCHEMA_DISPLAY_NAME },
+    {
+      password: { type: 'string', min: 1, max: PROTOCOL_CAPS.passwordInputMaximum },
+      displayName: SCHEMA_DISPLAY_NAME,
+      compatibility: {
+        type: 'object',
+        required: {
+          version: { type: 'string', min: 1, max: 64 },
+          schema: { type: 'int', min: 0, max: 0xffffffff },
+          caps: { type: 'array', min: 0, max: 32, items: { type: 'string', min: 1, max: 64 } },
+        },
+      },
+    },
   ),
+  'compatibility.result': {
+    type: 'object',
+    required: { t: { type: 'literal', value: 'compatibility.result' }, q: SCHEMA_STREAM_ID, allow: { type: 'bool' } },
+    optional: {
+      reason: { type: 'enum', values: COMPATIBILITY_REASONS },
+      homeUrl: { type: 'string', min: 1, max: 256 },
+    },
+  },
+  'custom.lock.acquire': messageSchema('custom.lock.acquire', { keys: SCHEMA_CUSTOM_KEYS }),
+  'custom.lock.release': messageSchema('custom.lock.release', {}, { keys: SCHEMA_CUSTOM_KEYS }),
   'room.leave': messageSchema('room.leave'),
   'name.set': messageSchema('name.set', { name: SCHEMA_DISPLAY_NAME }),
   chat: messageSchema(

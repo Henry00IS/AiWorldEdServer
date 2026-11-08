@@ -273,8 +273,46 @@ export async function handlerRoomJoin(
     const lateRejection = roomJoinRejection(core, session, room);
     if (lateRejection) return roomJoinRefuse(session, room, lateRejection, message.r);
   }
+  if (!(await roomCompatibilityCheck(core, session, room, message))) return;
   sessionDisplayNameApply(session, message.displayName);
   roomMemberAdd(core, session, room, message.r);
+}
+
+/**
+ * Waits for the owner's decision, then rechecks current room capacity/state.
+ *
+ * @param core Relay core.
+ * @param session Pending joiner.
+ * @param room Target room.
+ * @param message Validated join request.
+ * @returns Whether admission may commit.
+ */
+async function roomCompatibilityCheck(
+  core: ServerCore,
+  session: ConnectionSession,
+  room: Room,
+  message: RoomJoinMessage,
+): Promise<boolean> {
+  session.pendingAsyncOperation = true;
+  const decision = await core.compatibility.request(
+    room,
+    session,
+    message.compatibility,
+    core.config.compatibilityTimeoutMs,
+    core.config.compatibilityPendingPerRoom,
+  );
+  session.pendingAsyncOperation = false;
+  if (session.closed) return false;
+  if (!decision.allow) {
+    sessionSendError(session, 'client_incompatible', message.r, {
+      reason: decision.reason ?? 'incompatible_client',
+      ...(decision.homeUrl ? { homeUrl: decision.homeUrl } : {}),
+    });
+    return false;
+  }
+  const rejection = roomJoinRejection(core, session, room);
+  if (rejection) roomJoinRefuse(session, room, rejection, message.r);
+  return rejection === null;
 }
 
 /**
@@ -464,8 +502,8 @@ export function roomMembershipEnd(
  * @param session Member.
  */
 function roomMemberRemove(room: Room, session: ConnectionSession): void {
+  room.customLocks.release(session.user);
   verifyCancel(session, null);
-  // Clear typing before leave so the leaver cannot appear in a later typing list.
   typingClear(room, session.user);
   room.memberDelete(session.user);
   presencePurge(room, session);
@@ -484,11 +522,13 @@ function roomMemberRemove(room: Room, session: ConnectionSession): void {
  * @param room Room to close.
  */
 function roomClose(core: ServerCore, room: Room): void {
+  core.compatibility.cancel(room.owner);
   room.closed = true;
   core.registry.remove(room);
   typingClearAll(room);
   room.streams.clear();
   room.locks.releaseEverything();
+  room.customLocks.releaseEverything();
   room.presenceLatest.clear();
   for (const member of room.members.values()) verifyCancel(member, 'owner_left');
   room.verifyWaiting.clear();

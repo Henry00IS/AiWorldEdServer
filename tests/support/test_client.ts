@@ -29,6 +29,8 @@ export class TestClient {
   welcome: TestMessage = {};
   /** Lease number lock requests without one use (the running operation). */
   lease = 1;
+  /** Whether the fixture owner approves the common test identity. */
+  compatibilityAutomatic = true;
   private waiters: (() => void)[] = [];
 
   /**
@@ -92,9 +94,24 @@ export class TestClient {
    * @param message Object to send as JSON.
    */
   send(message: object): void {
-    this.socket.send(JSON.stringify(this.leaseFill(message)));
+    this.socket.send(JSON.stringify(this.leaseFill(this.identityFill(message))));
     const typed = message as { t?: string; ids?: unknown };
     if (typed.t === 'lock.release' && typed.ids === undefined) this.leaseNext();
+  }
+
+  /**
+   * Supplies the common fixture identity for legacy join tests.
+   *
+   * @param message Outgoing request.
+   * @returns Request with identity defaults for room joins.
+   */
+  private identityFill(message: object): object {
+    return (message as { t?: string }).t === 'room.join'
+      ? {
+          compatibility: { version: '1', schema: 1, caps: ['scene'] },
+          ...message,
+        }
+      : message;
   }
 
   /**
@@ -239,8 +256,18 @@ export class TestClient {
    * @param data Raw message data.
    */
   private inboxPush(data: unknown): void {
-    if (typeof data === 'string') this.inbox.push({ kind: 'json', message: JSON.parse(data) });
-    else this.inbox.push({ kind: 'binary', data: new Uint8Array(data as ArrayBuffer) });
+    if (typeof data === 'string') {
+      const message = JSON.parse(data);
+      if (message.t === 'compatibility.check' && this.compatibilityAutomatic) {
+        this.send({
+          t: 'compatibility.result',
+          q: message.q,
+          allow: message.compatibility.version === '1' && message.compatibility.schema === 1,
+        });
+        return;
+      }
+      this.inbox.push({ kind: 'json', message });
+    } else this.inbox.push({ kind: 'binary', data: new Uint8Array(data as ArrayBuffer) });
     this.wake();
   }
 

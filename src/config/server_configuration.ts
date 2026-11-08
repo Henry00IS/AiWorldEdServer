@@ -18,6 +18,16 @@ import {
 
 /** Every tunable limit and setting of the relay. */
 export interface ServerConfiguration {
+  /** Maximum time to wait for owner compatibility approval. */
+  compatibilityTimeoutMs: number;
+  /** Maximum pending compatibility checks in one room. */
+  compatibilityPendingPerRoom: number;
+  /** Maximum custom payload bytes in any sliding second per sender. */
+  customBytesPerSecond: number;
+  /** Maximum custom frames in any sliding second per sender. */
+  customMessagesPerSecond: number;
+  /** Maximum combined outbound queue and socket bytes. */
+  customPendingBytesMaximum: number;
   hostname: string;
   port: number;
   websocketPath: string;
@@ -210,7 +220,7 @@ const CONFIGURATION_ROOM_LIMITS_DEFAULT = {
   locksPerUser: 20_000,
   locksPerRoom: 100_000,
   locksTotal: 400_000,
-  outboundQueueBytesMaximum: 16 * 1024 * 1024,
+  outboundQueueBytesMaximum: 64 * 1024 * 1024,
   outboundBacklogBytesTotal: 256 * 1024 * 1024,
   socketBufferHighWaterBytes: 1024 * 1024,
   snapshotBytesMaximum: 256 * 1024 * 1024,
@@ -284,6 +294,15 @@ const CONFIGURATION_TRANSFER_LIMITS_DEFAULT = {
   transferReplyTimeoutMs: 20_000,
 } satisfies Partial<ServerConfiguration>;
 
+/** Default fork admission and custom channel limits. */
+const CONFIGURATION_FORK_LIMITS_DEFAULT = {
+  compatibilityTimeoutMs: 5000,
+  compatibilityPendingPerRoom: 32,
+  customBytesPerSecond: 256 * 1024,
+  customMessagesPerSecond: 4096,
+  customPendingBytesMaximum: 64 * 1024 * 1024,
+} satisfies Partial<ServerConfiguration>;
+
 /**
  * Builds the default configuration.
  *
@@ -292,6 +311,7 @@ const CONFIGURATION_TRANSFER_LIMITS_DEFAULT = {
  */
 export function configurationDefault(): ServerConfiguration {
   return {
+    ...CONFIGURATION_FORK_LIMITS_DEFAULT,
     hostname: '0.0.0.0',
     port: 8081,
     websocketPath: PROTOCOL_WEBSOCKET_PATH,

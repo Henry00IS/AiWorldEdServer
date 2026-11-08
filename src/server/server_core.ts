@@ -2,6 +2,8 @@
  * Transport-independent relay core: session lifecycle, rate limits and
  * dispatch.
  */
+import { CompatibilityChecks } from '../forks/compatibility_checks.ts';
+import { handlerCustom, handlerCustomControl } from '../handlers/handler_custom.ts';
 import type { ServerConfiguration } from '../config/server_configuration.ts';
 import { ConnectionOutboundQueue, type OutboundSocket } from '../connection/connection_outbound_queue.ts';
 import { ConnectionVerifyState, type ConnectionVerifyHeldMessage } from '../connection/connection_verify_state.ts';
@@ -52,6 +54,7 @@ import { RoomRegistry } from '../rooms/room_registry.ts';
 import { handlerRoomSubscribe, handlerRoomUnsubscribe } from '../handlers/handler_room_subscription.ts';
 import { displayNameFallback, displayNameNormalize, DISPLAY_NAME_LENGTH_MAXIMUM } from '../shared/room_name_policy.ts';
 import {
+  BINARY_FRAME_KIND_CUSTOM,
   BINARY_FRAME_KIND_PRESENCE,
   BINARY_FRAME_KIND_TRANSFER_CHUNK,
   CLOSE_CODES,
@@ -203,6 +206,10 @@ function welcomeLimitsRooms(config: ServerConfiguration): object {
     transferIntervalMs: config.transferCreateIntervalMs,
     transferLifetimeMs: config.transferLinkLifetimeMs,
     transferBytes: config.transferSizeMaximum,
+    customBytesPerSecond: config.customBytesPerSecond,
+    customMessagesPerSecond: config.customMessagesPerSecond,
+    customPendingBytesMaximum: config.customPendingBytesMaximum,
+    compatibilityTimeoutMs: config.compatibilityTimeoutMs,
   };
 }
 
@@ -258,6 +265,7 @@ function sessionIdle(session: ConnectionSession): void {
 
 /** Relay state shared by every handler. */
 export class ServerCore {
+  readonly compatibility: CompatibilityChecks = new CompatibilityChecks();
   readonly registry: RoomRegistry;
   readonly roomListSubscriptions: RoomListSubscriptions;
   readonly sessions = new Map<number, ConnectionSession>();
@@ -351,6 +359,10 @@ export class ServerCore {
    */
   sessionMessage(session: ConnectionSession, frame: string | Uint8Array): void {
     if (session.closed) return;
+    if (typeof frame !== 'string' && frame[1] === BINARY_FRAME_KIND_CUSTOM) {
+      if (!session.byteBucket.take(frame.byteLength)) return session.close(CLOSE_CODES.rateLimited, 'rate limited');
+      return this.sessionBinary(session, frame);
+    }
     const frameBytes = typeof frame === 'string' ? frame.length : frame.byteLength;
     if (!session.messageBucket.take(1) || !session.byteBucket.take(frameBytes)) {
       session.close(CLOSE_CODES.rateLimited, 'rate limited');
@@ -378,6 +390,7 @@ export class ServerCore {
     if (session.closed) return;
     session.closed = true;
     if (session.handshakeTimer) clearTimeout(session.handshakeTimer);
+    this.compatibility.cancel(session);
     this.roomListSubscriptions.unsubscribe(session);
     roomMembershipEnd(this, session, 'disconnected');
     transferSessionClosed(session);
@@ -417,7 +430,7 @@ export class ServerCore {
   private outboundCreate(socket: CoreSocket, slowConsumer: () => void): ConnectionOutboundQueue {
     return new ConnectionOutboundQueue(
       socket,
-      this.config.outboundQueueBytesMaximum,
+      Math.min(this.config.outboundQueueBytesMaximum, this.config.customPendingBytesMaximum),
       this.config.socketBufferHighWaterBytes,
       slowConsumer,
       this.outboundBacklogServerBudget,
@@ -469,6 +482,7 @@ export class ServerCore {
    */
   private sessionBinary(session: ConnectionSession, frame: Uint8Array): void {
     if (!session.helloDone) return this.violation(session, 'binary before hello');
+    if (frame[1] === BINARY_FRAME_KIND_CUSTOM) return handlerCustom(this, session, frame);
     if (frame[1] === BINARY_FRAME_KIND_PRESENCE) return handlerPresence(this, session, frame);
     if (frame[1] === BINARY_FRAME_KIND_TRANSFER_CHUNK) return handlerTransferChunk(this, session, frame);
     handlerStreamChunk(this, session, frame);
@@ -566,6 +580,7 @@ export class ServerCore {
    * @param bytes Frame size.
    */
   private dispatchContent(session: ConnectionSession, message: ContentMessage, bytes: number): void {
+    if (handlerCustomControl(this, session, message)) return;
     switch (message.t) {
       case 'lock.acquire':
       case 'lock.release':

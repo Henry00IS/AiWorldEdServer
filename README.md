@@ -585,3 +585,118 @@ subscribers, even when `INTERNAL_TEST_ROOMS_VIA_PROXY` is set.
 - On `room.closed {offline:true}` show the offline warning and offer "save locally".
 - Handle close codes (4002 back off, 4004 reconnect & rejoin, 4006 server restart, 4007 do not reconnect for
   60 s, 4008 update needed).
+
+## Fork compatibility and third-party channel
+
+### Owner-decided admission
+
+`room.join` adds a small closed `compatibility` object:
+`{version: string, schema: integer, caps: string[]}`. Version is 1–64 characters,
+schema is an unsigned 32-bit integer, and caps has at most 32 strings of 1–64
+characters each. Joiners **do not send a home URL**. Missing compatibility data
+is denied safely. The hello editor name/build remains visible in room listings.
+
+Before membership or any snapshot, the relay sends the owner
+`compatibility.check {q, compatibility}` with the identity unchanged. Only that
+owner may answer `compatibility.result {q, allow, reason?, homeUrl?}`. Reasons
+are bounded enum values: `incompatible_client`, `schema_mismatch`,
+`version_mismatch`, `missing_caps`, `owner_timeout`. Approval never depends on
+relay interpretation of these capabilities: the owner is authoritative.
+
+The editor exposes one documented fork override,
+`collaborationCompatibilityPolicy`. The default requires equal scene schema
+and version plus every locally required capability; additive capabilities are
+fine. Forks can explicitly permit other compatible versions. Local capability
+and schema constants live in `identity_collaboration_editor.ts`. This is a
+compatibility assertion, not authentication or proof an untrusted client is
+honest.
+
+A refusal returns `error {code: "client_incompatible", r, reason, homeUrl?}`.
+On denial the owner may supply its editor home URL, at most 256 characters. The
+relay and editor accept only valid bounded HTTP(S) URLs without credentials;
+malicious/invalid URLs are omitted. Longer wire strings violate the schema.
+The editor explains the reason and offers a clickable link to open/install
+**the room owner's editor**, showing the URL as inert text. It never auto-opens
+it or treats remote content as HTML. Room, owner/member, editor and version
+labels also use text-only rendering.
+
+Owner silence fails closed after five seconds (`owner_timeout`, without a home
+URL because no verdict arrived). Owner departure also denies pending joins.
+There is at most one pending query per connection and 32 per room; query ids
+are unique among pending checks and stale/replayed answers do nothing. The
+creator needs no check. An owner disconnect closes its room; recreating a room
+needs no check, while joining another owner's room uses normal admission.
+
+### General-purpose opaque custom messages
+
+The kind-4 binary channel is a first-class channel reserved for third-party
+projects. Forks can use it for anything, including state they manage themselves.
+Edits remain the primary path for scene changes that need the editor's undo,
+snapshots and merge. The relay does not parse application payloads or retain
+application history. Frames are kept only while awaiting socket delivery.
+
+Only synced members send/receive. A member targets peer `0` to send to the
+owner. The owner targets one member id, or sends peer `0` with the envelope
+`broadcast: true` to reach every synced member. Only the owner may request a
+broadcast. There is no member-to-member or member-to-everyone route; an owner
+can implement its own forwarding protocol. Invalid targets/routing return
+`custom_target_invalid`.
+
+Wire envelope (big endian): byte 0 magic `0xA7`, byte 1 kind `4`, u16 JSON
+metadata length at 2, u32 request id at 4, u32 target at 8, then metadata bytes,
+then arbitrary application bytes. The closed metadata object is
+`{broadcast?: boolean, lease?: positive safe integer, ids?: string[]}`: up to
+256 scene ids and 16 KiB metadata. The **payload is never decoded**, need not
+be JSON, and remains byte-for-byte identical. Relayed frames replace target
+with sender id. Shared helpers: `customFrameEncode` / `customFrameParse`.
+`custom.sent {r}` means relay acceptance, not application consumption;
+rejections return `error {code, r}`.
+
+Each sender has a sliding payload budget of **256 KiB** in `(now − 1000 ms,
+now]`, not a token bucket or fixed-second boundary. One larger payload returns
+`custom_too_large`; exceeding the window returns `custom_rate_limited` with no
+delivery. Window-limit rejections consume no additional credit. Other attempted
+routes (including invalid targets/guards) consume budget. Hundreds of small
+messages per second are supported separately from control-message limits.
+At most 4096 frames fit a window; empty frames cost one byte, bounding resource
+use. Repeated floods feed existing abuse scoring and can disconnect a sender.
+Connection-wide byte and transport frame caps still apply.
+
+Once recipient outbound queue **plus socket buffered bytes exceeds 64 MiB**,
+it is kicked with `slowConsumer` (4004); global backlog limits can close it
+earlier. The relay cannot detect application code ignoring data after the
+network stack consumed it. Forks implement their own application acknowledgements
+when needed.
+
+Optional scene guards reuse `editLockCheck`, returning `lease_stale`,
+`outside_lease` or `lock_conflict`. They neither renew leases nor mutate the
+scene. Client custom sends share the FIFO with edits; recipient frames use the
+same outbound queue, without coalescing custom frames. An edit waiting on
+asynchronous ancestor verification can be overtaken by a custom frame, so this
+channel is not a scene operation log. Await lock acquisition before sending
+lease-bound data.
+
+`custom.lock.acquire {r?, keys}` / `custom.lock.release {r?, keys?}` use a
+separate namespace/table from scene locks. Keys are arbitrary strings of 1–256
+characters, at most 256 per request. Reusing the lock table provides atomic
+acquisition/conflicts, existing per-user/per-room limits and the shared global
+lock budget. Replies: `custom.lock.acquired {r?, keys}` and
+`custom.lock.released {r?, keys}`; errors include `lock_conflict` / `lock_limit`.
+Omitting release keys releases all custom locks. They last until release or
+room departure/disconnect and do not take over a scene lease. Fork code owns
+its application semantics.
+
+The editor exposes `runtime.custom.sendToOwner`, `sendToMember`, `sendToAll`,
+`onMessage` (unsubscribe returned), `acquire`, and `release`. Send promises
+reject on explicit relay errors. Example: a terrain painter acquires a scene
+lease, streams opaque `{lease, ids}` previews, commits a `geometry` edit for
+undo/snapshot/merge, then releases the lease. A fork may instead use custom
+messages for entirely self-managed state and define its own persistence.
+
+The editor preserves unknown/namespaced fields on supported synced nodes,
+entry/brush/model/group payload records and recognized nested records across
+edits and save/load. Wire-envelope extras use a reserved persistence-only
+`aiworlded:wire` field. Existing field-level merges retain untouched fields.
+Unknown node kinds and arbitrary new geometry/array-element semantics are not
+interpreted by an older editor; forks should use colon-separated namespaces
+and require capabilities for features that need semantic support.

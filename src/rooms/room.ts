@@ -77,6 +77,7 @@ export class Room {
   readonly members = new Map<number, ConnectionSession>();
   private readonly colorSlots = new Map<number, number>();
   readonly locks: RoomLockTable;
+  readonly customLocks: RoomLockTable;
   readonly streams = new Map<string, RoomStream>();
   /**
    * Latest relayed presence frame per member, handed to members when they
@@ -130,6 +131,7 @@ export class Room {
       options.locksServerBudget,
       new RoomLeaseTable(options.leaseTimings ?? ROOM_LEASE_TIMINGS_DEFAULT),
     );
+    this.customLocks = new RoomLockTable(options.locksPerUser, options.locksPerRoom, options.locksServerBudget);
     this.verifyBucket = new LimiterTokenBucket(options.verifyPerSecond ?? 50, options.verifyBurst ?? 100);
     this.oneShotBucket = new LimiterTokenBucket(options.oneShotPerSecond ?? 200, options.oneShotBurst ?? 400);
     this.memberAdd(options.owner);

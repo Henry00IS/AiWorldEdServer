@@ -6,10 +6,10 @@
  * served as 206 so players can seek. Every response forbids sniffing and
  * scripting and allows GET from any origin.
  *
- * Safe raster images always stream as raw media (including to Discordbot).
- * For other types, Discord's crawler alone may receive a tiny Open Graph HTML
- * card (filename + size); `?raw=1` / `?download` and ordinary clients always
- * get the raw byte stream. Active types and size limits stay enforced.
+ * Safe raster images always stream as raw media (including to Discordbot). For
+ * other types, Discord's crawler alone may receive a tiny Open Graph HTML card
+ * (filename + size); `?raw=1` / `?download` and ordinary clients always get the
+ * raw byte stream. Active types and size limits stay enforced.
  */
 import { handlerTransferLinkOwner } from '../handlers/handler_transfer.ts';
 import type { ServerCore } from './server_core.ts';
@@ -92,14 +92,26 @@ export async function transferHttpServe(core: ServerCore, request: Request, link
   request.signal.addEventListener('abort', () => transferDownloadEnd(download, null), { once: true });
   const info = await transferDownloadInfo(download);
   if (!info.ok) return transferHttpStatus(info.status, owner.limits.sizeMaximum);
+  return transferHttpInfoResponse(request, download, info, link);
+}
+
+/**
+ * Builds the response after transfer metadata arrives.
+ *
+ * @param request Incoming request.
+ * @param download Active download.
+ * @param info Announced metadata.
+ * @param link Transfer link.
+ * @returns Raw or crawler response.
+ */
+function transferHttpInfoResponse(
+  request: Request,
+  download: TransferDownload,
+  info: { size: number; name: string; mime: string },
+  link: string,
+): Response {
   const url = new URL(request.url);
-  // Images stay raw for Discordbot (direct embeds). Non-image types get a title
-  // card unless ?raw=1 / ?download, which always stream bytes.
-  if (
-    transferHttpIsDiscordbot(request) &&
-    !transferHttpWantsRaw(url) &&
-    !transferHttpIsSafeRasterImage(info.mime)
-  ) {
+  if (transferHttpIsDiscordbot(request) && !transferHttpWantsRaw(url) && !transferHttpIsSafeRasterImage(info.mime)) {
     transferDownloadEnd(download, null);
     return transferHttpDiscordUnfurl(url, info, link, request.method === 'HEAD');
   }
@@ -206,20 +218,25 @@ export function transferInlineAllowed(mime: string): boolean {
   return TRANSFER_INLINE_TYPES.has(mime) || mime.startsWith('audio/');
 }
 
-
-/** True when the crawler User-Agent looks like Discord's link preview bot. */
+/**
+ * Checks whether the crawler identifies as Discordbot. @param request Incoming
+ * request. @returns Whether it is Discordbot.
+ */
 export function transferHttpIsDiscordbot(request: Request): boolean {
   return /Discordbot/i.test(request.headers.get('user-agent') ?? '');
 }
 
-/** True when the client asked for the raw byte stream instead of an HTML card. */
+/**
+ * Checks whether raw bytes were requested. @param url Incoming URL. @returns
+ * Whether raw delivery was requested.
+ */
 export function transferHttpWantsRaw(url: URL): boolean {
   return url.searchParams.has('raw') || url.searchParams.has('download');
 }
 
 /**
- * True for safe raster images that Discord embeds from a direct media URL.
- * SVG and other active image types are excluded.
+ * True for safe raster images that Discord embeds from a direct media URL. SVG
+ * and other active image types are excluded.
  *
  * @param mime Announced MIME type.
  * @returns True when Discordbot should receive raw bytes.
@@ -249,18 +266,14 @@ export function transferHttpRawUrl(requestUrl: URL): string {
  * @returns Escaped text.
  */
 function transferHttpEscapeAttr(value: string): string {
-  return value
-    .replace(/&/gu, '&amp;')
-    .replace(/"/gu, '&quot;')
-    .replace(/</gu, '&lt;')
-    .replace(/>/gu, '&gt;');
+  return value.replace(/&/gu, '&amp;').replace(/"/gu, '&quot;').replace(/</gu, '&lt;').replace(/>/gu, '&gt;');
 }
 
 /**
  * Builds a tiny Open Graph HTML card for Discord's crawler for non-image
- * transfers. Metadata comes from the owner's announcement only. `?raw=1` in
- * the body link avoids recursive HTML cards when Discord follows the file.
- * Filename is the title; description is the human size (no MIME chatter).
+ * transfers. Metadata comes from the owner's announcement only. `?raw=1` in the
+ * body link avoids recursive HTML cards when Discord follows the file. Filename
+ * is the title; description is the human size (no MIME chatter).
  *
  * @param requestUrl Incoming request URL.
  * @param info Announced size, name and type.
@@ -279,16 +292,7 @@ export function transferHttpDiscordUnfurl(
   const title = transferHttpEscapeAttr(name);
   const description = transferHttpEscapeAttr(transferHttpHumanSize(info.size));
   const pageUrl = transferHttpEscapeAttr(requestUrl.toString().split('?')[0] ?? requestUrl.toString());
-  const tags: string[] = [
-    '<meta charset="utf-8">',
-    '<meta property="og:site_name" content="AiWorldEd">',
-    `<meta property="og:title" content="${title}">`,
-    `<meta property="og:description" content="${description}">`,
-    `<meta property="og:url" content="${pageUrl}">`,
-    '<meta property="og:type" content="website">',
-    '<meta name="theme-color" content="#F5A623">',
-    '<meta name="twitter:card" content="summary">',
-  ];
+  const tags = transferHttpUnfurlTags(title, description, pageUrl);
   const body =
     `<!doctype html><html><head>${tags.join('')}<title>${title}</title></head>` +
     `<body><p>${title}</p><p>${description}</p>` +
@@ -300,6 +304,27 @@ export function transferHttpDiscordUnfurl(
     'Content-Length': String(new TextEncoder().encode(body).byteLength),
   };
   return new Response(headOnly ? null : body, { status: 200, headers });
+}
+
+/**
+ * Builds crawler metadata tags.
+ *
+ * @param title Escaped file title.
+ * @param description Escaped size label.
+ * @param pageUrl Escaped canonical URL.
+ * @returns Metadata tags.
+ */
+function transferHttpUnfurlTags(title: string, description: string, pageUrl: string): string[] {
+  return [
+    '<meta charset="utf-8">',
+    '<meta property="og:site_name" content="AiWorldEd">',
+    `<meta property="og:title" content="${title}">`,
+    `<meta property="og:description" content="${description}">`,
+    `<meta property="og:url" content="${pageUrl}">`,
+    '<meta property="og:type" content="website">',
+    '<meta name="theme-color" content="#F5A623">',
+    '<meta name="twitter:card" content="summary">',
+  ];
 }
 
 /**

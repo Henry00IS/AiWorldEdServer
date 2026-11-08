@@ -131,6 +131,7 @@ export class ConnectionOutboundQueue {
       if (item.kind === 'edit') this.flushEditRun();
       else this.flushSingle(item);
     }
+    if (this.queuedBytes + this.socket.getBufferedAmount() > this.maximumQueuedBytes) return this.overflow();
     this.compact();
     this.backlogRecharge();
     if (this.length() === 0) this.idleListener?.();
@@ -155,7 +156,8 @@ export class ConnectionOutboundQueue {
    */
   private push(item: OutboundItem): void {
     if (this.overflowed) return;
-    if (this.queuedBytes + item.bytes > this.maximumQueuedBytes) return this.overflow();
+    if (this.queuedBytes + this.socket.getBufferedAmount() + item.bytes > this.maximumQueuedBytes)
+      return this.overflow();
     this.items.push(item);
     this.queuedBytes += item.bytes;
     this.flush();
