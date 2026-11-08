@@ -542,3 +542,7 @@ stop();
 ```
 
 Unknown/namespaced scene fields are preserved by the editor through sync, edits, merge and save/load. Current editor-written values take precedence at every depth. Exhaustive typed known-field records must be updated when adding serialized fields or node kinds; custom protocols should still define ownership of their own data.
+
+## License
+
+MIT, copyright (c) 2026 Henry de Jongh. See [LICENSE](LICENSE).
