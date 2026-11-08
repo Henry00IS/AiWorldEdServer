@@ -36,7 +36,15 @@ describe('transfer status text', () => {
   });
 
   test('only safe renderable types open inline', () => {
-    for (const mime of ['image/png', 'image/avif', 'video/webm', 'video/ogg', 'audio/mpeg', 'audio/ogg', 'application/pdf'])
+    for (const mime of [
+      'image/png',
+      'image/avif',
+      'video/webm',
+      'video/ogg',
+      'audio/mpeg',
+      'audio/ogg',
+      'application/pdf',
+    ])
       expect(transferInlineAllowed(mime)).toBe(true);
     for (const mime of ['image/svg+xml', 'text/html', 'application/xml', 'text/javascript', 'application/octet-stream'])
       expect(transferInlineAllowed(mime)).toBe(false);
@@ -57,11 +65,7 @@ describe('transfer raw media headers', () => {
     expect(mp4['Content-Disposition']).toStartWith('inline;');
     expect(mp4['Content-Disposition']).toContain('filename="clip.mp4"');
 
-    const ogg = transferHttpHeaders(
-      { size: 20_220, name: 'VMDL_Move_1_AoE2.ogg', mime: 'audio/ogg' },
-      'linkid',
-      true,
-    );
+    const ogg = transferHttpHeaders({ size: 20_220, name: 'VMDL_Move_1_AoE2.ogg', mime: 'audio/ogg' }, 'linkid', true);
     expect(ogg['Content-Type']).toBe('audio/ogg');
     expect(ogg['Content-Disposition']).toStartWith('inline;');
     expect(ogg['Content-Disposition']).toContain('filename="VMDL_Move_1_AoE2.ogg"');
@@ -91,9 +95,9 @@ describe('transfer Discord unfurl', () => {
         }),
       ),
     ).toBe(true);
-    expect(transferHttpIsDiscordbot(new Request('https://example.test/x', { headers: { 'user-agent': 'Mozilla/5.0' } }))).toBe(
-      false,
-    );
+    expect(
+      transferHttpIsDiscordbot(new Request('https://example.test/x', { headers: { 'user-agent': 'Mozilla/5.0' } })),
+    ).toBe(false);
     expect(transferHttpWantsRaw(new URL('https://example.test/ws/transfer/x?raw=1'))).toBe(true);
     expect(transferHttpWantsRaw(new URL('https://example.test/ws/transfer/x?download=1'))).toBe(true);
     expect(transferHttpWantsRaw(new URL('https://example.test/ws/transfer/x'))).toBe(false);
@@ -126,7 +130,6 @@ describe('transfer Discord unfurl', () => {
   });
 
   test('image card helper is unused for safe rasters (no og:image site card)', async () => {
-    // Safe images never call unfurl in serve(); if invoked, still no recursive raw image tag required.
     const response = transferHttpDiscordUnfurl(
       new URL('https://example.test/ws/transfer/img1'),
       { size: 1000, name: 'shot.png', mime: 'image/png' },

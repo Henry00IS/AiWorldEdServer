@@ -3,8 +3,8 @@
  * countdown per user, resets it on each signal, and broadcasts the list of
  * typing user ids whenever the set changes. Only members that negotiated the
  * `typing` capability send or receive these messages. Leaving clears the flag
- * before the leave is announced so a leaver cannot appear in a later list.
- * Each recipient's own user id is omitted from the list they receive.
+ * before the leave is announced so a leaver cannot appear in a later list. Each
+ * recipient's own user id is omitted from the list they receive.
  */
 import type { ConnectionSession } from '../connection/connection_session.ts';
 import type { Room } from '../rooms/room.ts';

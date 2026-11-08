@@ -348,6 +348,10 @@ origin. The link owner must stay connected and answer `transfer.get` with
 
 `magic:u8=0xA7, kind:u8=3, reserved:u16=0, q:u32, offset:u32, payload:bytes`.
 
+An owner that can no longer serve a running download answers its next
+`transfer.chunk` with `transfer.missing`, which fails that download at once
+instead of after the reply timeout.
+
 Chunks are at most 256 KiB; files are at most 100 MiB, with up to 16 concurrent
 downloads per owner and a 20-second reply timeout. Tokens stop working when the
 owner disconnects or the relay restarts. GET, HEAD, OPTIONS and a single HTTP

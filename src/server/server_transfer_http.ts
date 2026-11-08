@@ -222,12 +222,22 @@ export function transferInlineAllowed(mime: string): boolean {
   return TRANSFER_INLINE_TYPES.has(mime) || mime.startsWith('audio/');
 }
 
-/** True when the crawler User-Agent looks like Discord's link preview bot. */
+/**
+ * True when the crawler User-Agent looks like Discord's link preview bot.
+ *
+ * @param request Incoming request.
+ * @returns True for Discordbot.
+ */
 export function transferHttpIsDiscordbot(request: Request): boolean {
   return /Discordbot/i.test(request.headers.get('user-agent') ?? '');
 }
 
-/** True when the client asked for the raw byte stream instead of an HTML card. */
+/**
+ * True when the client asked for the raw byte stream instead of an HTML card.
+ *
+ * @param url Request URL.
+ * @returns True for `?raw` or `?download`.
+ */
 export function transferHttpWantsRaw(url: URL): boolean {
   return url.searchParams.has('raw') || url.searchParams.has('download');
 }
@@ -305,17 +315,7 @@ export function transferHttpDiscordUnfurl(
   const rawUrl = transferHttpRawUrl(requestUrl);
   const title = transferHttpEscapeAttr(name);
   const description = transferHttpEscapeAttr(transferHttpHumanSize(info.size));
-  const pageUrl = transferHttpEscapeAttr(requestUrl.toString().split('?')[0] ?? requestUrl.toString());
-  const tags: string[] = [
-    '<meta charset="utf-8">',
-    '<meta property="og:site_name" content="AiWorldEd">',
-    `<meta property="og:title" content="${title}">`,
-    `<meta property="og:description" content="${description}">`,
-    `<meta property="og:url" content="${pageUrl}">`,
-    '<meta property="og:type" content="website">',
-    '<meta name="theme-color" content="#F5A623">',
-    ...transferHttpDiscordImageTags(transferHttpThumbnailUrl(requestUrl, name)),
-  ];
+  const tags = transferHttpDiscordTags(requestUrl, name, title, description);
   const body =
     `<!doctype html><html><head>${tags.join('')}<title>${title}</title></head>` +
     `<body><p>${title}</p><p>${description}</p>` +
@@ -330,18 +330,56 @@ export function transferHttpDiscordUnfurl(
 }
 
 /**
- * Returns the card's image tags: a large preview image when there is one.
+ * Returns the card's meta tags.
  *
- * @param thumbnailUrl Absolute thumbnail URL, or null.
+ * @param requestUrl Incoming request URL.
+ * @param name Sanitized file name.
+ * @param title Escaped title.
+ * @param description Escaped description.
  * @returns Meta tags.
  */
-function transferHttpDiscordImageTags(thumbnailUrl: string | null): string[] {
+function transferHttpDiscordTags(requestUrl: URL, name: string, title: string, description: string): string[] {
+  const pageUrl = transferHttpEscapeAttr(requestUrl.toString().split('?')[0] ?? requestUrl.toString());
+  return [
+    '<meta charset="utf-8">',
+    '<meta property="og:site_name" content="AiWorldEd">',
+    `<meta property="og:title" content="${title}">`,
+    `<meta property="og:description" content="${description}">`,
+    `<meta property="og:url" content="${pageUrl}">`,
+    '<meta property="og:type" content="website">',
+    '<meta name="theme-color" content="#F5A623">',
+    `<meta name="twitter:title" content="${title}">`,
+    `<meta name="twitter:description" content="${description}">`,
+    ...transferHttpDiscordImageTags(transferHttpThumbnailUrl(requestUrl, name), title),
+  ];
+}
+
+/** Size of the preview image the editor renders (large Open Graph card). */
+const TRANSFER_THUMBNAIL_WIDTH = 1200;
+/** Height of the preview image. */
+const TRANSFER_THUMBNAIL_HEIGHT = 630;
+
+/**
+ * Returns the card's image tags: a large preview image when there is one, with
+ * its size and alt text so unfurlers lay out a large card without probing.
+ *
+ * @param thumbnailUrl Absolute thumbnail URL, or null.
+ * @param title Escaped title.
+ * @returns Meta tags.
+ */
+function transferHttpDiscordImageTags(thumbnailUrl: string | null, title: string): string[] {
   if (thumbnailUrl === null) return ['<meta name="twitter:card" content="summary">'];
   const image = transferHttpEscapeAttr(thumbnailUrl);
+  const alt = `Curve preview of ${title}`;
   return [
     `<meta property="og:image" content="${image}">`,
     '<meta property="og:image:type" content="image/png">',
+    `<meta property="og:image:width" content="${TRANSFER_THUMBNAIL_WIDTH}">`,
+    `<meta property="og:image:height" content="${TRANSFER_THUMBNAIL_HEIGHT}">`,
+    `<meta property="og:image:alt" content="${alt}">`,
     '<meta name="twitter:card" content="summary_large_image">',
+    `<meta name="twitter:image" content="${image}">`,
+    `<meta name="twitter:image:alt" content="${alt}">`,
   ];
 }
 

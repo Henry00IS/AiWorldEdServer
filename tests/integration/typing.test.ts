@@ -52,8 +52,8 @@ describe('typing presence', () => {
     const { owner, joiner } = await roomPair();
     joiner.send({ t: 'typing' });
     expect(await owner.next('typing')).toMatchObject({ users: [joiner.user] });
-    // Sender must not see their own id.
-    expect(await joiner.next('typing')).toMatchObject({ users: [] });
+    const ownView = await joiner.next('typing');
+    expect(ownView, 'the sender never sees its own id').toMatchObject({ users: [] });
   });
 
   test('each recipient omits their own user id from the typing list', async () => {

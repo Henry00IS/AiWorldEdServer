@@ -161,17 +161,9 @@ describe('transfer links', () => {
     expect(forced.headers.get('content-disposition')).toStartWith('attachment;');
   });
 
-  test('Discordbot gets raw images; non-image types get HTML cards; browsers stay raw', async () => {
+  test('Discordbot gets raw images like browsers', async () => {
     const editor = await editorConnect();
     const image = await editor.share({ bytes: new Uint8Array([1, 2, 3]), name: 'l52Zk.jpg', mime: 'image/jpeg' });
-    await interval();
-    const ogg = await editor.share({
-      bytes: new Uint8Array(32),
-      name: 'VMDL_Move_1_AoE2.ogg',
-      mime: 'audio/ogg',
-    });
-    await interval();
-    const mp4 = await editor.share({ bytes: new Uint8Array(64), name: 'clip.mp4', mime: 'video/mp4' });
     const discordUa = 'Mozilla/5.0 (compatible; Discordbot/2.0; +https://discordapp.com)';
 
     const imageBrowser = await fetch(urlOf(image), { method: 'HEAD' });
@@ -186,31 +178,34 @@ describe('transfer links', () => {
     });
     expect(imageRange.status).toBe(206);
     expect(imageRange.headers.get('content-type')).toBe('image/jpeg');
+  });
 
-    for (const [link, mime, name] of [
-      [ogg, 'audio/ogg', 'VMDL_Move_1_AoE2.ogg'],
-      [mp4, 'video/mp4', 'clip.mp4'],
-    ] as const) {
-      const browser = await fetch(urlOf(link), { method: 'HEAD' });
-      expect(browser.status).toBe(200);
-      expect(browser.headers.get('content-type')).toBe(mime);
-      expect(browser.headers.get('content-disposition')).toStartWith('inline;');
-      expect(browser.headers.get('content-disposition')).toContain(`filename="${name}"`);
+  test.each([
+    ['audio/ogg', 'VMDL_Move_1_AoE2.ogg', 32],
+    ['video/mp4', 'clip.mp4', 64],
+  ] as const)('Discordbot gets an HTML card for %s; browsers and ?raw stay raw', async (mime, name, size) => {
+    const editor = await editorConnect();
+    const link = await editor.share({ bytes: new Uint8Array(size), name, mime });
+    const discordUa = 'Mozilla/5.0 (compatible; Discordbot/2.0; +https://discordapp.com)';
+    const browser = await fetch(urlOf(link), { method: 'HEAD' });
+    expect(browser.status).toBe(200);
+    expect(browser.headers.get('content-type')).toBe(mime);
+    expect(browser.headers.get('content-disposition')).toStartWith('inline;');
+    expect(browser.headers.get('content-disposition')).toContain(`filename="${name}"`);
 
-      const bot = await fetch(urlOf(link), { headers: { 'User-Agent': discordUa } });
-      expect(bot.status).toBe(200);
-      expect(bot.headers.get('content-type')).toStartWith('text/html');
-      const body = await bot.text();
-      expect(body).toContain(name);
-      expect(body).toContain('og:title');
-      expect(body).toContain('?raw=1');
-      expect(body).not.toContain(mime);
+    const bot = await fetch(urlOf(link), { headers: { 'User-Agent': discordUa } });
+    expect(bot.status).toBe(200);
+    expect(bot.headers.get('content-type')).toStartWith('text/html');
+    const body = await bot.text();
+    expect(body).toContain(name);
+    expect(body).toContain('og:title');
+    expect(body).toContain('?raw=1');
+    expect(body).not.toContain(mime);
 
-      const raw = await fetch(`${urlOf(link)}?raw=1`, { method: 'HEAD', headers: { 'User-Agent': discordUa } });
-      expect(raw.headers.get('content-type')).toBe(mime);
-      expect(raw.headers.get('content-disposition')).toStartWith('inline;');
-      expect(raw.headers.get('accept-ranges')).toBe('bytes');
-    }
+    const raw = await fetch(`${urlOf(link)}?raw=1`, { method: 'HEAD', headers: { 'User-Agent': discordUa } });
+    expect(raw.headers.get('content-type')).toBe(mime);
+    expect(raw.headers.get('content-disposition')).toStartWith('inline;');
+    expect(raw.headers.get('accept-ranges')).toBe('bytes');
   });
 
   test('curve cards point og:image at ?thumbnail, which serves only the owner PNG preview', async () => {
@@ -222,6 +217,10 @@ describe('transfer links', () => {
     const card = await (await fetch(urlOf(curve), { headers: { 'User-Agent': discordUa } })).text();
     expect(card).toContain(`<meta property="og:image" content="${urlOf(curve)}?thumbnail">`);
     expect(card).toContain('summary_large_image');
+    expect(card).toContain('<meta property="og:image:width" content="1200">');
+    expect(card).toContain('<meta property="og:image:height" content="630">');
+    expect(card).toContain(`<meta name="twitter:image" content="${urlOf(curve)}?thumbnail">`);
+    expect(card).toContain('<meta property="og:image:alt" content="Curve preview of ramp.curve">');
     const thumbnail = await fetch(`${urlOf(curve)}?thumbnail`, { headers: { 'User-Agent': discordUa } });
     expect(thumbnail.status).toBe(200);
     expect(thumbnail.headers.get('content-type')).toBe('image/png');
@@ -402,6 +401,18 @@ describe('transfer links', () => {
     editor.answering = false;
     await expect(fetch(urlOf(link)).then((response) => response.arrayBuffer())).rejects.toThrow();
     editor.answering = true;
+    const body = new Uint8Array(await (await fetch(urlOf(link))).arrayBuffer());
+    expect(body.length).toBe(CHUNK * 2);
+  });
+
+  test('an owner that can no longer serve a running download fails it at once', async () => {
+    const editor = await editorConnect();
+    const link = await editor.share(fileOf(CHUNK * 2));
+    editor.missingFromOffset = CHUNK;
+    const started = Date.now();
+    await expect(fetch(urlOf(link)).then((response) => response.arrayBuffer())).rejects.toThrow();
+    expect(Date.now() - started).toBeLessThan(1000);
+    editor.missingFromOffset = Number.POSITIVE_INFINITY;
     const body = new Uint8Array(await (await fetch(urlOf(link))).arrayBuffer());
     expect(body.length).toBe(CHUNK * 2);
   });

@@ -14,9 +14,11 @@ export interface TestTransferFile {
 
 /** Test editor with the `transfer` capability. */
 export class TestTransferEditor {
-  readonly files = new Map<string, TestTransferFile>();
+  /** Connected socket. */
+  readonly socket: WebSocket;
+  readonly files: Map<string, TestTransferFile> = new Map();
   /** PNG previews served for `transfer.get` with `thumbnail`, by link. */
-  readonly thumbnails = new Map<string, TestTransferFile>();
+  readonly thumbnails: Map<string, TestTransferFile> = new Map();
   /** Every `transfer.get` in arrival order. */
   readonly getLog: { link: string; thumbnail: boolean }[] = [];
   /** When true, `thumbnail` is ignored like an editor that predates it. */
@@ -29,6 +31,8 @@ export class TestTransferEditor {
   chunkDelayMs = 2;
   /** When false, chunk requests are not answered. */
   answering = true;
+  /** Chunk requests from this offset on are answered with `transfer.missing`. */
+  missingFromOffset: number = Number.POSITIVE_INFINITY;
   /** User id from the welcome. */
   user = 0;
   private outstanding = 0;
@@ -41,7 +45,8 @@ export class TestTransferEditor {
    *
    * @param socket Socket that said hello.
    */
-  private constructor(readonly socket: WebSocket) {
+  private constructor(socket: WebSocket) {
+    this.socket = socket;
     socket.binaryType = 'arraybuffer';
     socket.addEventListener('message', (event) => this.receive(JSON.parse(String(event.data))));
   }
@@ -153,6 +158,10 @@ export class TestTransferEditor {
     this.outstanding += 1;
     this.maxOutstanding = Math.max(this.maxOutstanding, this.outstanding);
     if (!this.answering) return;
+    if (offset >= this.missingFromOffset) {
+      this.outstanding -= 1;
+      return this.socket.send(JSON.stringify({ t: 'transfer.missing', q }));
+    }
     setTimeout(() => {
       this.outstanding -= 1;
       const bytes = this.queries.get(q)?.bytes.subarray(offset, offset + length) ?? new Uint8Array();

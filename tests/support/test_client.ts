@@ -22,6 +22,8 @@ export interface TestClientOptions {
 
 /** Test WebSocket client. */
 export class TestClient {
+  /** Connected socket. */
+  readonly socket: WebSocket;
   readonly inbox: TestInbound[] = [];
   closeCode: number | null = null;
   closeReason = '';
@@ -38,7 +40,8 @@ export class TestClient {
    *
    * @param socket Connected socket.
    */
-  private constructor(readonly socket: WebSocket) {
+  private constructor(socket: WebSocket) {
+    this.socket = socket;
     socket.binaryType = 'arraybuffer';
     socket.addEventListener('message', (event) => this.inboxPush(event.data));
     socket.addEventListener('close', (event) => {

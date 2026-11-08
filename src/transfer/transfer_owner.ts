@@ -25,9 +25,13 @@ export interface TransferOwnerLimits {
 /** Links and downloads of one connection. */
 export class TransferOwner {
   /** Random per connection; part of every token MAC. */
+  /** Limits. */
+  readonly limits: TransferOwnerLimits;
+  /** Sends a JSON message to the owner. */
+  readonly send: (message: object) => void;
   readonly nonce: Uint8Array;
   /** Downloads by query id. */
-  readonly downloads = new Map<number, TransferDownload>();
+  readonly downloads: Map<number, TransferDownload> = new Map();
   /** Downloads whose reader wants the next chunk, in arrival order. */
   readonly wanting: TransferDownload[] = [];
   /** Download whose chunk is requested or not yet read; one at a time. */
@@ -43,10 +47,9 @@ export class TransferOwner {
    * @param limits Limits.
    * @param send Sends a JSON message to the owner.
    */
-  constructor(
-    readonly limits: TransferOwnerLimits,
-    readonly send: (message: object) => void,
-  ) {
+  constructor(limits: TransferOwnerLimits, send: (message: object) => void) {
+    this.limits = limits;
+    this.send = send;
     this.nonce = crypto.getRandomValues(new Uint8Array(16));
   }
 

@@ -508,13 +508,15 @@ export function roomMembershipEnd(
  * Removes a non-owner member: frees locks, aborts its streams, informs the
  * room.
  *
+ * Typing is cleared before the leave so the leaver cannot appear in a later
+ * typing list.
+ *
  * @param room Room.
  * @param session Member.
  */
 function roomMemberRemove(room: Room, session: ConnectionSession): void {
   room.customLocks.release(session.user);
   verifyCancel(session, null);
-  // Clear typing before leave so the leaver cannot appear in a later typing list.
   typingClear(room, session.user);
   room.memberDelete(session.user);
   presencePurge(room, session);

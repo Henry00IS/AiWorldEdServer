@@ -22,8 +22,8 @@ export const PROTOCOL_VERSION_LIMIT = 0xffff;
  * - `transfer`: transfer links (`transfer.*` messages) and files in chat.
  * - `stats`: `online` (open relay connections) in the welcome, then `stats
  *   {online}` when it changes, at most once every 5 seconds.
- * - `typing`: chat typing presence, `typing` client signals and `typing
- *   {users}` broadcasts of who is typing in the room.
+ * - `typing`: chat typing presence, `typing` client signals and `typing {users}`
+ *   broadcasts of who is typing in the room.
  */
 export const PROTOCOL_CAPABILITIES = ['select', 'transfer', 'stats', 'typing'] as const;
 /** Union of capability names this relay knows. */

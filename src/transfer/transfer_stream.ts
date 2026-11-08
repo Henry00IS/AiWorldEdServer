@@ -8,7 +8,7 @@
 import type { TransferOwner } from './transfer_owner.ts';
 
 /** Largest thumbnail the relay accepts from an owner. */
-export const TRANSFER_THUMBNAIL_SIZE_MAXIMUM = 1024 * 1024;
+export const TRANSFER_THUMBNAIL_SIZE_MAXIMUM: number = 1024 * 1024;
 
 /** What the owner announced for a download, or the HTTP status to answer. */
 export type TransferInfoResult = { ok: true; size: number; name: string; mime: string } | { ok: false; status: number };
@@ -81,7 +81,8 @@ export function transferDownloadInfo(download: TransferDownload): Promise<Transf
  *
  * @param owner Link owner.
  * @param q Query id.
- * @param info File info, or null for `transfer.missing`.
+ * @param info File info, or null for `transfer.missing`, which also fails a
+ *   running download.
  */
 export function transferInfoReceived(
   owner: TransferOwner,
@@ -89,8 +90,9 @@ export function transferInfoReceived(
   info: { size: number; name: string; mime: string } | null,
 ): void {
   const download = owner.downloads.get(q);
-  const resolve = download?.infoResolve;
-  if (download === undefined || !resolve) return;
+  if (download === undefined) return;
+  const resolve = download.infoResolve;
+  if (!resolve) return info === null ? transferStreamMissing(owner, download) : undefined;
   if (info === null || (download.thumbnail && !transferThumbnailValid(info))) return transferDownloadEnd(download, 404);
   if (info.size > owner.limits.sizeMaximum) return transferDownloadEnd(download, 413);
   transferTimerClear(download);
@@ -109,6 +111,18 @@ export function transferInfoReceived(
  */
 function transferThumbnailValid(info: { size: number; mime: string }): boolean {
   return info.mime === 'image/png' && info.size <= TRANSFER_THUMBNAIL_SIZE_MAXIMUM;
+}
+
+/**
+ * Fails a running download at once when its owner can no longer serve it (a
+ * `transfer.missing` mid-stream), without waiting for the reply timeout.
+ *
+ * @param owner Link owner.
+ * @param download Running download.
+ */
+function transferStreamMissing(owner: TransferOwner, download: TransferDownload): void {
+  if (owner.inFlight === download) download.requested = 0;
+  transferDownloadEnd(download, 502);
 }
 
 /**
