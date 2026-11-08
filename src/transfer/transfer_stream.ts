@@ -7,6 +7,9 @@
  */
 import type { TransferOwner } from './transfer_owner.ts';
 
+/** Largest thumbnail the relay accepts from an owner. */
+export const TRANSFER_THUMBNAIL_SIZE_MAXIMUM = 1024 * 1024;
+
 /** What the owner announced for a download, or the HTTP status to answer. */
 export type TransferInfoResult = { ok: true; size: number; name: string; mime: string } | { ok: false; status: number };
 
@@ -14,6 +17,8 @@ export type TransferInfoResult = { ok: true; size: number; name: string; mime: s
 export interface TransferDownload {
   readonly q: number;
   readonly owner: TransferOwner;
+  /** True when the owner was asked for a PNG preview instead of the file. */
+  readonly thumbnail: boolean;
   size: number;
   /** Next byte to request. */
   offset: number;
@@ -33,13 +38,15 @@ export interface TransferDownload {
  *
  * @param owner Link owner.
  * @param link Link token.
+ * @param thumbnail True to ask for the PNG preview of the file instead.
  * @returns Download, or null when the owner has too many downloads.
  */
-export function transferDownloadStart(owner: TransferOwner, link: string): TransferDownload | null {
+export function transferDownloadStart(owner: TransferOwner, link: string, thumbnail = false): TransferDownload | null {
   if (owner.downloads.size >= owner.limits.downloads) return null;
   const download: TransferDownload = {
     q: owner.queryNext(),
     owner,
+    thumbnail,
     size: 0,
     offset: 0,
     end: 0,
@@ -51,7 +58,7 @@ export function transferDownloadStart(owner: TransferOwner, link: string): Trans
     ended: false,
   };
   owner.downloads.set(download.q, download);
-  owner.send({ t: 'transfer.get', q: download.q, link });
+  owner.send({ t: 'transfer.get', q: download.q, link, ...(thumbnail ? { thumbnail: true } : {}) });
   return download;
 }
 
@@ -84,13 +91,24 @@ export function transferInfoReceived(
   const download = owner.downloads.get(q);
   const resolve = download?.infoResolve;
   if (download === undefined || !resolve) return;
-  if (info === null) return transferDownloadEnd(download, 404);
+  if (info === null || (download.thumbnail && !transferThumbnailValid(info))) return transferDownloadEnd(download, 404);
   if (info.size > owner.limits.sizeMaximum) return transferDownloadEnd(download, 413);
   transferTimerClear(download);
   download.infoResolve = null;
   download.size = info.size;
   download.end = info.size;
   resolve({ ok: true, ...info });
+}
+
+/**
+ * Returns whether an owner's answer to a thumbnail request is a small PNG, so
+ * an editor that ignores the flag and announces the file itself is refused.
+ *
+ * @param info Announced size and type.
+ * @returns True for a PNG within the thumbnail cap.
+ */
+function transferThumbnailValid(info: { size: number; mime: string }): boolean {
+  return info.mime === 'image/png' && info.size <= TRANSFER_THUMBNAIL_SIZE_MAXIMUM;
 }
 
 /**

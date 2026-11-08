@@ -168,6 +168,7 @@ const GOLDEN_SERVER_V2: readonly GoldenServerVector[] = [
   { name: 'lease expired', frame: '{"t":"locks","by":2,"remove":["brush_2"],"expired":true}' },
   { name: 'transfer.created', frame: `{"t":"transfer.created","r":3,"link":"${LINK}","expiresInMs":3600000}` },
   { name: 'transfer.get', frame: `{"t":"transfer.get","q":5,"link":"${LINK}"}` },
+  { name: 'transfer.get thumbnail', frame: `{"t":"transfer.get","q":6,"link":"${LINK}","thumbnail":true}` },
   { name: 'transfer.chunk', frame: '{"t":"transfer.chunk","q":5,"offset":262144,"length":262144}' },
   { name: 'transfer_rate_limited', frame: '{"t":"error","r":4,"code":"transfer_rate_limited","retryAfterMs":4200}' },
 ];

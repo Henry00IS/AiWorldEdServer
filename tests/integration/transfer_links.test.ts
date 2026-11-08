@@ -213,6 +213,53 @@ describe('transfer links', () => {
     }
   });
 
+  test('curve cards point og:image at ?thumbnail, which serves only the owner PNG preview', async () => {
+    const editor = await editorConnect();
+    const curve = await editor.share({ bytes: new Uint8Array(40), name: 'ramp.curve', mime: 'application/json' });
+    const png = fileOf(CHUNK + 9, 'ramp.png', 'image/png');
+    editor.thumbnails.set(curve, png);
+    const discordUa = 'Mozilla/5.0 (compatible; Discordbot/2.0; +https://discordapp.com)';
+    const card = await (await fetch(urlOf(curve), { headers: { 'User-Agent': discordUa } })).text();
+    expect(card).toContain(`<meta property="og:image" content="${urlOf(curve)}?thumbnail">`);
+    expect(card).toContain('summary_large_image');
+    const thumbnail = await fetch(`${urlOf(curve)}?thumbnail`, { headers: { 'User-Agent': discordUa } });
+    expect(thumbnail.status).toBe(200);
+    expect(thumbnail.headers.get('content-type')).toBe('image/png');
+    expect(thumbnail.headers.get('content-disposition')).toStartWith('inline;');
+    expect(thumbnail.headers.get('content-security-policy')).toEndWith('; sandbox');
+    expect(thumbnail.headers.get('x-content-type-options')).toBe('nosniff');
+    expect(sha256(new Uint8Array(await thumbnail.arrayBuffer()))).toBe(sha256(png.bytes));
+    expect(editor.getLog.map((get) => get.thumbnail)).toEqual([false, true]);
+  });
+
+  test('other cards have no og:image and a plain download still serves the curve file', async () => {
+    const editor = await editorConnect();
+    const curve = await editor.share({ bytes: new Uint8Array(40), name: 'ramp.curve', mime: 'application/json' });
+    const file = await fetch(urlOf(curve));
+    expect(file.headers.get('content-type')).toBe('application/json');
+    expect((await file.arrayBuffer()).byteLength).toBe(40);
+    expect(editor.getLog).toEqual([{ link: curve, thumbnail: false }]);
+    await interval();
+    const other = await editor.share({ bytes: new Uint8Array(8), name: 'notes.txt', mime: 'text/plain' });
+    const discordUa = 'Mozilla/5.0 (compatible; Discordbot/2.0; +https://discordapp.com)';
+    const card = await (await fetch(urlOf(other), { headers: { 'User-Agent': discordUa } })).text();
+    expect(card).not.toContain('og:image');
+  });
+
+  test('thumbnails must be a small PNG: missing, other types, oversize and old editors answer 404', async () => {
+    const editor = await editorConnect();
+    const curve = await editor.share({ bytes: new Uint8Array(40), name: 'ramp.curve', mime: 'application/json' });
+    expect((await fetch(`${urlOf(curve)}?thumbnail`)).status).toBe(404);
+    editor.thumbnails.set(curve, { bytes: new Uint8Array(4), name: 'a.jpg', mime: 'image/jpeg' });
+    expect((await fetch(`${urlOf(curve)}?thumbnail`)).status).toBe(404);
+    editor.thumbnails.set(curve, { bytes: new Uint8Array(4), name: 'a.png', mime: 'image/png', size: 1024 * 1024 + 1 });
+    expect((await fetch(`${urlOf(curve)}?thumbnail`, { method: 'HEAD' })).status).toBe(404);
+    editor.thumbnails.set(curve, { bytes: new Uint8Array(4), name: 'a.png', mime: 'image/png' });
+    editor.thumbnailIgnored = true;
+    expect((await fetch(`${urlOf(curve)}?thumbnail`)).status).toBe(404);
+    expect(editor.chunkLog).toEqual([]);
+  });
+
   test('active types such as SVG always download in a sandbox', async () => {
     const editor = await editorConnect();
     const svg = await editor.share({ bytes: new Uint8Array([1]), name: 'a.svg', mime: 'image/svg+xml' });

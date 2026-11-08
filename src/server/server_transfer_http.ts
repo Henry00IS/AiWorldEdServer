@@ -6,10 +6,12 @@
  * served as 206 so players can seek. Every response forbids sniffing and
  * scripting and allows GET from any origin.
  *
- * Safe raster images always stream as raw media (including to Discordbot).
- * For other types, Discord's crawler alone may receive a tiny Open Graph HTML
- * card (filename + size); `?raw=1` / `?download` and ordinary clients always
- * get the raw byte stream. Active types and size limits stay enforced.
+ * Safe raster images always stream as raw media (including to Discordbot). For
+ * other types, Discord's crawler alone may receive a tiny Open Graph HTML card
+ * (filename + size); `?raw=1` / `?download` and ordinary clients always get the
+ * raw byte stream. Active types and size limits stay enforced. Cards of files
+ * the editor previews point their image at `?thumbnail`, which asks the owner
+ * for a small PNG instead of the file.
  */
 import { handlerTransferLinkOwner } from '../handlers/handler_transfer.ts';
 import type { ServerCore } from './server_core.ts';
@@ -53,6 +55,9 @@ const TRANSFER_INLINE_TYPES = new Set([
   'application/pdf',
 ]);
 
+/** Extensions of files whose owner renders a `?thumbnail` PNG preview. */
+const TRANSFER_THUMBNAIL_EXTENSIONS = ['.curve'];
+
 /** Messages of refused downloads; `{limit}` becomes the size cap. */
 const TRANSFER_STATUS_TEXT: Readonly<Record<number, string>> = {
   404: 'This link is no longer available.',
@@ -75,7 +80,9 @@ export function transferHttpPrefix(websocketPath: string): string {
 }
 
 /**
- * Answers a request on a transfer link path.
+ * Answers a request on a transfer link path. Images stay raw for Discordbot
+ * (direct embeds); other types get a title card unless `?raw=1` / `?download`,
+ * which always stream bytes. `?thumbnail` asks the owner for a PNG preview.
  *
  * @param core Relay core.
  * @param request HTTP request.
@@ -87,19 +94,13 @@ export async function transferHttpServe(core: ServerCore, request: Request, link
   if (request.method !== 'GET' && request.method !== 'HEAD') return transferHttpStatus(405);
   const owner = TRANSFER_LINK_PATTERN.test(link) ? handlerTransferLinkOwner(core, link) : null;
   if (owner === null) return transferHttpStatus(404);
-  const download = transferDownloadStart(owner, link);
+  const url = new URL(request.url);
+  const download = transferDownloadStart(owner, link, url.searchParams.has('thumbnail'));
   if (download === null) return transferHttpStatus(503);
   request.signal.addEventListener('abort', () => transferDownloadEnd(download, null), { once: true });
   const info = await transferDownloadInfo(download);
   if (!info.ok) return transferHttpStatus(info.status, owner.limits.sizeMaximum);
-  const url = new URL(request.url);
-  // Images stay raw for Discordbot (direct embeds). Non-image types get a title
-  // card unless ?raw=1 / ?download, which always stream bytes.
-  if (
-    transferHttpIsDiscordbot(request) &&
-    !transferHttpWantsRaw(url) &&
-    !transferHttpIsSafeRasterImage(info.mime)
-  ) {
+  if (transferHttpIsDiscordbot(request) && !transferHttpWantsRaw(url) && !transferHttpIsSafeRasterImage(info.mime)) {
     transferDownloadEnd(download, null);
     return transferHttpDiscordUnfurl(url, info, link, request.method === 'HEAD');
   }
@@ -206,7 +207,6 @@ export function transferInlineAllowed(mime: string): boolean {
   return TRANSFER_INLINE_TYPES.has(mime) || mime.startsWith('audio/');
 }
 
-
 /** True when the crawler User-Agent looks like Discord's link preview bot. */
 export function transferHttpIsDiscordbot(request: Request): boolean {
   return /Discordbot/i.test(request.headers.get('user-agent') ?? '');
@@ -218,8 +218,8 @@ export function transferHttpWantsRaw(url: URL): boolean {
 }
 
 /**
- * True for safe raster images that Discord embeds from a direct media URL.
- * SVG and other active image types are excluded.
+ * True for safe raster images that Discord embeds from a direct media URL. SVG
+ * and other active image types are excluded.
  *
  * @param mime Announced MIME type.
  * @returns True when Discordbot should receive raw bytes.
@@ -243,24 +243,36 @@ export function transferHttpRawUrl(requestUrl: URL): string {
 }
 
 /**
+ * Absolute URL of the PNG preview for Open Graph tags (`?thumbnail`), or null
+ * when the file type has no preview.
+ *
+ * @param requestUrl Request URL of the transfer link.
+ * @param name Sanitized file name.
+ * @returns Absolute thumbnail URL, or null.
+ */
+export function transferHttpThumbnailUrl(requestUrl: URL, name: string): string | null {
+  const lower = name.toLowerCase();
+  if (!TRANSFER_THUMBNAIL_EXTENSIONS.some((extension) => lower.endsWith(extension))) return null;
+  const thumbnail = new URL(requestUrl.href);
+  thumbnail.search = 'thumbnail';
+  return thumbnail.toString();
+}
+
+/**
  * Escapes text for an HTML attribute value.
  *
  * @param value Raw text.
  * @returns Escaped text.
  */
 function transferHttpEscapeAttr(value: string): string {
-  return value
-    .replace(/&/gu, '&amp;')
-    .replace(/"/gu, '&quot;')
-    .replace(/</gu, '&lt;')
-    .replace(/>/gu, '&gt;');
+  return value.replace(/&/gu, '&amp;').replace(/"/gu, '&quot;').replace(/</gu, '&lt;').replace(/>/gu, '&gt;');
 }
 
 /**
  * Builds a tiny Open Graph HTML card for Discord's crawler for non-image
- * transfers. Metadata comes from the owner's announcement only. `?raw=1` in
- * the body link avoids recursive HTML cards when Discord follows the file.
- * Filename is the title; description is the human size (no MIME chatter).
+ * transfers. Metadata comes from the owner's announcement only. `?raw=1` in the
+ * body link avoids recursive HTML cards when Discord follows the file. Filename
+ * is the title; description is the human size (no MIME chatter).
  *
  * @param requestUrl Incoming request URL.
  * @param info Announced size, name and type.
@@ -287,7 +299,7 @@ export function transferHttpDiscordUnfurl(
     `<meta property="og:url" content="${pageUrl}">`,
     '<meta property="og:type" content="website">',
     '<meta name="theme-color" content="#F5A623">',
-    '<meta name="twitter:card" content="summary">',
+    ...transferHttpDiscordImageTags(transferHttpThumbnailUrl(requestUrl, name)),
   ];
   const body =
     `<!doctype html><html><head>${tags.join('')}<title>${title}</title></head>` +
@@ -300,6 +312,22 @@ export function transferHttpDiscordUnfurl(
     'Content-Length': String(new TextEncoder().encode(body).byteLength),
   };
   return new Response(headOnly ? null : body, { status: 200, headers });
+}
+
+/**
+ * Returns the card's image tags: a large preview image when there is one.
+ *
+ * @param thumbnailUrl Absolute thumbnail URL, or null.
+ * @returns Meta tags.
+ */
+function transferHttpDiscordImageTags(thumbnailUrl: string | null): string[] {
+  if (thumbnailUrl === null) return ['<meta name="twitter:card" content="summary">'];
+  const image = transferHttpEscapeAttr(thumbnailUrl);
+  return [
+    `<meta property="og:image" content="${image}">`,
+    '<meta property="og:image:type" content="image/png">',
+    '<meta name="twitter:card" content="summary_large_image">',
+  ];
 }
 
 /**

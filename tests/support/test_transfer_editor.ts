@@ -15,6 +15,12 @@ export interface TestTransferFile {
 /** Test editor with the `transfer` capability. */
 export class TestTransferEditor {
   readonly files = new Map<string, TestTransferFile>();
+  /** PNG previews served for `transfer.get` with `thumbnail`, by link. */
+  readonly thumbnails = new Map<string, TestTransferFile>();
+  /** Every `transfer.get` in arrival order. */
+  readonly getLog: { link: string; thumbnail: boolean }[] = [];
+  /** When true, `thumbnail` is ignored like an editor that predates it. */
+  thumbnailIgnored = false;
   /** Query ids of the chunk requests in arrival order. */
   readonly chunkLog: number[] = [];
   /** Most chunk requests seen unanswered at once. */
@@ -115,7 +121,7 @@ export class TestTransferEditor {
   private receive(message: any): void {
     if (message.t === 'welcome') this.replies.get(0)?.(message);
     else if (message.r !== undefined) this.replies.get(message.r)?.(message);
-    if (message.t === 'transfer.get') this.answerGet(message.q, message.link);
+    if (message.t === 'transfer.get') this.answerGet(message.q, message.link, message.thumbnail === true);
     if (message.t === 'transfer.chunk') this.answerChunk(message.q, message.offset, message.length);
   }
 
@@ -124,9 +130,11 @@ export class TestTransferEditor {
    *
    * @param q Query id.
    * @param link Link id.
+   * @param thumbnail True when the relay asks for the PNG preview.
    */
-  private answerGet(q: number, link: string): void {
-    const file = this.files.get(link);
+  private answerGet(q: number, link: string, thumbnail: boolean): void {
+    this.getLog.push({ link, thumbnail });
+    const file = (thumbnail && !this.thumbnailIgnored ? this.thumbnails : this.files).get(link);
     if (file === undefined) return this.socket.send(JSON.stringify({ t: 'transfer.missing', q }));
     this.queries.set(q, file);
     const info = { t: 'transfer.info', q, size: file.size ?? file.bytes.length, name: file.name, mime: file.mime };

@@ -266,12 +266,15 @@ export type ClientMessage =
  * owner answers `transfer.info {q, size, name, mime}` or `transfer.missing
  * {q}`. The relay then asks for one `transfer.chunk {q, offset, length}` at a
  * time across all downloads of the connection and the owner answers each with a
- * binary transfer chunk frame. Nothing is stored on the relay.
+ * binary transfer chunk frame. Nothing is stored on the relay. With `thumbnail:
+ * true` the relay asks for a PNG preview of the linked file instead; the owner
+ * answers it like a file (`image/png`) or as missing.
  */
 export interface TransferGetMessage {
   t: 'transfer.get';
   q: number;
   link: string;
+  thumbnail?: true;
 }
 
 /** Relay request for one chunk of a download. */

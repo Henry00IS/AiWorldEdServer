@@ -217,7 +217,8 @@ conflicts?:{id:string,by:u32,shared?:boolean}[], why?:string`.
 - `chat` / `chat.sent`: `id:int, from:u32, name:string, color:int, text:string,
 at:int, file?:File`. `at` is epoch milliseconds; only `chat.sent` is the sender's reply.
 - `transfer.created`: `link:string, expiresInMs:int`.
-- `transfer.get`: `q:u32, link:string` (to the link's connected owner).
+- `transfer.get`: `q:u32, link:string, thumbnail?:true` (to the link's connected owner;
+  `thumbnail` asks for a PNG preview of the file instead).
 - `transfer.chunk`: `q:u32, offset:int, length:int` (request for the next bytes).
 - `stats`: `online:int` (negotiated `stats` only, updates at most every five seconds).
 - `error`: `code:string, r?:int`, plus the code-specific fields described below.
@@ -353,7 +354,10 @@ owner disconnects or the relay restarts. GET, HEAD, OPTIONS and a single HTTP
 byte Range are supported. Responses sanitize names/MIME and use conservative
 download behavior; query flags `raw` / `download` control raw delivery/download.
 The HTTP handler also supports safe preview metadata for crawlers; clients must
-not assume an arbitrary shared file is an executable web page.
+not assume an arbitrary shared file is an executable web page. `?thumbnail`
+sends `transfer.get` with `thumbnail:true`; the relay serves the answer only as
+an `image/png` of at most 1 MiB and otherwise answers 404. Crawler cards of
+`.curve` files use it as their preview image.
 
 ### Errors, reason codes and close codes
 
