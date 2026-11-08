@@ -193,6 +193,16 @@ export const PROTOCOL_GOLDEN_VECTORS_V2: GoldenVersionVectors = {
  * at hello).
  */
 const GOLDEN_CLIENT_V3: readonly GoldenClientVector[] = [
+  {
+    name: 'old protocol 2',
+    verdict: 'refuse',
+    frame: '{"t":"hello","protocol":"aiworlded-collab","version":2,"client":"Old/1"}',
+  },
+  {
+    name: 'open public room',
+    verdict: 'accept',
+    frame: '{"t":"room.create","name":"Blockout","private":false,"editMode":"anyone"}',
+  },
   { name: 'permission grant', verdict: 'accept', frame: '{"t":"member.permission.set","r":1,"user":7,"canEdit":true}' },
   { name: 'kick', verdict: 'accept', frame: '{"t":"member.kick","r":2,"user":7}' },
   {
@@ -298,6 +308,11 @@ const GOLDEN_CLIENT_V3: readonly GoldenClientVector[] = [
 
 /** Server frames of protocol version 3. */
 const GOLDEN_SERVER_V3: readonly GoldenServerVector[] = [
+  { name: 'member permission', frame: '{"t":"member.permission","user":7,"canEdit":false}' },
+  { name: 'member joined viewer', frame: '{"t":"member.joined","user":7,"name":"Viewer","color":1,"canEdit":false}' },
+  { name: 'read only edit rejection', frame: '{"t":"edit.rejected","seq":4,"reason":"read_only","ids":[]}' },
+  { name: 'read only lock rejection', frame: '{"t":"lock.result","r":5,"ok":false,"code":"read_only"}' },
+  { name: 'kicked', frame: '{"t":"room.left","reason":"kicked"}' },
   { name: 'welcome', frame: '{"t":"welcome","user":1,"version":3,"versions":{"min":3,"max":3},"caps":["select"]}' },
   {
     name: 'protocol_unsupported',

@@ -138,7 +138,15 @@ if (!subscribed.rooms.some((room: { id: string }) => room.id === created.room.id
   throw new Error('room missing from room.subscribed');
 console.log(`subscribed: ${subscribed.rooms.length} room(s), push interval ${subscribed.intervalMs} ms`);
 
-joiner.send({ t: 'room.join', r: 3, room: created.room.id, discardLocalWork: true });
+joiner.send({
+  t: 'room.join',
+  r: 3,
+  room: created.room.id,
+  discardLocalWork: true,
+  compatibility: { version: '1', homeUrl: 'https://example.com/verify' },
+});
+const compatibility = await owner.next('compatibility.check');
+owner.send({ t: 'compatibility.result', q: compatibility.q, allow: true });
 await joiner.next('room.joined');
 const request = await owner.next('snapshot.request');
 const snapshot = new TextEncoder().encode('{"verify":true}');
