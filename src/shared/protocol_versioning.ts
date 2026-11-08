@@ -8,9 +8,9 @@
  */
 
 /** Newest protocol version this relay speaks. */
-export const PROTOCOL_VERSION_MAXIMUM = 2;
+export const PROTOCOL_VERSION_MAXIMUM = 3;
 /** Oldest protocol version this relay still speaks. */
-export const PROTOCOL_VERSION_MINIMUM = 2;
+export const PROTOCOL_VERSION_MINIMUM = 3;
 /** Highest version number the wire format allows (fixed 16-bit range). */
 export const PROTOCOL_VERSION_LIMIT = 0xffff;
 

@@ -142,6 +142,7 @@ export const CLIENT_MESSAGE_SCHEMAS: Readonly<Record<ClientMessageType, Schema>>
     { name: { type: 'string', min: 1, max: 512 }, private: { type: 'bool' } },
     {
       password: { type: 'string', min: 1, max: PROTOCOL_CAPS.passwordInputMaximum },
+      editMode: { type: 'enum', values: ['viewers', 'anyone'] },
       internalTest: { type: 'bool' },
       maxUsers: { type: 'int', min: 2, max: 1000 },
       displayName: SCHEMA_DISPLAY_NAME,
@@ -171,6 +172,11 @@ export const CLIENT_MESSAGE_SCHEMAS: Readonly<Record<ClientMessageType, Schema>>
       homeUrl: { type: 'string', min: 1, max: 256 },
     },
   },
+  'member.permission.set': messageSchema('member.permission.set', {
+    user: { type: 'int', min: 1, max: 0xffffffff },
+    canEdit: { type: 'bool' },
+  }),
+  'member.kick': messageSchema('member.kick', { user: { type: 'int', min: 1, max: 0xffffffff } }),
   'custom.lock.acquire': messageSchema('custom.lock.acquire', { keys: SCHEMA_CUSTOM_KEYS }),
   'custom.lock.release': messageSchema('custom.lock.release', {}, { keys: SCHEMA_CUSTOM_KEYS }),
   'room.leave': messageSchema('room.leave'),

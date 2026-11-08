@@ -40,6 +40,7 @@ export interface RoomOptions {
   id: string;
   name: string;
   isPrivate: boolean;
+  editMode?: 'viewers' | 'anyone';
   passwordHash: string | null;
   internalTest: boolean;
   maxUsers: number;
@@ -63,6 +64,8 @@ export class Room {
   readonly id: string;
   readonly name: string;
   readonly isPrivate: boolean;
+  readonly editMode: 'viewers' | 'anyone';
+  private readonly editors = new Set<number>();
   readonly passwordHash: string | null;
   readonly internalTest: boolean;
   readonly maxUsers: number;
@@ -124,16 +127,12 @@ export class Room {
     this.owner = options.owner;
     this.ownerIpKey = options.owner.ipKey;
     this.protocol = options.owner.protocol;
-    const roomLockBudget = new LimiterSharedBudget(options.locksPerRoom);
-    this.locks = new RoomLockTable(
-      options.locksPerUser,
-      options.locksPerRoom,
-      roomLockBudget,
-      new RoomLeaseTable(options.leaseTimings ?? ROOM_LEASE_TIMINGS_DEFAULT),
-    );
-    this.customLocks = new RoomLockTable(options.locksPerUser, options.locksPerRoom, roomLockBudget);
+    const tables = roomLockTables(options);
+    this.locks = tables.locks;
+    this.customLocks = tables.customLocks;
     this.verifyBucket = new LimiterTokenBucket(options.verifyPerSecond ?? 50, options.verifyBurst ?? 100);
     this.oneShotBucket = new LimiterTokenBucket(options.oneShotPerSecond ?? 200, options.oneShotBurst ?? 400);
+    this.editMode = options.isPrivate ? 'anyone' : (options.editMode ?? 'viewers');
     this.memberAdd(options.owner);
   }
 
@@ -148,6 +147,7 @@ export class Room {
     while (used.has(slot)) slot++;
     this.colorSlots.set(session.user, slot);
     this.members.set(session.user, session);
+    if (session === this.owner || this.editMode === 'anyone') this.editors.add(session.user);
   }
 
   /**
@@ -157,8 +157,31 @@ export class Room {
    */
   memberDelete(user: number): void {
     this.members.delete(user);
+    this.editors.delete(user);
     this.colorSlots.delete(user);
     this.locks.leases.forget(user);
+  }
+
+  /**
+   * Reports the current connection's edit permission.
+   *
+   * @param session Current member connection.
+   * @returns Whether the member may write.
+   */
+  canEdit(session: ConnectionSession): boolean {
+    return !this.closed && this.members.get(session.user) === session && this.editors.has(session.user);
+  }
+
+  /**
+   * Sets a current non-owner member's permission.
+   *
+   * @param user Current member id.
+   * @param allowed Whether editing is allowed.
+   */
+  permissionSet(user: number, allowed: boolean): void {
+    if (!this.members.has(user) || user === this.owner.user) return;
+    if (allowed) this.editors.add(user);
+    else this.editors.delete(user);
   }
 
   /**
@@ -295,7 +318,27 @@ export class Room {
       user: member.user,
       name: member.name,
       owner: member === this.owner,
+      canEdit: this.canEdit(member),
       color: this.colorOf(member.user),
     }));
   }
+}
+
+/**
+ * Creates both lock tables sharing one room budget.
+ *
+ * @param options Room construction limits.
+ * @returns Scene and custom lock tables.
+ */
+function roomLockTables(options: RoomOptions): { locks: RoomLockTable; customLocks: RoomLockTable } {
+  const budget = new LimiterSharedBudget(options.locksPerRoom);
+  return {
+    locks: new RoomLockTable(
+      options.locksPerUser,
+      options.locksPerRoom,
+      budget,
+      new RoomLeaseTable(options.leaseTimings ?? ROOM_LEASE_TIMINGS_DEFAULT),
+    ),
+    customLocks: new RoomLockTable(options.locksPerUser, options.locksPerRoom, budget),
+  };
 }

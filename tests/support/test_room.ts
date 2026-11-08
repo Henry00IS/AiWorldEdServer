@@ -15,7 +15,14 @@ import { TEST_COMPATIBILITY_IDENTITY, type TestClient, type TestMessage } from '
  */
 export async function roomCreate(owner: TestClient, extra: Record<string, unknown> = {}): Promise<string> {
   const reply = await owner.request(
-    { t: 'room.create', name: `test room ${Math.random()}`, private: false, internalTest: true, ...extra },
+    {
+      t: 'room.create',
+      name: `test room ${Math.random()}`,
+      private: false,
+      editMode: 'anyone',
+      internalTest: true,
+      ...extra,
+    },
     'room.created',
   );
   expect(reply.t).toBe('room.created');

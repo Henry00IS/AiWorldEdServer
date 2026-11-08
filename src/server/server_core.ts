@@ -3,6 +3,7 @@
  * dispatch.
  */
 import { CompatibilityChecks } from '../forks/compatibility_checks.ts';
+import { handlerMemberControl } from '../handlers/handler_member.ts';
 import { handlerCustom, handlerCustomControl } from '../handlers/handler_custom.ts';
 import type { ServerConfiguration } from '../config/server_configuration.ts';
 import { ConnectionOutboundQueue, type OutboundSocket } from '../connection/connection_outbound_queue.ts';
@@ -577,6 +578,7 @@ export class ServerCore {
    * @param bytes Frame size.
    */
   private dispatchContent(session: ConnectionSession, message: ContentMessage, bytes: number): void {
+    if (handlerMemberControl(this, session, message)) return;
     if (handlerCustomControl(this, session, message)) return;
     switch (message.t) {
       case 'lock.acquire':

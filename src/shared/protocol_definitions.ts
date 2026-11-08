@@ -10,7 +10,7 @@ export const PROTOCOL_ID = 'aiworlded-collab';
  * Current protocol version: the version this build speaks when it creates a
  * room. See `protocol_versioning.ts` for the supported range.
  */
-export const PROTOCOL_VERSION = 2;
+export const PROTOCOL_VERSION = 3;
 /** WebSocket path served by the relay. */
 export const PROTOCOL_WEBSOCKET_PATH = '/ws';
 
@@ -157,7 +157,7 @@ export type VerifyVerdict = (typeof VERIFY_VERDICTS)[number];
  * (`lock_unverified`): the owner's verdict, no answer in time, the owner left,
  * or too many queries.
  */
-export type VerifyDenial = Exclude<VerifyVerdict, 'ok'> | 'owner_timeout' | 'owner_left' | 'rate_limited';
+export type VerifyDenial = Exclude<VerifyVerdict, 'ok'> | 'owner_timeout' | 'owner_left' | 'rate_limited' | 'read_only';
 
 /**
  * Sent by the relay to the room owner before a member gets shared locks on
@@ -221,6 +221,7 @@ export type ClientMessage =
       r?: number;
       name: string;
       private: boolean;
+      editMode?: 'viewers' | 'anyone';
       password?: string;
       internalTest?: boolean;
       maxUsers?: number;
@@ -240,6 +241,8 @@ export type ClientMessage =
   | { t: 'compatibility.result'; q: number; allow: boolean; reason?: CompatibilityReason; homeUrl?: string }
   | { t: 'custom.lock.acquire'; r?: number; keys: string[] }
   | { t: 'custom.lock.release'; r?: number; keys?: string[] }
+  | { t: 'member.permission.set'; r?: number; user: number; canEdit: boolean }
+  | { t: 'member.kick'; r?: number; user: number }
   | { t: 'room.leave'; r?: number }
   | { t: 'name.set'; r?: number; name: string }
   | { t: 'chat'; r?: number; text: string; file?: ChatFileAttachment }
@@ -319,6 +322,7 @@ export interface RoomMemberEntry {
   user: number;
   name: string;
   owner: boolean;
+  canEdit: boolean;
   /**
    * Color slot: the lowest slot free in the room when the member entered;
    * unique among current members.
@@ -347,6 +351,8 @@ export type ErrorCode =
   | 'already_in_room'
   | 'not_in_room'
   | 'not_owner'
+  | 'read_only'
+  | 'member_not_found'
   | 'not_synced'
   | 'internal_test_forbidden'
   | 'lock_conflict'

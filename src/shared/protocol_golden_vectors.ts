@@ -188,7 +188,156 @@ export const PROTOCOL_GOLDEN_VECTORS_V2: GoldenVersionVectors = {
   binary: GOLDEN_BINARY_V2,
 };
 
-/** Vectors per protocol version. */
+/**
+ * Client frames of protocol version 3 ('refuse' = valid frame, version refused
+ * at hello).
+ */
+const GOLDEN_CLIENT_V3: readonly GoldenClientVector[] = [
+  { name: 'permission grant', verdict: 'accept', frame: '{"t":"member.permission.set","r":1,"user":7,"canEdit":true}' },
+  { name: 'kick', verdict: 'accept', frame: '{"t":"member.kick","r":2,"user":7}' },
+  {
+    name: 'invalid mode',
+    verdict: 'reject',
+    frame: '{"t":"room.create","name":"Test","private":false,"editMode":"unknown"}',
+  },
+  {
+    name: 'hello minimal',
+    verdict: 'accept',
+    frame: '{"t":"hello","protocol":"aiworlded-collab","version":3,"client":"AiWorldEd/1.0"}',
+  },
+  {
+    name: 'hello full',
+    verdict: 'accept',
+    frame:
+      '{"t":"hello","protocol":"aiworlded-collab","version":3,"minVersion":3,"client":"AiWorldEd/1.1","name":"Ana","caps":["select","future.thing"],"x":{"studio.build":"nb-42"}}',
+  },
+  {
+    name: 'hello version 1',
+    verdict: 'refuse',
+    frame: '{"t":"hello","protocol":"aiworlded-collab","version":1,"client":"AiWorldEd/0.9"}',
+  },
+  {
+    name: 'hello unknown top-level field',
+    verdict: 'reject',
+    frame: '{"t":"hello","protocol":"aiworlded-collab","version":3,"client":"A","future":1}',
+  },
+  {
+    name: 'hello extension bad key',
+    verdict: 'reject',
+    frame: '{"t":"hello","protocol":"aiworlded-collab","version":3,"client":"A","x":{"Bad Key":1}}',
+  },
+  {
+    name: 'hello float version',
+    verdict: 'reject',
+    frame: '{"t":"hello","protocol":"aiworlded-collab","version":2.5,"client":"A"}',
+  },
+  {
+    name: 'hello version above 16 bits',
+    verdict: 'reject',
+    frame: '{"t":"hello","protocol":"aiworlded-collab","version":65536,"client":"A"}',
+  },
+  {
+    name: 'room.create',
+    verdict: 'accept',
+    frame: '{"t":"room.create","r":1,"name":"Level 1","private":false,"x":{"tag":"e1m1"}}',
+  },
+  { name: 'room.join', verdict: 'accept', frame: `{"t":"room.join","r":2,"room":"${ROOM}","discardLocalWork":true}` },
+  { name: 'select', verdict: 'accept', frame: '{"t":"select","ids":["brush_1","light_2"]}' },
+  { name: 'select clear', verdict: 'accept', frame: '{"t":"select","ids":[]}' },
+  {
+    name: 'lock.acquire',
+    verdict: 'accept',
+    frame: '{"t":"lock.acquire","r":3,"lease":1,"ids":["brush_1"],"shared":["group_1"]}',
+  },
+  {
+    name: 'lock.acquire replace',
+    verdict: 'accept',
+    frame: '{"t":"lock.acquire","lease":2,"ids":["brush_2"],"replace":true}',
+  },
+  { name: 'lock.renew', verdict: 'accept', frame: '{"t":"lock.renew","lease":2}' },
+  { name: 'lock.renew with request id', verdict: 'reject', frame: '{"t":"lock.renew","r":1,"lease":2}' },
+  { name: 'lock.release', verdict: 'accept', frame: '{"t":"lock.release"}' },
+  {
+    name: 'edit leased transform',
+    verdict: 'accept',
+    frame: '{"t":"edit","seq":4,"lease":2,"ops":[{"k":"transform","ids":["brush_2"],"d":{"p":[0,64,0]}}]}',
+  },
+  {
+    name: 'edit one-shot property',
+    verdict: 'accept',
+    frame: '{"t":"edit","seq":5,"ops":[{"k":"property","ids":["light_2"],"d":{"f":{"intensity":2}}}]}',
+  },
+  {
+    name: 'edit lease zero',
+    verdict: 'reject',
+    frame: '{"t":"edit","seq":6,"lease":0,"ops":[{"k":"delete","ids":["a"]}]}',
+  },
+  { name: 'edit unknown kind', verdict: 'reject', frame: '{"t":"edit","seq":7,"ops":[{"k":"teleport","ids":["a"]}]}' },
+  { name: 'object id with space', verdict: 'reject', frame: '{"t":"select","ids":["a b"]}' },
+  { name: 'unknown type', verdict: 'reject', frame: '{"t":"proxy.connect","host":"example.com"}' },
+  { name: 'chat', verdict: 'accept', frame: '{"t":"chat","text":"hi"}' },
+  { name: 'ping', verdict: 'accept', frame: '{"t":"ping","r":9}' },
+  { name: 'transfer.create', verdict: 'accept', frame: '{"t":"transfer.create","r":3}' },
+  {
+    name: 'transfer.info',
+    verdict: 'accept',
+    frame: '{"t":"transfer.info","q":5,"size":1048576,"name":"shot.png","mime":"image/png"}',
+  },
+  { name: 'transfer.missing', verdict: 'accept', frame: '{"t":"transfer.missing","q":5}' },
+  {
+    name: 'transfer.info with r',
+    verdict: 'reject',
+    frame: '{"t":"transfer.info","r":1,"q":5,"size":1,"name":"a","mime":"a/b"}',
+  },
+  {
+    name: 'chat with file',
+    verdict: 'accept',
+    frame: `{"t":"chat","text":"shot.png","file":{"link":"${LINK}","name":"shot.png","size":1048576,"mime":"image/png"}}`,
+  },
+];
+
+/** Server frames of protocol version 3. */
+const GOLDEN_SERVER_V3: readonly GoldenServerVector[] = [
+  { name: 'welcome', frame: '{"t":"welcome","user":1,"version":3,"versions":{"min":3,"max":3},"caps":["select"]}' },
+  {
+    name: 'protocol_unsupported',
+    frame:
+      '{"t":"error","code":"protocol_unsupported","versions":{"min":3,"max":3},"message":"This server speaks collaboration protocol v3; your editor speaks v1. Update your editor."}',
+  },
+  {
+    name: 'protocol_mismatch',
+    frame:
+      '{"t":"error","r":2,"code":"protocol_mismatch","roomProtocol":1,"yourProtocol":3,"message":"This room uses protocol v1; your editor speaks v3. Update or join a compatible room."}',
+  },
+  {
+    name: 'room list entry',
+    frame: `{"t":"room.list","rooms":[{"id":"${ROOM}","name":"Level 1","private":false,"users":1,"maxUsers":8,"owner":"Ana","protocol":3,"editor":"AiWorldEd/1.0"}]}`,
+  },
+  { name: 'selected', frame: '{"t":"selected","by":2,"ids":["brush_1"]}' },
+  { name: 'lease expired', frame: '{"t":"locks","by":2,"remove":["brush_2"],"expired":true}' },
+  { name: 'transfer.created', frame: `{"t":"transfer.created","r":3,"link":"${LINK}","expiresInMs":3600000}` },
+  { name: 'transfer.get', frame: `{"t":"transfer.get","q":5,"link":"${LINK}"}` },
+  { name: 'transfer.get thumbnail', frame: `{"t":"transfer.get","q":6,"link":"${LINK}","thumbnail":true}` },
+  { name: 'transfer.chunk', frame: '{"t":"transfer.chunk","q":5,"offset":262144,"length":262144}' },
+  { name: 'transfer_rate_limited', frame: '{"t":"error","r":4,"code":"transfer_rate_limited","retryAfterMs":4200}' },
+];
+
+/** Binary frames of protocol version 3. */
+const GOLDEN_BINARY_V3: readonly GoldenBinaryVector[] = [
+  { name: 'stream chunk stream 1 peer 7 payload 010203', hex: 'a70100000000000100000007010203' },
+  { name: 'presence client camera 0 at 1,2,3 fov 90', hex: 'a7020101003f8000004000000040400000e00802005a' },
+  { name: 'presence relayed from user 7', hex: 'a702010100000007003f8000004000000040400000e00802005a' },
+  { name: 'transfer chunk q 5 offset 262144 payload 010203', hex: 'a70300000000000500040000010203' },
+];
+
+/** All vectors of protocol version 3. */
+export const PROTOCOL_GOLDEN_VECTORS_V3: GoldenVersionVectors = {
+  client: GOLDEN_CLIENT_V3,
+  server: GOLDEN_SERVER_V3,
+  binary: GOLDEN_BINARY_V3,
+};
+
+/** Vectors per supported protocol version. */
 export const PROTOCOL_GOLDEN_VECTORS: Readonly<Record<number, GoldenVersionVectors>> = {
-  2: PROTOCOL_GOLDEN_VECTORS_V2,
+  3: PROTOCOL_GOLDEN_VECTORS_V3,
 };

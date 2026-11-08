@@ -81,6 +81,7 @@ function customGate(core: ServerCore, sender: ConnectionSession, frame: CustomFr
   }
   if (!sender.room) return 'not_in_room';
   if (!sender.synced) return 'not_synced';
+  if (!sender.room.canEdit(sender)) return 'read_only';
   if (abuseThrottled(core, sender)) return 'throttled';
   return customGuardCheck(sender, frame.guard as CustomGuard);
 }
@@ -119,6 +120,7 @@ export function handlerCustomLock(core: ServerCore, sender: ConnectionSession, m
     const keys = room.customLocks.release(sender.user, message.keys);
     return sessionSend(sender, { t: 'custom.lock.released', r: message.r, keys });
   }
+  if (!room.canEdit(sender)) return sessionSendError(sender, 'read_only', message.r);
   const result = room.customLocks.acquire(sender.user, message.keys, false);
   if (!result.ok) return sessionSendError(sender, result.reason, message.r);
   sessionSend(sender, { t: 'custom.lock.acquired', r: message.r, keys: message.keys });

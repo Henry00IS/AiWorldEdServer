@@ -12,7 +12,14 @@ import { verifyAsk, verifyNeeded } from './handler_verify.ts';
 
 type LockAcquireMessage = Extract<ClientMessage, { t: 'lock.acquire' }>;
 type LockRefusalCode =
-  'lock_conflict' | 'lock_limit' | 'lock_unverified' | 'lease_busy' | 'lease_stale' | 'rate_limited' | 'throttled';
+  | 'read_only'
+  | 'lock_conflict'
+  | 'lock_limit'
+  | 'lock_unverified'
+  | 'lease_busy'
+  | 'lease_stale'
+  | 'rate_limited'
+  | 'throttled';
 
 /** A refused lease request and how much misuse it shows. */
 interface LeaseRefusal {
@@ -58,14 +65,14 @@ export function handlerLockAcquire(core: ServerCore, session: ConnectionSession,
     abuseRecord(core, session, refusal.points, `lock ${refusal.code}`);
     return lockRefuse(session, message.r, refusal.code, {});
   }
-  const exclusive = new Set(message.ids);
-  const sharedWanted = (message.shared ?? []).filter((id) => !exclusive.has(id));
+  const sharedWanted = lockSharedWanted(message);
   const sharedNew = room.locks.sharedMissing(session.user, sharedWanted);
   if (!verifyNeeded(room, session, sharedNew)) return lockAcquireGrant(room, session, message);
   const conflicts = room.locks.acquireConflicts(session.user, message.ids, sharedWanted);
   if (conflicts.length > 0) return lockRefuse(session, message.r, 'lock_conflict', { conflicts });
   verifyAsk(core, room, session, { ids: message.ids, anc: sharedNew }, (outcome) => {
-    if (outcome !== 'ok') return lockRefuse(session, message.r, 'lock_unverified', { why: outcome });
+    const denial = !room.closed && !room.canEdit(session) ? 'read_only' : outcome === 'ok' ? null : 'lock_unverified';
+    if (denial) return lockRefuse(session, message.r, denial, { why: outcome });
     if (session.room !== room || !session.synced) return;
     const late = leaseConflict(room, session, message);
     if (late) return lockRefuse(session, message.r, late, {});
@@ -90,6 +97,7 @@ function leaseRefusal(
   session: ConnectionSession,
   message: LockAcquireMessage,
 ): LeaseRefusal | null {
+  if (!room.canEdit(session)) return { code: 'read_only', points: 0 };
   if (abuseThrottled(core, session)) return { code: 'throttled', points: 1 };
   const conflict = leaseConflict(room, session, message);
   if (conflict) return { code: conflict, points: 1 };
@@ -192,6 +200,7 @@ export function handlerLockRenew(
   message: Extract<ClientMessage, { t: 'lock.renew' }>,
 ): void {
   if (!session.room || !session.synced) return;
+  if (!session.room.canEdit(session)) return sessionSendError(session, 'read_only', undefined);
   if (!session.limits.renewBucket.take()) return abuseRecord(core, session, 1, 'lease renew flood');
   session.room.locks.leases.renew(session.user, message.lease);
 }
@@ -216,8 +225,19 @@ export function leasesSweep(core: ServerCore): void {
  * @param room Room.
  * @param user Holder.
  */
-function leaseExpire(room: Room, user: number): void {
+export function leaseExpire(room: Room, user: number): void {
   const released = room.locks.release(user);
   room.locks.leases.end(user);
   roomBroadcast(room, { t: 'locks', by: user, ...(released.length ? { remove: released } : {}), expired: true });
+}
+
+/**
+ * Excludes exclusively held ids from requested ancestor locks.
+ *
+ * @param message Lock request.
+ * @returns Shared ancestor ids.
+ */
+function lockSharedWanted(message: LockAcquireMessage): string[] {
+  const exclusive = new Set(message.ids);
+  return (message.shared ?? []).filter((id) => !exclusive.has(id));
 }

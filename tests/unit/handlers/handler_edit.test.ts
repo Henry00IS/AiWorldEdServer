@@ -32,6 +32,7 @@ function roomFake(): Room {
     id: 'r',
     name: 'room',
     isPrivate: false,
+    editMode: 'anyone',
     passwordHash: null,
     internalTest: true,
     maxUsers: 8,

@@ -100,8 +100,8 @@ The first message must be `hello` within five seconds:
 {
   "t": "hello",
   "protocol": "aiworlded-collab",
-  "version": 2,
-  "minVersion": 2,
+  "version": 3,
+  "minVersion": 3,
   "client": "MyEditor/1.2.3",
   "name": "Builder",
   "caps": ["select", "transfer", "stats", "typing"]
@@ -139,7 +139,7 @@ limits and semantic checks.
 - **`room.list`**: `r?: int[0..2147483647]`.
 - **`room.subscribe`**: `r?: int[0..2147483647]`.
 - **`room.unsubscribe`**: `r?: int[0..2147483647]`.
-- **`room.create`**: `name: string[1..512]; private: boolean; r?: int[0..2147483647]; password?: string[1..256]; internalTest?: boolean; maxUsers?: int[2..1000]; displayName?: string[1..64]; x?: extension(keys<=16, key=/^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*$/, depth<=4, nodes<=256)`.
+- **`room.create`**: `name: string[1..512]; private: boolean; editMode?: 'viewers'|'anyone'; r?: int[0..2147483647]; password?: string[1..256]; internalTest?: boolean; maxUsers?: int[2..1000]; displayName?: string[1..64]; x?: extension(keys<=16, key=/^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*$/, depth<=4, nodes<=256)`.
 - **`room.join`**: `room: string[16..16] matching /^[A-Za-z0-9_-]{16}$/; discardLocalWork: true; r?: int[0..2147483647]; password?: string[1..256]; displayName?: string[1..64]; compatibility?: {version: string[1..64]; homeUrl: string[1..256]}`.
 - **`compatibility.result`**: `q: int[1..4294967295]; allow: boolean; reason?: "incompatible_client"|"owner_left"|"owner_timeout"; homeUrl?: string[1..256]`.
 - **`room.leave`**: `r?: int[0..2147483647]`.
@@ -190,7 +190,7 @@ Server messages, excluding the third-party messages documented below:
 members:Member[], locks:LockSet[]`.
 - `room.left`: `reason:string`; the owner's explicit leave uses `closed`.
 - `room.closed`: `reason:"owner_left", offline:true, message:string`.
-- `member.joined`: `user:u32, name:string, color:int`.
+- `member.joined`: `user:u32, name:string, color:int, canEdit:boolean`.
 - `member.left`: `user:u32`.
 - `name.changed`: `name:string`.
 - `compatibility.check`: `q:u32, compatibility:{homeUrl:string,version:string}`.
@@ -554,3 +554,31 @@ Unknown/namespaced scene fields are preserved by the editor through sync, edits,
 ## License
 
 MIT, copyright (c) 2026 Henry de Jongh. See [LICENSE](LICENSE).
+
+## Room editing permissions (protocol 3)
+
+Public rooms default to `editMode: "viewers"`: joiners can chat, select,
+inspect and receive the scene, but cannot edit until the owner approves them.
+`editMode: "anyone"` admits editors immediately; this is a free-for-all for
+informal blockouts, not serious work. Password-protected private rooms continue
+to admit editors regardless of the mode field.
+
+Every roster member carries `canEdit:boolean`. The owner always edits. Only the
+owner may send `member.permission.set {r?, user, canEdit}` or `member.kick
+{r?, user}` for a current non-owner member of their room. Successful changes
+broadcast `member.permission {user, canEdit}` and acknowledge the owner with
+`member.permission.result {r?, user, canEdit}`. Kick acknowledges
+`member.kicked {r?, user}` and sends the removed member `room.left
+{reason:"kicked"}` without closing their server connection. Kick is not a ban.
+
+Permissions exist only during the current room membership on the current
+connection. Rejoining or reconnecting never preserves a grant. No tokens or
+persistent identities are used. Revocation refuses pending verification and
+queued writes, releases scene/custom locks and expires live previews.
+
+All edits, including lock-free one-shots and live previews, require permission.
+Read-only edits receive correlated `edit.rejected {seq, reason:"read_only",
+ids:[]}`; lock acquisition receives `lock.result {r?,ok:false,code:"read_only"}`.
+Renewals and opaque custom writes/custom lock acquisitions receive `error
+{code:"read_only",r?}`. Releases remain available. Older protocol clients fail
+at version negotiation rather than silently falling back to editable rooms.

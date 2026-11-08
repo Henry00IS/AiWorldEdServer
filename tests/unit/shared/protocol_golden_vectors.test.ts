@@ -9,7 +9,7 @@ import { protocolMessageDecode } from '../../../src/protocol/protocol_message_de
 import { binaryFrameEncode, transferFrameEncode } from '../../../src/shared/binary_frame.ts';
 import { presenceFrameCheck, presenceFrameEncode, presenceFrameRelay } from '../../../src/shared/presence_frame.ts';
 import type { ClientMessage } from '../../../src/shared/protocol_definitions.ts';
-import { PROTOCOL_GOLDEN_VECTORS_V2 as V2, type GoldenVerdict } from '../../../src/shared/protocol_golden_vectors.ts';
+import { PROTOCOL_GOLDEN_VECTORS_V3 as V3, type GoldenVerdict } from '../../../src/shared/protocol_golden_vectors.ts';
 import { protocolMismatchMessage, protocolUnsupportedMessage } from '../../../src/shared/protocol_versioning.ts';
 
 /**
@@ -36,17 +36,17 @@ function hexOf(bytes: Uint8Array): string {
   return Buffer.from(bytes).toString('hex');
 }
 
-describe('protocol v2 golden vectors', () => {
-  test.each(V2.client.map((vector) => [vector.name, vector] as const))('client %s', (_name, vector) => {
+describe('protocol v3 golden vectors', () => {
+  test.each(V3.client.map((vector) => [vector.name, vector] as const))('client %s', (_name, vector) => {
     expect(verdictOf(vector.frame)).toBe(vector.verdict);
   });
 
   test('server frames parse and carry the builders\u2019 messages', () => {
-    const frames = new Map(V2.server.map((vector) => [vector.name, JSON.parse(vector.frame)]));
+    const frames = new Map(V3.server.map((vector) => [vector.name, JSON.parse(vector.frame)]));
     expect(frames.get('protocol_unsupported').message).toBe(
-      protocolUnsupportedMessage({ min: 1, max: 1 }, { min: 2, max: 2 }),
+      protocolUnsupportedMessage({ min: 1, max: 1 }, { min: 3, max: 3 }),
     );
-    expect(frames.get('protocol_mismatch').message).toBe(protocolMismatchMessage(1, 2));
+    expect(frames.get('protocol_mismatch').message).toBe(protocolMismatchMessage(1, 3));
     for (const frame of frames.values()) expect(typeof frame.t).toBe('string');
   });
 
@@ -59,6 +59,6 @@ describe('protocol v2 golden vectors', () => {
       presenceFrameRelay(frame, 7),
       transferFrameEncode(5, 262144, new Uint8Array([1, 2, 3])),
     ];
-    expect(encoded.map(hexOf)).toEqual(V2.binary.map((vector) => vector.hex));
+    expect(encoded.map(hexOf)).toEqual(V3.binary.map((vector) => vector.hex));
   });
 });

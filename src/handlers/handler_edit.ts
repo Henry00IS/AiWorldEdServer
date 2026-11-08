@@ -20,7 +20,7 @@ export { editLockCheck } from './handler_edit_rules.ts';
 type EditMessage = Extract<ClientMessage, { t: 'edit' }>;
 
 /** Refusal reasons decided before the lock rules. */
-type EditGateReason = 'lease_stale' | 'rate_limited' | 'throttled';
+type EditGateReason = 'read_only' | 'lease_stale' | 'rate_limited' | 'throttled';
 
 /**
  * Accepts an edit that passes the lease, rate and lock rules, relays it to the
@@ -42,6 +42,8 @@ export function handlerEdit(core: ServerCore, session: ConnectionSession, messag
   const claim = editClaim(message.ops);
   if (claim === null) return editReject(session, message.seq, { reason: 'lock_unverified', ids: [] }, 'invalid');
   verifyAsk(core, room, session, claim, (outcome) => {
+    if (!room.closed && !room.canEdit(session))
+      return editReject(session, message.seq, { reason: 'read_only', ids: [] }, null);
     if (outcome !== 'ok') return editReject(session, message.seq, { reason: 'lock_unverified', ids: [] }, outcome);
     if (session.room !== room || !session.synced) return;
     if (message.lease !== undefined && room.locks.leases.of(session.user)?.id !== message.lease)
@@ -66,6 +68,7 @@ function editGate(
   session: ConnectionSession,
   message: EditMessage,
 ): EditGateReason | null {
+  if (!room.canEdit(session)) return 'read_only';
   if (abuseThrottled(core, session)) {
     abuseRecord(core, session, 1, 'edit while throttled');
     return 'throttled';

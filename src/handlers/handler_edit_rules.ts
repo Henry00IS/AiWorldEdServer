@@ -19,7 +19,14 @@ export interface EditLockPlan {
 /** Rejection of an edit. */
 export interface EditRejection {
   reason:
-    'lock_conflict' | 'lock_limit' | 'lock_unverified' | 'outside_lease' | 'lease_stale' | 'rate_limited' | 'throttled';
+    | 'read_only'
+    | 'lock_conflict'
+    | 'lock_limit'
+    | 'lock_unverified'
+    | 'outside_lease'
+    | 'lease_stale'
+    | 'rate_limited'
+    | 'throttled';
   ids: string[];
 }
 

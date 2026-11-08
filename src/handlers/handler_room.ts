@@ -162,6 +162,7 @@ function roomInstantiate(
     id: roomIdGenerateUnique(core),
     name: name.ok ? name.name : '',
     isPrivate: message.private,
+    editMode: message.editMode ?? 'viewers',
     passwordHash,
     internalTest: message.internalTest === true,
     maxUsers: Math.min(message.maxUsers ?? core.config.usersPerRoomDefault, core.config.usersPerRoomMaximum),
@@ -436,12 +437,28 @@ function roomMemberAdd(core: ServerCore, session: ConnectionSession, room: Room,
     core.config.snapshotTimeoutMs,
   );
   roomJoinedSend(session, room, requestId);
+  roomMemberJoinedBroadcast(room, session);
+  sessionSend(room.owner, { t: 'snapshot.request', for: session.user });
+}
+
+/**
+ * Broadcasts a new member's name, color and edit permission.
+ *
+ * @param room Joined room.
+ * @param session New member.
+ */
+function roomMemberJoinedBroadcast(room: Room, session: ConnectionSession): void {
   roomBroadcast(
     room,
-    { t: 'member.joined', user: session.user, name: session.name, color: room.colorOf(session.user) },
+    {
+      t: 'member.joined',
+      user: session.user,
+      name: session.name,
+      color: room.colorOf(session.user),
+      canEdit: room.canEdit(session),
+    },
     session.user,
   );
-  sessionSend(room.owner, { t: 'snapshot.request', for: session.user });
 }
 
 /**
