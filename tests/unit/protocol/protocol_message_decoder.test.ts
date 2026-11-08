@@ -1,3 +1,4 @@
+import { TEST_COMPATIBILITY_IDENTITY } from '../../support/test_client.ts';
 import { expect, test } from 'bun:test';
 import { protocolMessageDecode } from '../../../src/protocol/protocol_message_decoder.ts';
 
@@ -5,7 +6,7 @@ const valid = [
   { t: 'ping' },
   { t: 'room.list', r: 1 },
   { t: 'room.create', name: 'Level', private: true, password: 'Tq7#mRw2!xLp', internalTest: true, maxUsers: 4, r: 2 },
-  { t: 'room.join', room: 'AbCdEfGhIjKlMn_-', discardLocalWork: true },
+  { t: 'room.join', compatibility: TEST_COMPATIBILITY_IDENTITY, room: 'AbCdEfGhIjKlMn_-', discardLocalWork: true },
   { t: 'lock.acquire', lease: 1, ids: ['brush:1', 'brush.2'], replace: true },
   { t: 'lock.acquire', lease: 2, ids: ['brush:1'], shared: ['group:1', 'model:1'] },
   { t: 'lock.renew', lease: 2 },
@@ -36,8 +37,19 @@ test.each([
   ['unknown field', JSON.stringify({ t: 'ping', extra: 1 })],
   ['__proto__ field', '{"t":"ping","__proto__":{"x":1}}'],
   ['wrong field type', JSON.stringify({ t: 'room.create', name: 5, private: false })],
-  ['join without discard', JSON.stringify({ t: 'room.join', room: 'AbCdEfGhIjKlMn_-' })],
-  ['discard false', JSON.stringify({ t: 'room.join', room: 'AbCdEfGhIjKlMn_-', discardLocalWork: false })],
+  [
+    'join without discard',
+    JSON.stringify({ t: 'room.join', compatibility: TEST_COMPATIBILITY_IDENTITY, room: 'AbCdEfGhIjKlMn_-' }),
+  ],
+  [
+    'discard false',
+    JSON.stringify({
+      t: 'room.join',
+      compatibility: TEST_COMPATIBILITY_IDENTITY,
+      room: 'AbCdEfGhIjKlMn_-',
+      discardLocalWork: false,
+    }),
+  ],
   ['bad object id', JSON.stringify({ t: 'lock.acquire', lease: 1, ids: ['bad id with spaces'] })],
   ['bad shared id', JSON.stringify({ t: 'lock.acquire', lease: 1, ids: ['a'], shared: ['bad id'] })],
   ['acquire without lease', JSON.stringify({ t: 'lock.acquire', ids: ['a'] })],

@@ -4,7 +4,7 @@
  */
 import type { ConnectionProtocol, ConnectionSession } from '../connection/connection_session.ts';
 import type { RoomListEntry, RoomMemberEntry, StreamKind } from '../shared/protocol_definitions.ts';
-import type { LimiterSharedBudget } from '../network/limiter_shared_budget.ts';
+import { LimiterSharedBudget } from '../network/limiter_shared_budget.ts';
 import { LimiterTokenBucket } from '../network/limiter_token_bucket.ts';
 import { displayNameKey } from '../shared/room_name_policy.ts';
 import { RoomLeaseTable, ROOM_LEASE_TIMINGS_DEFAULT, type RoomLeaseTimings } from './room_lease_table.ts';
@@ -46,7 +46,6 @@ export interface RoomOptions {
   owner: ConnectionSession;
   locksPerUser: number;
   locksPerRoom: number;
-  locksServerBudget?: LimiterSharedBudget;
   /** Owner queries per second for the whole room (default 50). */
   verifyPerSecond?: number;
   /** Burst of owner queries for the whole room (default 100). */
@@ -125,13 +124,14 @@ export class Room {
     this.owner = options.owner;
     this.ownerIpKey = options.owner.ipKey;
     this.protocol = options.owner.protocol;
+    const roomLockBudget = new LimiterSharedBudget(options.locksPerRoom);
     this.locks = new RoomLockTable(
       options.locksPerUser,
       options.locksPerRoom,
-      options.locksServerBudget,
+      roomLockBudget,
       new RoomLeaseTable(options.leaseTimings ?? ROOM_LEASE_TIMINGS_DEFAULT),
     );
-    this.customLocks = new RoomLockTable(options.locksPerUser, options.locksPerRoom, options.locksServerBudget);
+    this.customLocks = new RoomLockTable(options.locksPerUser, options.locksPerRoom, roomLockBudget);
     this.verifyBucket = new LimiterTokenBucket(options.verifyPerSecond ?? 50, options.verifyBurst ?? 100);
     this.oneShotBucket = new LimiterTokenBucket(options.oneShotPerSecond ?? 200, options.oneShotBurst ?? 400);
     this.memberAdd(options.owner);

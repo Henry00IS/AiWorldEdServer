@@ -1,4 +1,5 @@
 /** Room list, create, join and leave, plus membership teardown. */
+import type { CompatibilityDecision } from '../shared/compatibility_identity.ts';
 import { sessionSend, sessionSendError, type ConnectionSession } from '../connection/connection_session.ts';
 import { protocolMismatchMessage } from '../shared/protocol_versioning.ts';
 import { Room, type RoomOptions } from '../rooms/room.ts';
@@ -180,7 +181,6 @@ function roomEditOptions(core: ServerCore): Pick<RoomOptions, 'locksPerUser' | '
   return {
     locksPerUser: config.locksPerUser,
     locksPerRoom: config.locksPerRoom,
-    locksServerBudget: core.locksServerBudget,
     verifyPerSecond: config.verifyPerRoomPerSecond,
     verifyBurst: config.verifyPerRoomBurst,
     leaseTimings: {
@@ -303,16 +303,26 @@ async function roomCompatibilityCheck(
   );
   session.pendingAsyncOperation = false;
   if (session.closed) return false;
-  if (!decision.allow) {
-    sessionSendError(session, 'client_incompatible', message.r, {
-      reason: decision.reason ?? 'incompatible_client',
-      ...(decision.homeUrl ? { homeUrl: decision.homeUrl } : {}),
-    });
-    return false;
-  }
+  if (!decision.allow) return roomCompatibilityRefuse(session, decision, message.r);
   const rejection = roomJoinRejection(core, session, room);
   if (rejection) roomJoinRefuse(session, room, rejection, message.r);
   return rejection === null;
+}
+
+/**
+ * Reports an admission refusal without calling a timeout software
+ * incompatibility.
+ *
+ * @param session Waiting joiner.
+ * @param decision Owner decision or lifecycle refusal.
+ * @param r Correlated request id.
+ * @returns False, because no membership may be added.
+ */
+function roomCompatibilityRefuse(session: ConnectionSession, decision: CompatibilityDecision, r?: number): false {
+  const reason = decision.reason ?? 'incompatible_client';
+  const code = reason === 'owner_timeout' || reason === 'owner_left' ? reason : 'client_incompatible';
+  sessionSendError(session, code, r, { reason, ...(decision.homeUrl ? { homeUrl: decision.homeUrl } : {}) });
+  return false;
 }
 
 /**
@@ -504,6 +514,7 @@ export function roomMembershipEnd(
 function roomMemberRemove(room: Room, session: ConnectionSession): void {
   room.customLocks.release(session.user);
   verifyCancel(session, null);
+  // Clear typing before leave so the leaver cannot appear in a later typing list.
   typingClear(room, session.user);
   room.memberDelete(session.user);
   presencePurge(room, session);

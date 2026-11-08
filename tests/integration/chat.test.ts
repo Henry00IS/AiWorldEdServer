@@ -2,6 +2,7 @@
  * Room chat and room-unique display names: limits, normalization, ordering, no
  * history, isolation, numbered names and the rename lock.
  */
+import { TEST_COMPATIBILITY_IDENTITY } from '../support/test_client.ts';
 import { afterAll, afterEach, beforeAll, describe, expect, test } from 'bun:test';
 import { collabServerStart, type CollabServer } from '../../src/server/server_collab.ts';
 import { CLOSE_CODES } from '../../src/shared/protocol_definitions.ts';
@@ -78,7 +79,10 @@ function chatSend(client: TestClient, text: string): Promise<TestMessage> {
  */
 async function joinNamed(client: TestClient, owner: TestClient, roomId: string, displayName?: string) {
   const extra = displayName === undefined ? {} : { displayName };
-  const reply = await client.request({ t: 'room.join', room: roomId, discardLocalWork: true, ...extra }, 'room.joined');
+  const reply = await client.request(
+    { t: 'room.join', compatibility: TEST_COMPATIBILITY_IDENTITY, room: roomId, discardLocalWork: true, ...extra },
+    'room.joined',
+  );
   await snapshotSend(owner, new TextEncoder().encode('{}'));
   await streamReceive(client);
   return reply;

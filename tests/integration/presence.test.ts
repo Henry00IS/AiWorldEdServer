@@ -1,4 +1,5 @@
 /** Presence relay, display names and color slots against a real local relay. */
+import { TEST_COMPATIBILITY_IDENTITY as compatibility } from '../support/test_client.ts';
 import { afterAll, afterEach, beforeAll, describe, expect, test } from 'bun:test';
 import { collabServerStart, type CollabServer } from '../../src/server/server_collab.ts';
 import { presenceFrameDecode, presenceFrameEncode, type PresenceEntry } from '../../src/shared/presence_frame.ts';
@@ -100,7 +101,10 @@ function roomCreateNamed(owner: TestClient, displayName: string): Promise<TestMe
  * @returns The join reply.
  */
 function roomJoinNamed(client: TestClient, roomId: string, displayName: string): Promise<TestMessage> {
-  return client.request({ t: 'room.join', room: roomId, discardLocalWork: true, displayName }, 'room.joined');
+  return client.request(
+    { t: 'room.join', compatibility, room: roomId, discardLocalWork: true, displayName },
+    'room.joined',
+  );
 }
 
 /**
@@ -147,7 +151,7 @@ describe('names and colors', () => {
     expect(reply).toMatchObject({ t: 'error', code: 'invalid_name', reason: 'too_long', field: 'displayName' });
     const roomId = await roomCreate(owner);
     const join = await anonymous.request(
-      { t: 'room.join', room: roomId, discardLocalWork: true, displayName: '   ' },
+      { t: 'room.join', compatibility, room: roomId, discardLocalWork: true, displayName: ' ' },
       'room.joined',
     );
     expect(join).toMatchObject({ t: 'error', code: 'invalid_name', field: 'displayName' });
@@ -175,7 +179,7 @@ describe('presence', () => {
     const first = await roomPair();
     const second = await roomPair();
     const pending = await connect();
-    await pending.request({ t: 'room.join', room: first.roomId, discardLocalWork: true }, 'room.joined');
+    await pending.request({ t: 'room.join', compatibility, room: first.roomId, discardLocalWork: true }, 'room.joined');
     pending.sendRaw(presenceFrameEncode([camera(9)]));
     second.member.sendRaw(presenceFrameEncode([camera(5)]));
     expect(await presenceDrain(first.owner)).toEqual([]);

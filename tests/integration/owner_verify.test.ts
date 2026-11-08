@@ -5,6 +5,7 @@
  */
 import { afterAll, afterEach, beforeAll, describe, expect, test } from 'bun:test';
 import { collabServerStart, type CollabServer } from '../../src/server/server_collab.ts';
+import { customFrameEncode, customFrameParse } from '../../src/shared/custom_frame.ts';
 import { CLOSE_CODES } from '../../src/shared/protocol_definitions.ts';
 import { TestClient } from '../support/test_client.ts';
 import { roomCreate, testRoomJoinSynced, verifyAnswer } from '../support/test_room.ts';
@@ -217,4 +218,23 @@ describe('owner verification of edit parent chains', () => {
     expect(await verifyAnswer(owner)).toMatchObject({ ids: ['group'], anc: [] });
     expect((await owner.next('edits')).list[0].ops.length).toBe(2);
   });
+});
+
+/**
+ * Custom traffic cannot overtake an earlier scene edit waiting on owner
+ * verification.
+ */
+test('custom frames share the held edit FIFO until verification completes', async () => {
+  const { owner, joiner } = await roomPair();
+  await joiner.request({ t: 'lock.acquire', ids: ['cube'] }, 'lock.result');
+  joiner.send({ t: 'edit', seq: 1, ops: [{ k: 'reparent', ids: ['cube'], d: {}, p: ['inner', 'outer'] }] });
+  const query = await owner.next('verify');
+  joiner.sendRaw(customFrameEncode(777, 0, new Uint8Array([0, 255])));
+  await joiner.request({ t: 'ping' }, 'pong');
+  expect(owner.inbox.some((item) => item.kind === 'binary')).toBe(false);
+  expect(server.core.sessions.get(joiner.user)?.verify.heldCount()).toBe(1);
+  owner.send({ t: 'verify.result', q: query.q, v: 'ok' });
+  expect((await owner.next('edits')).list[0].ops[0].k).toBe('reparent');
+  expect(customFrameParse(await owner.nextBinary())?.payload).toEqual(new Uint8Array([0, 255]));
+  expect(await joiner.next('custom.sent')).toMatchObject({ r: 777 });
 });

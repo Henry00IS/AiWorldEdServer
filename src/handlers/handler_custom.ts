@@ -77,7 +77,6 @@ function customGate(core: ServerCore, sender: ConnectionSession, frame: CustomFr
   const window = windows.get(sender) ?? new CustomWindow();
   windows.set(sender, window);
   if (!window.take(frame.payload.length, core.config.customBytesPerSecond, core.config.customMessagesPerSecond)) {
-    abuseRecord(core, sender, 1, 'custom flood');
     return 'custom_rate_limited';
   }
   if (!sender.room) return 'not_in_room';

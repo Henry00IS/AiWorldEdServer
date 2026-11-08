@@ -7,7 +7,7 @@
 import { afterAll, afterEach, beforeAll, describe, expect, test } from 'bun:test';
 import { collabServerStart, type CollabServer } from '../../src/server/server_collab.ts';
 import { CLOSE_CODES } from '../../src/shared/protocol_definitions.ts';
-import { TestClient } from '../support/test_client.ts';
+import { TestClient, TEST_COMPATIBILITY_IDENTITY } from '../support/test_client.ts';
 import { roomCreate, testRoomJoinSynced } from '../support/test_room.ts';
 import { testConfiguration } from '../support/test_configuration.ts';
 
@@ -295,7 +295,10 @@ describe('abuse', () => {
     await owner.next('locks', (message) => message.by === joiner.user && message.remove?.includes('a'));
     const again = await connect();
     expect(again.welcome.user).toBeGreaterThan(0);
-    const join = await again.request({ t: 'room.join', room: roomId, discardLocalWork: true }, 'room.joined');
+    const join = await again.request(
+      { t: 'room.join', compatibility: TEST_COMPATIBILITY_IDENTITY, room: roomId, discardLocalWork: true },
+      'room.joined',
+    );
     expect(join).toMatchObject({ t: 'error', code: 'too_many_attempts' });
     const fresh = await roomCreate(again);
     expect(fresh.length).toBeGreaterThan(0);

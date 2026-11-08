@@ -137,14 +137,6 @@ const CONFIGURATION_VARIABLES_ROOMS: readonly ConfigurationVariable[] = [
     'Objects locked at once in one room.',
   ),
   new ConfigurationVariableInteger(
-    'LOCKS_TOTAL',
-    'rooms',
-    'locksTotal',
-    1,
-    10_000_000,
-    'Objects locked at once on the whole relay.',
-  ),
-  new ConfigurationVariableInteger(
     'SNAPSHOT_BYTES_MAX',
     'rooms',
     'snapshotBytesMaximum',

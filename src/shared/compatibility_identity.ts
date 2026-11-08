@@ -1,17 +1,10 @@
-/** Joiners announce compatibility information, never their home URL. */
+/** Joiners announce the exact editor home URL and build version. */
 export interface CompatibilityIdentity {
   version: string;
-  schema: number;
-  caps: string[];
+  homeUrl: string;
 }
 /** Bounded public reasons: never free-form owner strings or URLs. */
-export const COMPATIBILITY_REASONS = [
-  'incompatible_client',
-  'missing_caps',
-  'schema_mismatch',
-  'version_mismatch',
-  'owner_timeout',
-] as const;
+export const COMPATIBILITY_REASONS = ['incompatible_client', 'owner_left', 'owner_timeout'] as const;
 export type CompatibilityReason = (typeof COMPATIBILITY_REASONS)[number];
 /** Owner's authoritative compatibility verdict. */
 export interface CompatibilityDecision {

@@ -26,8 +26,6 @@ export interface ServerConfiguration {
   customBytesPerSecond: number;
   /** Maximum custom frames in any sliding second per sender. */
   customMessagesPerSecond: number;
-  /** Maximum combined outbound queue and socket bytes. */
-  customPendingBytesMaximum: number;
   hostname: string;
   port: number;
   websocketPath: string;
@@ -72,7 +70,6 @@ export interface ServerConfiguration {
   usersPerRoomMaximum: number;
   locksPerUser: number;
   locksPerRoom: number;
-  locksTotal: number;
   outboundQueueBytesMaximum: number;
   outboundBacklogBytesTotal: number;
   socketBufferHighWaterBytes: number;
@@ -219,8 +216,7 @@ const CONFIGURATION_ROOM_LIMITS_DEFAULT = {
   usersPerRoomMaximum: 32,
   locksPerUser: 20_000,
   locksPerRoom: 100_000,
-  locksTotal: 400_000,
-  outboundQueueBytesMaximum: 64 * 1024 * 1024,
+  outboundQueueBytesMaximum: 16 * 1024 * 1024,
   outboundBacklogBytesTotal: 256 * 1024 * 1024,
   socketBufferHighWaterBytes: 1024 * 1024,
   snapshotBytesMaximum: 256 * 1024 * 1024,
@@ -300,7 +296,6 @@ const CONFIGURATION_FORK_LIMITS_DEFAULT = {
   compatibilityPendingPerRoom: 32,
   customBytesPerSecond: 256 * 1024,
   customMessagesPerSecond: 4096,
-  customPendingBytesMaximum: 64 * 1024 * 1024,
 } satisfies Partial<ServerConfiguration>;
 
 /**

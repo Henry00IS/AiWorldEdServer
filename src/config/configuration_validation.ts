@@ -34,10 +34,8 @@ const CONFIGURATION_RULES: readonly ConfigurationRule[] = [
     message: 'ROOMS_PER_IP must not exceed ROOMS_TOTAL',
   },
   {
-    holds: (configuration) =>
-      configuration.locksPerUser <= configuration.locksPerRoom &&
-      configuration.locksPerRoom <= configuration.locksTotal,
-    message: 'locks must satisfy LOCKS_PER_USER <= LOCKS_PER_ROOM <= LOCKS_TOTAL',
+    holds: (configuration) => configuration.locksPerUser <= configuration.locksPerRoom,
+    message: 'locks must satisfy LOCKS_PER_USER <= LOCKS_PER_ROOM',
   },
   {
     holds: (configuration) => configuration.maxPayloadBytes >= configuration.streamChunkBytesMaximum * 2,

@@ -5,6 +5,7 @@
  * disconnecting ends the pushes. Internal test rooms never reach proxied
  * subscribers, even on a relay that lets proxied clients use them.
  */
+import { TEST_COMPATIBILITY_IDENTITY } from '../support/test_client.ts';
 import { afterAll, afterEach, beforeAll, describe, expect, test } from 'bun:test';
 import { collabServerStart, type CollabServer } from '../../src/server/server_collab.ts';
 import { TestClient, type TestMessage } from '../support/test_client.ts';
@@ -81,7 +82,10 @@ describe('live room list subscription', () => {
     const added = await updateNext(watcher, (update) => update.rooms.some((room: any) => room.id === roomId));
     expect(added.rooms.find((room: any) => room.id === roomId)).toMatchObject({ owner: 'Henry', users: 1 });
     const joiner = await connect('Guest');
-    await joiner.request({ t: 'room.join', room: roomId, discardLocalWork: true }, 'room.joined');
+    await joiner.request(
+      { t: 'room.join', compatibility: TEST_COMPATIBILITY_IDENTITY, room: roomId, discardLocalWork: true },
+      'room.joined',
+    );
     await snapshotSend(owner, new TextEncoder().encode('{}'));
     await updateNext(watcher, (update) => update.rooms.some((room: any) => room.id === roomId && room.users === 2));
     joiner.send({ t: 'room.leave' });

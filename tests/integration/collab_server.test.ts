@@ -3,6 +3,7 @@
  * the internal test flag, which is only accepted from direct (non-proxied)
  * connections. The forwarded secret is a dummy value from the test config.
  */
+import { TEST_COMPATIBILITY_IDENTITY as compatibility } from '../support/test_client.ts';
 import { afterAll, afterEach, beforeAll, describe, expect, test } from 'bun:test';
 import { collabServerStart, type CollabServer } from '../../src/server/server_collab.ts';
 import { binaryFrameEncode } from '../../src/shared/binary_frame.ts';
@@ -78,7 +79,13 @@ function roomCreatePublic(owner: TestClient, name: string): Promise<TestMessage>
  */
 function roomJoinWithPassword(joiner: TestClient, roomId: string, password?: string): Promise<TestMessage> {
   return joiner.request(
-    { t: 'room.join', room: roomId, discardLocalWork: true, ...(password === undefined ? {} : { password }) },
+    {
+      t: 'room.join',
+      compatibility,
+      room: roomId,
+      discardLocalWork: true,
+      ...(password === undefined ? {} : { password }),
+    },
     'room.joined',
   );
 }
@@ -268,12 +275,12 @@ describe('rooms', () => {
     const joiner = await connect();
     for (let attempt = 0; attempt < 3; attempt++) {
       await joiner.request(
-        { t: 'room.join', room: roomId, discardLocalWork: true, password: 'Wrong-Pass9!' },
+        { t: 'room.join', compatibility, room: roomId, discardLocalWork: true, password: 'Wrong-Pass9!' },
         'room.joined',
       );
     }
     const blocked = await joiner.request(
-      { t: 'room.join', room: roomId, discardLocalWork: true, password },
+      { t: 'room.join', compatibility, room: roomId, discardLocalWork: true, password },
       'room.joined',
     );
     expect(blocked).toMatchObject({ t: 'error', code: 'too_many_attempts' });
@@ -283,7 +290,7 @@ describe('rooms', () => {
     const owner = await connect();
     const roomId = await roomCreate(owner);
     const joiner = await connect();
-    joiner.send({ t: 'room.join', room: roomId });
+    joiner.send({ t: 'room.join', compatibility, room: roomId });
     expect(await joiner.closed()).toBe(CLOSE_CODES.protocolViolation);
   });
 
@@ -297,7 +304,7 @@ describe('rooms', () => {
     expect(closed.message).toContain('save your changes locally');
     const rejoin = await (
       await connect()
-    ).request({ t: 'room.join', room: roomId, discardLocalWork: true }, 'room.joined');
+    ).request({ t: 'room.join', compatibility, room: roomId, discardLocalWork: true }, 'room.joined');
     expect(rejoin).toMatchObject({ t: 'error', code: 'room_not_found' });
   });
 
@@ -339,7 +346,10 @@ describe('internal test flag', () => {
     expect(create).toMatchObject({ t: 'error', code: 'internal_test_forbidden' });
     const list = await proxied.request({ t: 'room.list' }, 'room.list');
     expect(list.rooms.some((room: { id: string }) => room.id === hiddenRoom)).toBe(false);
-    const join = await proxied.request({ t: 'room.join', room: hiddenRoom, discardLocalWork: true }, 'room.joined');
+    const join = await proxied.request(
+      { t: 'room.join', compatibility, room: hiddenRoom, discardLocalWork: true },
+      'room.joined',
+    );
     expect(join).toMatchObject({ t: 'error', code: 'room_not_found' });
   });
 });
@@ -426,7 +436,7 @@ describe('locks and edits', () => {
     const owner = await connect();
     const roomId = await roomCreate(owner);
     const joiner = await connect();
-    await joiner.request({ t: 'room.join', room: roomId, discardLocalWork: true }, 'room.joined');
+    await joiner.request({ t: 'room.join', compatibility, room: roomId, discardLocalWork: true }, 'room.joined');
     expect(await joiner.request({ t: 'lock.acquire', ids: ['a'] }, 'lock.result')).toMatchObject({
       t: 'error',
       code: 'not_synced',
@@ -454,7 +464,7 @@ describe('streams', () => {
     const roomId = await roomCreate(owner);
     await owner.request({ t: 'lock.acquire', ids: ['o1'] }, 'lock.result');
     const joiner = await connect();
-    await joiner.request({ t: 'room.join', room: roomId, discardLocalWork: true }, 'room.joined');
+    await joiner.request({ t: 'room.join', compatibility, room: roomId, discardLocalWork: true }, 'room.joined');
     owner.send({ t: 'edit', seq: 1, ops: [{ k: 'transform', ids: ['o1'] }] });
     await snapshotSend(owner, new Uint8Array([1, 2, 3]));
     owner.send({ t: 'edit', seq: 2, ops: [{ k: 'transform', ids: ['o1'] }] });

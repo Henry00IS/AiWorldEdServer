@@ -1,8 +1,8 @@
-import type { CompatibilityIdentity, CompatibilityReason } from './compatibility_identity.ts';
 /**
  * Dependency-free wire protocol constants and message shapes shared by the
  * relay server and the AiWorldEd client.
  */
+import type { CompatibilityIdentity, CompatibilityReason } from './compatibility_identity.ts';
 
 /** Protocol identifier that must be sent in the hello message. */
 export const PROTOCOL_ID = 'aiworlded-collab';
@@ -325,6 +325,8 @@ export interface RoomMemberEntry {
 
 /** Error codes sent in `error` messages. */
 export type ErrorCode =
+  | 'owner_timeout'
+  | 'owner_left'
   | 'client_incompatible'
   | 'custom_rate_limited'
   | 'custom_too_large'

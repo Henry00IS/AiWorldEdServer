@@ -4,7 +4,7 @@
  */
 import { expect } from 'bun:test';
 import { binaryFrameEncode, binaryFrameParse, binaryFramePayload } from '../../src/shared/binary_frame.ts';
-import type { TestClient, TestMessage } from './test_client.ts';
+import { TEST_COMPATIBILITY_IDENTITY, type TestClient, type TestMessage } from './test_client.ts';
 
 /**
  * Creates an internal test room.
@@ -58,7 +58,7 @@ export async function testRoomJoinSynced(
   extra: Record<string, unknown> = {},
 ): Promise<{ joiner: TestClient; received: Uint8Array }> {
   const joined = await joiner.request(
-    { t: 'room.join', room: roomId, discardLocalWork: true, ...extra },
+    { t: 'room.join', compatibility: TEST_COMPATIBILITY_IDENTITY, room: roomId, discardLocalWork: true, ...extra },
     'room.joined',
   );
   expect(joined.t).toBe('room.joined');

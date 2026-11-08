@@ -4,7 +4,7 @@
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { collabServerStart, type CollabServer } from '../../src/server/server_collab.ts';
-import { TestClient } from '../support/test_client.ts';
+import { TestClient, TEST_COMPATIBILITY_IDENTITY } from '../support/test_client.ts';
 import { TEST_DUMMY_FORWARDED_SECRET, testConfiguration } from '../support/test_configuration.ts';
 
 let server: CollabServer;
@@ -44,7 +44,7 @@ describe('internal test rooms via proxy (development relay)', () => {
     const list = await joiner.request({ t: 'room.list' }, 'room.list');
     expect(list.rooms.some((room: { id: string }) => room.id === created.room.id)).toBe(true);
     const joined = await joiner.request(
-      { t: 'room.join', room: created.room.id, discardLocalWork: true },
+      { t: 'room.join', compatibility: TEST_COMPATIBILITY_IDENTITY, room: created.room.id, discardLocalWork: true },
       'room.joined',
     );
     expect(joined.t).toBe('room.joined');

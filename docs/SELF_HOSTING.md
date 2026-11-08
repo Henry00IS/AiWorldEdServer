@@ -86,7 +86,6 @@ as unset. Booleans accept `true`/`1`/`yes`/`on` and `false`/`0`/`no`/`off`.
 | `ROOMS_PER_IP` | rooms | 8 | 1 to 100000 | Rooms one address (IPv6: one /64) may own at once. |
 | `LOCKS_PER_USER` | rooms | 20000 | 1 to 10000000 | Objects one member may hold locked at once. |
 | `LOCKS_PER_ROOM` | rooms | 100000 | 1 to 10000000 | Objects locked at once in one room. |
-| `LOCKS_TOTAL` | rooms | 400000 | 1 to 10000000 | Objects locked at once on the whole relay. |
 | `SNAPSHOT_BYTES_MAX` | rooms | 268435456 | 1048576 to 536870912 | Largest world snapshot sent to a joining member, in bytes. |
 | `ASSET_BYTES_MAX` | rooms | 67108864 | 1048576 to 536870912 | Largest single asset (texture) transfer, in bytes. |
 | `SNAPSHOT_TIMEOUT_MS` | rooms | 60000 | 5000 to 3600000 | How long a joining member waits for the owner's snapshot. |

@@ -5,7 +5,7 @@
 import { afterAll, beforeAll, expect, test } from 'bun:test';
 import { collabServerStart, type CollabServer } from '../../src/server/server_collab.ts';
 import { CLOSE_CODES } from '../../src/shared/protocol_definitions.ts';
-import { TestClient } from '../support/test_client.ts';
+import { TestClient, TEST_COMPATIBILITY_IDENTITY } from '../support/test_client.ts';
 import { testConfiguration } from '../support/test_configuration.ts';
 
 let server: CollabServer;
@@ -42,7 +42,10 @@ test('a joiner whose snapshot never arrives is removed after the timeout', async
     'room.created',
   );
   const joiner = await TestClient.connect(quick.port);
-  await joiner.request({ t: 'room.join', room: created.room.id, discardLocalWork: true }, 'room.joined');
+  await joiner.request(
+    { t: 'room.join', compatibility: TEST_COMPATIBILITY_IDENTITY, room: created.room.id, discardLocalWork: true },
+    'room.joined',
+  );
   expect((await joiner.next('room.left')).reason).toBe('snapshot_timeout');
   expect((await owner.next('member.left')).user).toBe(joiner.user);
   owner.close();

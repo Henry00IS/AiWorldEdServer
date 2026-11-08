@@ -62,7 +62,7 @@ describe('configuration from the environment', () => {
   test('limits that depend on each other are checked together', () => {
     expect(() => configurationFromEnvironment({ CONNECTIONS_TOTAL: '10' })).toThrow('CONNECTIONS_PER_IP');
     expect(() => configurationFromEnvironment({ ROOMS_TOTAL: '4' })).toThrow('ROOMS_PER_IP');
-    expect(() => configurationFromEnvironment({ LOCKS_TOTAL: '10' })).toThrow('LOCKS_PER_ROOM');
+    expect(() => configurationFromEnvironment({ LOCKS_PER_ROOM: '10' })).toThrow('LOCKS_PER_ROOM');
   });
 
   test('empty values count as unset', () => {

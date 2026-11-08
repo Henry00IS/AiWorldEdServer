@@ -26,7 +26,7 @@ test('lock limits per user and per room', () => {
   expect(locks.acquire(1, ['x', 'y'], true).ok).toBe(true);
 });
 
-test('lock tables share the server-wide budget and return locks when released or closed', () => {
+test('scene/custom lock tables share their room budget and return locks when released or closed', () => {
   const budget = new LimiterSharedBudget(5);
   const first = new RoomLockTable(100, 100, budget);
   const second = new RoomLockTable(100, 100, budget);

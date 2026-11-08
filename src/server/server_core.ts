@@ -208,7 +208,6 @@ function welcomeLimitsRooms(config: ServerConfiguration): object {
     transferBytes: config.transferSizeMaximum,
     customBytesPerSecond: config.customBytesPerSecond,
     customMessagesPerSecond: config.customMessagesPerSecond,
-    customPendingBytesMaximum: config.customPendingBytesMaximum,
     compatibilityTimeoutMs: config.compatibilityTimeoutMs,
   };
 }
@@ -274,7 +273,6 @@ export class ServerCore {
   readonly joinFailuresPerRoom: LimiterFailureWindow;
   readonly passwordWorkPerIpKey: LimiterKeyCounter;
   readonly roomEntriesPerIpKey: LimiterKeyedTokenBucket;
-  readonly locksServerBudget: LimiterSharedBudget;
   readonly outboundBacklogServerBudget: LimiterSharedBudget;
   passwordHashesInFlight = 0;
   private nextUserId = 1;
@@ -305,7 +303,6 @@ export class ServerCore {
     );
     this.joinFailuresPerIp = new LimiterFailureWindow(config.joinFailuresPerIpPerMinute, 60_000);
     this.joinFailuresPerRoom = new LimiterFailureWindow(config.joinFailuresPerRoomPerMinute, 60_000);
-    this.locksServerBudget = new LimiterSharedBudget(config.locksTotal);
     this.outboundBacklogServerBudget = new LimiterSharedBudget(config.outboundBacklogBytesTotal);
     this.abuseCarry = new LimiterAbuseCarry(config.abuseDecayPerSecond);
     this.pruneTimer = setInterval(() => this.limitersPrune(), 60_000);
@@ -430,7 +427,7 @@ export class ServerCore {
   private outboundCreate(socket: CoreSocket, slowConsumer: () => void): ConnectionOutboundQueue {
     return new ConnectionOutboundQueue(
       socket,
-      Math.min(this.config.outboundQueueBytesMaximum, this.config.customPendingBytesMaximum),
+      this.config.outboundQueueBytesMaximum,
       this.config.socketBufferHighWaterBytes,
       slowConsumer,
       this.outboundBacklogServerBudget,
@@ -482,7 +479,7 @@ export class ServerCore {
    */
   private sessionBinary(session: ConnectionSession, frame: Uint8Array): void {
     if (!session.helloDone) return this.violation(session, 'binary before hello');
-    if (frame[1] === BINARY_FRAME_KIND_CUSTOM) return handlerCustom(this, session, frame);
+    if (frame[1] === BINARY_FRAME_KIND_CUSTOM) return verifyHoldOrRun(this, session, frame, frame.byteLength);
     if (frame[1] === BINARY_FRAME_KIND_PRESENCE) return handlerPresence(this, session, frame);
     if (frame[1] === BINARY_FRAME_KIND_TRANSFER_CHUNK) return handlerTransferChunk(this, session, frame);
     handlerStreamChunk(this, session, frame);
@@ -633,6 +630,7 @@ export class ServerCore {
    * @param message Lock or edit message.
    */
   lockOrEditRoute(session: ConnectionSession, message: ConnectionVerifyHeldMessage): void {
+    if (message instanceof Uint8Array) return handlerCustom(this, session, message);
     switch (message.t) {
       case 'lock.acquire':
         return handlerLockAcquire(this, session, message);

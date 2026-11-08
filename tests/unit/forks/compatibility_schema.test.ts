@@ -7,20 +7,17 @@ const join = {
   t: 'room.join',
   room: 'AbCdEfGhIjKlMn_-',
   discardLocalWork: true,
-  compatibility: { version: '1', schema: 3, caps: ['scene'] },
+  compatibility: { version: '1', homeUrl: 'https://editor.invalid/' },
 };
 
-test('joiners send version/schema/caps without any URL and all bounds are strict', () => {
+test('joiners send bounded URL/version, rejecting removed capabilities and schema', () => {
   expect(protocolMessageDecode(JSON.stringify(join)).ok).toBe(true);
-  for (const change of [
-    { homeUrl: 'https://joiner.invalid' },
-    { schema: -1 },
-    { schema: 1.5 },
-    { version: 'x'.repeat(65) },
-    { caps: Array(33).fill('scene') },
-    { caps: ['x'.repeat(65)] },
-    { caps: [1] },
-  ]) {
+  expect(
+    protocolMessageDecode(
+      JSON.stringify({ ...join, compatibility: { ...join.compatibility, homeUrl: 'x'.repeat(256) } }),
+    ).ok,
+  ).toBe(true);
+  for (const change of [{ homeUrl: 'x'.repeat(257) }, { schema: 1 }, { caps: [] }, { version: 'x'.repeat(65) }]) {
     expect(
       protocolMessageDecode(JSON.stringify({ ...join, compatibility: { ...join.compatibility, ...change } })).ok,
     ).toBe(false);
@@ -32,7 +29,7 @@ test('owner verdicts have bounded public reasons and URL length', () => {
     t: 'compatibility.result',
     q: 1,
     allow: false,
-    reason: 'missing_caps',
+    reason: 'incompatible_client',
     homeUrl: 'https://owner.invalid/',
   };
   expect(protocolMessageDecode(JSON.stringify(verdict)).ok).toBe(true);

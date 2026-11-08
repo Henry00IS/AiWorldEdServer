@@ -4,7 +4,7 @@
  */
 import { afterAll, afterEach, beforeAll, expect, test } from 'bun:test';
 import { collabServerStart, type CollabServer } from '../../src/server/server_collab.ts';
-import { TestClient } from '../support/test_client.ts';
+import { TestClient, TEST_COMPATIBILITY_IDENTITY } from '../support/test_client.ts';
 import { testConfiguration } from '../support/test_configuration.ts';
 import { roomCreate, testRoomJoinSynced, snapshotSend, streamReceive } from '../support/test_room.ts';
 import { customFrameEncode, customFrameParse } from '../../src/shared/custom_frame.ts';
@@ -56,9 +56,13 @@ async function custom(sender: TestClient, peer: number, bytes: Uint8Array, guard
   return sender.next('*', (reply) => reply.r === r);
 }
 
-test('matching joins pass but version/schema mismatches and missing identity are denied', async () => {
+test('matching joins pass but URL/version mismatches and missing identity are denied', async () => {
   const { owner, room } = await synced();
-  for (const identity of [{ version: '1', schema: 2, caps: [] }, { version: '2', schema: 1, caps: [] }, undefined]) {
+  for (const identity of [
+    { ...TEST_COMPATIBILITY_IDENTITY, homeUrl: 'https://other.invalid/' },
+    { ...TEST_COMPATIBILITY_IDENTITY, version: '2' },
+    undefined,
+  ]) {
     const joiner = await connect();
     const reply = await joiner.request(
       { t: 'room.join', room, discardLocalWork: true, compatibility: identity },
@@ -69,21 +73,21 @@ test('matching joins pass but version/schema mismatches and missing identity are
   }
 });
 
-test('owner denial URL and reason reach only the denied joiner; joiner sends no URL', async () => {
+test('owner denial URL and reason reach only the denied joiner; joiner identity is forwarded unchanged', async () => {
   const owner = await connect();
   owner.compatibilityAutomatic = false;
   const room = await roomCreate(owner);
   const member = await connect();
-  const identity = { version: 'fork-build', schema: 7, caps: ['custom:terrain', 'future'] };
+  const identity = { version: 'fork-build', homeUrl: 'https://fork.invalid/' };
   member.send({ t: 'room.join', room, discardLocalWork: true, compatibility: identity });
   const query = await owner.next('compatibility.check');
   expect(query.compatibility).toEqual(identity);
-  expect(Object.keys(query.compatibility).sort()).toEqual(['caps', 'schema', 'version']);
+  expect(Object.keys(query.compatibility).sort()).toEqual(['homeUrl', 'version']);
   const homeUrl = 'https://owner.invalid/' + 'x'.repeat(234);
   expect(homeUrl).toHaveLength(256);
-  owner.send({ t: 'compatibility.result', q: query.q, allow: false, reason: 'missing_caps', homeUrl });
+  owner.send({ t: 'compatibility.result', q: query.q, allow: false, reason: 'incompatible_client', homeUrl });
   const denial = await member.next('error');
-  expect(denial).toMatchObject({ code: 'client_incompatible', reason: 'missing_caps', homeUrl });
+  expect(denial).toMatchObject({ code: 'client_incompatible', reason: 'incompatible_client', homeUrl });
 });
 
 test('oversize owner URLs violate the schema and malicious schemes are omitted from denial', async () => {
@@ -91,11 +95,11 @@ test('oversize owner URLs violate the schema and malicious schemes are omitted f
   owner.compatibilityAutomatic = false;
   const room = await roomCreate(owner);
   const member = await connect();
-  member.send({ t: 'room.join', room, discardLocalWork: true });
+  member.send({ t: 'room.join', compatibility: TEST_COMPATIBILITY_IDENTITY, room, discardLocalWork: true });
   const query = await owner.next('compatibility.check');
   owner.send({ t: 'compatibility.result', q: query.q, allow: false, homeUrl: 'javascript:alert(1)' });
   expect((await member.next('error')).homeUrl).toBeUndefined();
-  member.send({ t: 'room.join', room, discardLocalWork: true });
+  member.send({ t: 'room.join', compatibility: TEST_COMPATIBILITY_IDENTITY, room, discardLocalWork: true });
   const next = await owner.next('compatibility.check');
   owner.send({
     t: 'compatibility.result',
@@ -115,7 +119,7 @@ test('pending joiner gets no room data; lying non-owner verdict cannot approve a
     t: 'room.join',
     room,
     discardLocalWork: true,
-    compatibility: { version: '1', schema: 1, caps: [] },
+    compatibility: TEST_COMPATIBILITY_IDENTITY,
   });
   const query = await owner.next('compatibility.check');
   member.send({ t: 'compatibility.result', q: query.q, allow: true });
@@ -133,8 +137,11 @@ test('owner silence denies explicitly with a timeout reason', async () => {
   owner.compatibilityAutomatic = false;
   const room = await roomCreate(owner);
   const member = await connect();
-  const result = await member.request({ t: 'room.join', room, discardLocalWork: true }, 'room.joined');
-  expect(result.code).toBe('client_incompatible');
+  const result = await member.request(
+    { t: 'room.join', compatibility: TEST_COMPATIBILITY_IDENTITY, room, discardLocalWork: true },
+    'room.joined',
+  );
+  expect(result.code).toBe('owner_timeout');
   expect(Object.keys(result).sort()).toEqual(['code', 'r', 'reason', 't']);
   expect(result.reason).toBe('owner_timeout');
   expect(owner.has('snapshot.request')).toBe(false);
@@ -145,11 +152,11 @@ test('owner departure denies pending join and stale approval cannot admit it', a
   owner.compatibilityAutomatic = false;
   const room = await roomCreate(owner);
   const member = await connect();
-  member.send({ t: 'room.join', room, discardLocalWork: true });
+  member.send({ t: 'room.join', compatibility: TEST_COMPATIBILITY_IDENTITY, room, discardLocalWork: true });
   const query = await owner.next('compatibility.check');
   await owner.request({ t: 'room.leave' }, 'room.left');
   owner.send({ t: 'compatibility.result', q: query.q, allow: true });
-  expect((await member.next('error')).code).toBe('client_incompatible');
+  expect((await member.next('error')).code).toBe('owner_left');
 });
 
 test('opaque binary integrity and owner/member-only targeting', async () => {
@@ -181,7 +188,10 @@ test('only synced members send and receive custom data or acquire custom locks',
   const owner = await connect();
   const member = await connect();
   const room = await roomCreate(owner);
-  await member.request({ t: 'room.join', room, discardLocalWork: true }, 'room.joined');
+  await member.request(
+    { t: 'room.join', compatibility: TEST_COMPATIBILITY_IDENTITY, room, discardLocalWork: true },
+    'room.joined',
+  );
   expect((await custom(member, 0, new Uint8Array([1]))).code).toBe('not_synced');
   expect((await custom(owner, member.user, new Uint8Array([1]))).code).toBe('custom_target_invalid');
   expect((await member.request({ t: 'custom.lock.acquire', keys: ['terrain'] }, 'custom.lock.acquired')).code).toBe(
@@ -245,4 +255,27 @@ test('owner broadcast reaches all members; member broadcast is rejected', async 
   expect((await custom(owner, 0, bytes, { broadcast: true })).t).toBe('custom.sent');
   for (const receiver of [member, other]) expect(customFrameParse(await receiver.nextBinary())?.payload).toEqual(bytes);
   expect((await custom(member, 0, bytes, { broadcast: true })).code).toBe('custom_target_invalid');
+});
+
+/**
+ * A well-behaved fork that overshoots a window receives errors, not abuse
+ * punishment.
+ */
+test('over-limit custom frames never add abuse points or throttle scene edits', async () => {
+  const { owner, member } = await synced();
+  const before = server.core.sessions.get(member.user)?.limits.abuse.value() ?? 0;
+  expect((await custom(member, 0, new Uint8Array(256 * 1024))).t).toBe('custom.sent');
+  await owner.nextBinary();
+  for (let index = 0; index < 80; index++)
+    expect((await custom(member, 0, new Uint8Array(1))).code).toBe('custom_rate_limited');
+  expect(server.core.sessions.get(member.user)?.limits.abuse.value() ?? 0).toBeLessThanOrEqual(before);
+  expect(await member.request({ t: 'lock.acquire', ids: ['editing'] }, 'lock.result')).toMatchObject({ ok: true });
+});
+
+/** Missing identities are not silently filled by the test transport. */
+test('transport sends a missing identity as-is and admission fails closed', async () => {
+  const { room } = await synced();
+  const member = await connect();
+  const result = await member.request({ t: 'room.join', room, discardLocalWork: true }, 'room.joined');
+  expect(result).toMatchObject({ code: 'client_incompatible' });
 });

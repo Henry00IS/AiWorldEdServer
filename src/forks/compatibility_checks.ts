@@ -1,14 +1,14 @@
+/** Bounded, fail-closed owner approval before membership exists. */
 import { compatibilityHomeUrl } from '../shared/compatibility_identity.ts';
 import type {
   CompatibilityIdentity,
   CompatibilityDecision,
   CompatibilityReason,
 } from '../shared/compatibility_identity.ts';
-/** Bounded, fail-closed owner approval before membership exists. */
 import { sessionSend, type ConnectionSession } from '../connection/connection_session.ts';
 import type { Room } from '../rooms/room.ts';
 
-/** One pending approval, never containing the owner's identity. */
+/** One pending owner approval. */
 interface CompatibilityPending {
   room: Room;
   joiner: ConnectionSession;
@@ -66,10 +66,10 @@ export class CompatibilityChecks {
    */
   private available(room: Room, joiner: ConnectionSession, maximum: number): boolean {
     const pending = [...this.pending.values()];
-    return (
-      pending.filter((entry) => entry.room === room).length < maximum &&
-      !pending.some((entry) => entry.joiner === joiner)
-    );
+    if (pending.some((entry) => entry.joiner === joiner)) return false;
+    const roomPending = pending.filter((entry) => entry.room === room);
+    if (roomPending.length >= maximum) roomPending[0]?.finish({ allow: false, reason: 'owner_timeout' });
+    return true;
   }
 
   /**
@@ -100,7 +100,7 @@ export class CompatibilityChecks {
   cancel(session: ConnectionSession): void {
     for (const entry of this.pending.values()) {
       if (entry.joiner === session || entry.room.owner === session)
-        entry.finish({ allow: false, reason: 'incompatible_client' });
+        entry.finish({ allow: false, reason: entry.room.owner === session ? 'owner_left' : 'incompatible_client' });
     }
   }
 

@@ -1,4 +1,4 @@
-/** Server-wide budget of one countable resource (e.g. locks across all rooms). */
+/** Shared budget of one countable resource, scoped by the owning caller. */
 export class LimiterSharedBudget {
   private used = 0;
 

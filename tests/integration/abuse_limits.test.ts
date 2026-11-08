@@ -4,7 +4,7 @@
  */
 import { afterAll, beforeAll, expect, test } from 'bun:test';
 import { collabServerStart, type CollabServer } from '../../src/server/server_collab.ts';
-import { TestClient } from '../support/test_client.ts';
+import { TestClient, TEST_COMPATIBILITY_IDENTITY } from '../support/test_client.ts';
 import { testConfiguration, TEST_DUMMY_FORWARDED_SECRET } from '../support/test_configuration.ts';
 
 const STRONG_PASSWORD = 'Qv7#mLp2!xRt9zK';
@@ -90,7 +90,13 @@ async function roomEntryErrorCodes(client: TestClient): Promise<string[]> {
   const codes = [];
   for (let requestId = 1; requestId <= 4; requestId++)
     codes.push(
-      await errorCodeFor(client, { t: 'room.join', r: requestId, room: 'A'.repeat(16), discardLocalWork: true }),
+      await errorCodeFor(client, {
+        t: 'room.join',
+        compatibility: TEST_COMPATIBILITY_IDENTITY,
+        r: requestId,
+        room: 'A'.repeat(16),
+        discardLocalWork: true,
+      }),
     );
   codes.push(await errorCodeFor(client, { t: 'room.create', r: 5, name: 'more', private: false }));
   return codes;
@@ -123,13 +129,18 @@ async function roomCreateAndLock(owner: TestClient, ids: string[]): Promise<any>
   return owner.request({ t: 'lock.acquire', ids }, 'lock.result');
 }
 
-test('locks are capped across all rooms and a closed room returns its locks', async () => {
-  const budgeted = collabServerStart(testConfiguration({ locksTotal: 5 }));
+test('rooms have independent lock budgets shared by their scene and custom namespaces', async () => {
+  const budgeted = collabServerStart(testConfiguration({ locksPerRoom: 5, locksPerUser: 5 }));
   const firstOwner = await connectFrom('203.0.113.50', budgeted.port);
   const secondOwner = await connectFrom('198.51.100.60', budgeted.port);
   expect((await roomCreateAndLock(firstOwner, ['a', 'b', 'c'])).ok).toBe(true);
   const refused = await roomCreateAndLock(secondOwner, ['d', 'e', 'f']);
-  expect([refused.ok, refused.code]).toEqual([false, 'lock_limit']);
+  expect(refused.ok).toBe(true);
+  const custom = await secondOwner.request(
+    { t: 'custom.lock.acquire', keys: ['one', 'two', 'three'] },
+    'custom.lock.acquired',
+  );
+  expect(custom.code).toBe('lock_limit');
   await firstOwner.request({ t: 'room.leave' }, 'room.left');
   expect((await secondOwner.request({ t: 'lock.acquire', ids: ['d', 'e', 'f'] }, 'lock.result')).ok).toBe(true);
   firstOwner.close();

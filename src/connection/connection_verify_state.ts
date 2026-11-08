@@ -1,7 +1,7 @@
 /**
- * Per-member state of owner verification: the one open query, the lock and edit
- * messages held behind it, its rate limit and how often the owner refuted the
- * member.
+ * Per-member state of owner verification: the one open query, the lock, edit
+ * and custom messages held behind it, its rate limit and how often the owner
+ * refuted the member.
  */
 import { LimiterTokenBucket } from '../network/limiter_token_bucket.ts';
 import type { Room } from '../rooms/room.ts';
@@ -10,8 +10,9 @@ import type { ClientMessage, VerifyDenial } from '../shared/protocol_definitions
 /** Outcome of a query: confirmed, or the reason it was refused. */
 export type ConnectionVerifyOutcome = 'ok' | VerifyDenial;
 
-/** Lock and edit messages that wait while a query is open. */
-export type ConnectionVerifyHeldMessage = Extract<ClientMessage, { t: 'lock.acquire' | 'lock.release' | 'edit' }>;
+/** Lock, edit and binary custom messages that wait while a query is open. */
+export type ConnectionVerifyHeldMessage =
+  Extract<ClientMessage, { t: 'lock.acquire' | 'lock.release' | 'edit' }> | Uint8Array;
 
 /** One held message and its frame size. */
 interface ConnectionVerifyHeld {
@@ -59,7 +60,7 @@ export class ConnectionVerifyState {
   /**
    * Holds a message until the open query is answered.
    *
-   * @param message Lock or edit message.
+   * @param message Lock, edit or binary custom message.
    * @param bytes Frame size.
    * @returns False when the held messages would exceed their limits.
    */

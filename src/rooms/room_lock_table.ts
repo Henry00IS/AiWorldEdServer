@@ -43,14 +43,15 @@ export class RoomLockTable {
    *
    * @param locksPerUserMaximum Most locks one user may hold.
    * @param locksPerRoomMaximum Most locks the whole room may hold.
-   * @param locksServerBudget Lock budget shared by every room of the relay.
+   * @param locksRoomBudget Lock budget shared by scene and custom locks within
+   *   one room.
    * @param leases Edit lease of each member; every lock belongs to the holder's
    *   single running lease.
    */
   constructor(
     private readonly locksPerUserMaximum: number,
     private readonly locksPerRoomMaximum: number,
-    private readonly locksServerBudget: LimiterSharedBudget = new LimiterSharedBudget(Number.MAX_SAFE_INTEGER),
+    private readonly locksRoomBudget: LimiterSharedBudget = new LimiterSharedBudget(Number.MAX_SAFE_INTEGER),
     readonly leases: RoomLeaseTable = new RoomLeaseTable(),
   ) {}
 
@@ -122,13 +123,13 @@ export class RoomLockTable {
   }
 
   /**
-   * Shares ids with the user, consuming the server budget for new entries.
+   * Shares ids with the user, consuming the room budget for new entries.
    *
    * @param user User id.
    * @param ids Ids to share.
    */
   sharedGrant(user: number, ids: Iterable<string>): void {
-    this.locksServerBudget.consume(this.shared.grant(user, ids));
+    this.locksRoomBudget.consume(this.shared.grant(user, ids));
   }
 
   /**
@@ -169,13 +170,13 @@ export class RoomLockTable {
   }
 
   /**
-   * Stops sharing ids and returns them to the server budget.
+   * Stops sharing ids and returns them to the room budget.
    *
    * @param user User id.
    * @param ids Ids to release, or undefined for all.
    */
   private sharedRelease(user: number, ids?: readonly string[]): void {
-    this.locksServerBudget.release(this.shared.release(user, ids));
+    this.locksRoomBudget.release(this.shared.release(user, ids));
   }
 
   /**
@@ -192,7 +193,7 @@ export class RoomLockTable {
       held.add(id);
     }
     this.objectIdsByHolder.set(user, held);
-    this.locksServerBudget.consume(this.holderByObjectId.size - sizeBefore);
+    this.locksRoomBudget.consume(this.holderByObjectId.size - sizeBefore);
   }
 
   /**
@@ -212,7 +213,7 @@ export class RoomLockTable {
       this.holderByObjectId.delete(id);
     }
     if (held?.size === 0) this.objectIdsByHolder.delete(user);
-    this.locksServerBudget.release(released.length);
+    this.locksRoomBudget.release(released.length);
     if (this.countFor(user) === 0) this.leases.end(user);
     return released;
   }
@@ -227,9 +228,9 @@ export class RoomLockTable {
     return this.heldSet(user);
   }
 
-  /** Drops every lock of a closing room and returns them to the server budget. */
+  /** Drops every lock of a closing room and returns them to the room budget. */
   releaseEverything(): void {
-    this.locksServerBudget.release(this.holderByObjectId.size + this.shared.countTotal());
+    this.locksRoomBudget.release(this.holderByObjectId.size + this.shared.countTotal());
     this.leases.clear();
     this.shared.clear();
     this.holderByObjectId.clear();
@@ -302,8 +303,8 @@ export class RoomLockTable {
   }
 
   /**
-   * Checks a planned lock change against the per-user, per-room and server-wide
-   * limits.
+   * Checks per-user/table limits and the combined scene/custom budget of this
+   * room.
    *
    * @param userTotalAfter User lock count after the change.
    * @param roomDelta Change of the room lock count.
@@ -313,7 +314,7 @@ export class RoomLockTable {
     return (
       userTotalAfter <= this.locksPerUserMaximum &&
       this.countTotal() + roomDelta <= this.locksPerRoomMaximum &&
-      this.locksServerBudget.fits(roomDelta)
+      this.locksRoomBudget.fits(roomDelta)
     );
   }
 

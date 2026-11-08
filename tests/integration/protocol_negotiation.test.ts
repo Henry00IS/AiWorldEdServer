@@ -7,7 +7,7 @@ import { afterAll, afterEach, beforeAll, expect, test } from 'bun:test';
 import { collabServerStart, type CollabServer } from '../../src/server/server_collab.ts';
 import { CLOSE_CODES, PROTOCOL_ID } from '../../src/shared/protocol_definitions.ts';
 import { PROTOCOL_GOLDEN_VECTORS_V2 } from '../../src/shared/protocol_golden_vectors.ts';
-import { TestClient } from '../support/test_client.ts';
+import { TestClient, TEST_COMPATIBILITY_IDENTITY } from '../support/test_client.ts';
 import { roomCreate, testRoomJoinSynced } from '../support/test_room.ts';
 import { testConfiguration } from '../support/test_configuration.ts';
 
@@ -118,7 +118,10 @@ test('joining a room made with another protocol version explains the mismatch', 
   room.protocol = { version: 1, caps: new Set(), client: 'AiWorldEd/0.1' };
   const joiner = await TestClient.connect(server.port);
   clients.push(joiner);
-  const reply = await joiner.request({ t: 'room.join', room: roomId, discardLocalWork: true }, 'room.joined');
+  const reply = await joiner.request(
+    { t: 'room.join', compatibility: TEST_COMPATIBILITY_IDENTITY, room: roomId, discardLocalWork: true },
+    'room.joined',
+  );
   expect(reply).toMatchObject({ t: 'error', code: 'protocol_mismatch', roomProtocol: 1, yourProtocol: 2 });
   expect(reply.message).toBe('This room uses protocol v1; your editor speaks v2. Update or join a compatible room.');
 });

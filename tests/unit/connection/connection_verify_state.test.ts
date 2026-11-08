@@ -21,3 +21,15 @@ test('a new state is idle, unrefuted and has its full query burst', () => {
   expect([state.pending, state.refuted]).toEqual([null, 0]);
   expect([state.bucket.take(), state.bucket.take(), state.bucket.take()]).toEqual([true, true, false]);
 });
+
+/** Binary frames consume the very same held-byte budget as scene edits. */
+test('custom binary frames count toward held bytes and clear with the queue', () => {
+  const state = new ConnectionVerifyState({ perSecond: 1, burst: 1, heldMessagesMaximum: 3, heldBytesMaximum: 40 });
+  expect(state.hold({ t: 'lock.release' }, 20)).toBe(true);
+  expect(state.hold(new Uint8Array(20), 20)).toBe(true);
+  expect(state.hold(new Uint8Array(1), 1)).toBe(false);
+  expect(state.next()).toEqual({ t: 'lock.release' });
+  expect(state.next()).toEqual(new Uint8Array(20));
+  state.heldClear();
+  expect(state.hold(new Uint8Array(40), 40)).toBe(true);
+});

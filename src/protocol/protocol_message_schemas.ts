@@ -1,5 +1,5 @@
-import { COMPATIBILITY_REASONS } from '../shared/compatibility_identity.ts';
 /** Closed schemas for every client message of protocol version 2. */
+import { COMPATIBILITY_REASONS } from '../shared/compatibility_identity.ts';
 import {
   EDIT_KINDS,
   PROTOCOL_ID,
@@ -158,8 +158,7 @@ export const CLIENT_MESSAGE_SCHEMAS: Readonly<Record<ClientMessageType, Schema>>
         type: 'object',
         required: {
           version: { type: 'string', min: 1, max: 64 },
-          schema: { type: 'int', min: 0, max: 0xffffffff },
-          caps: { type: 'array', min: 0, max: 32, items: { type: 'string', min: 1, max: 64 } },
+          homeUrl: { type: 'string', min: 1, max: 256 },
         },
       },
     },

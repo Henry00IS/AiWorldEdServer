@@ -94,24 +94,9 @@ export class TestClient {
    * @param message Object to send as JSON.
    */
   send(message: object): void {
-    this.socket.send(JSON.stringify(this.leaseFill(this.identityFill(message))));
+    this.socket.send(JSON.stringify(this.leaseFill(message)));
     const typed = message as { t?: string; ids?: unknown };
     if (typed.t === 'lock.release' && typed.ids === undefined) this.leaseNext();
-  }
-
-  /**
-   * Supplies the common fixture identity for legacy join tests.
-   *
-   * @param message Outgoing request.
-   * @returns Request with identity defaults for room joins.
-   */
-  private identityFill(message: object): object {
-    return (message as { t?: string }).t === 'room.join'
-      ? {
-          compatibility: { version: '1', schema: 1, caps: ['scene'] },
-          ...message,
-        }
-      : message;
   }
 
   /**
@@ -262,7 +247,10 @@ export class TestClient {
         this.send({
           t: 'compatibility.result',
           q: message.q,
-          allow: message.compatibility.version === '1' && message.compatibility.schema === 1,
+          homeUrl: TEST_COMPATIBILITY_IDENTITY.homeUrl,
+          allow:
+            message.compatibility.version === TEST_COMPATIBILITY_IDENTITY.version &&
+            message.compatibility.homeUrl === TEST_COMPATIBILITY_IDENTITY.homeUrl,
         });
         return;
       }
@@ -293,3 +281,6 @@ export class TestClient {
     });
   }
 }
+
+/** Explicit identity used by test fixtures; never injected by the transport. */
+export const TEST_COMPATIBILITY_IDENTITY = { homeUrl: 'https://editor.invalid/AiWorldEd', version: '1' };

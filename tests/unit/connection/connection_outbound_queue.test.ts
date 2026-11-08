@@ -106,10 +106,10 @@ test('backed-up queues share a server budget and the one receiving more data pas
   expect(overflows).toEqual(['second']);
 });
 
-/** Proves the 64 MiB cap includes bytes already accepted by the socket. */
-test('64 MiB combined queue and socket boundary is exact and kicks once over', () => {
+/** Proves the 16 MiB cap includes bytes already accepted by the socket. */
+test('16 MiB combined queue and socket boundary is exact and kicks once over', () => {
   const { socket } = socketFake();
-  const cap = 64 * 1024 * 1024;
+  const cap = 16 * 1024 * 1024;
   let kicked = 0;
   const queue = new ConnectionOutboundQueue(socket, cap, 1024, () => kicked++);
   socket.buffered = cap - 1024;
@@ -125,8 +125,8 @@ test('64 MiB combined queue and socket boundary is exact and kicks once over', (
 test('socket-only backlog exceeding the cap also kicks on flush', () => {
   const { socket } = socketFake();
   let kicked = 0;
-  const queue = new ConnectionOutboundQueue(socket, 64 * 1024 * 1024, 1024, () => kicked++);
-  socket.buffered = 64 * 1024 * 1024 + 1;
+  const queue = new ConnectionOutboundQueue(socket, 16 * 1024 * 1024, 1024, () => kicked++);
+  socket.buffered = 16 * 1024 * 1024 + 1;
   queue.flush();
   expect(kicked).toBe(1);
 });
