@@ -94,7 +94,7 @@ export async function transferHttpServe(core: ServerCore, request: Request, link
   if (request.method !== 'GET' && request.method !== 'HEAD') return transferHttpStatus(405);
   const owner = TRANSFER_LINK_PATTERN.test(link) ? handlerTransferLinkOwner(core, link) : null;
   if (owner === null) return transferHttpStatus(404);
-  const url = new URL(request.url);
+  const url = transferHttpPublicUrl(request, core.config.trustProxy);
   const download = transferDownloadStart(owner, link, url.searchParams.has('thumbnail'));
   if (download === null) return transferHttpStatus(503);
   request.signal.addEventListener('abort', () => transferDownloadEnd(download, null), { once: true });
@@ -109,6 +109,21 @@ export async function transferHttpServe(core: ServerCore, request: Request, link
   if (request.method === 'GET') return transferHttpGet(download, request.headers.get('range'), info.size, headers);
   transferDownloadEnd(download, null);
   return new Response(null, { headers });
+}
+
+/**
+ * Returns the request URL as the downloader sees it: behind a trusted proxy
+ * that terminated TLS (`X-Forwarded-Proto: https`) it is an https URL, so the
+ * links of crawler cards work.
+ *
+ * @param request HTTP request.
+ * @param trustProxy Whether the relay sits behind a trusted proxy.
+ * @returns Public request URL.
+ */
+export function transferHttpPublicUrl(request: Request, trustProxy: boolean): URL {
+  const url = new URL(request.url);
+  if (trustProxy && request.headers.get('x-forwarded-proto') === 'https') url.protocol = 'https:';
+  return url;
 }
 
 /**
