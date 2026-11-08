@@ -1,60 +1,100 @@
-# aiworlded-server
+# AiWorldEd collaboration relay
 
-Collaborative level editing relay for [AiWorldEd](https://github.com/Henry00IS/AiWorldEd).
-A small, fast Bun + TypeScript WebSocket service. It **never holds the world**:
-it only negotiates between the room owner (who has the project on disk) and the
-other users, relays edits through short-lived per-recipient queues, and enforces
-short-lived edit leases (selection never locks).
+AiWorldEdServer is the Bun/TypeScript WebSocket relay used by AiWorldEd editors.
+It creates rooms, admits members, relays scene edits and owner-supplied snapshots
+and assets, coordinates locks and leases, and carries chat, presence, file
+transfers and third-party binary messages.
 
-Contributors and agents: read [AGENTS.md](AGENTS.md) for the code standards and
-server rules before changing anything.
+The **room owner is the source of truth**. The relay does not keep a world,
+interpret editor scene data, merge scenes, implement undo, or persist chat or
+files. Owners provide snapshots, answer verification requests and serve shared
+files from their connected editor. If the owner leaves, the room closes; members
+are told they are offline and should save locally. There is no owner migration.
+Rooms and connection state are in memory and disappear when the relay restarts.
+A room password controls admission; declared editor identity is compatibility,
+not authentication.
 
-The official public relay is `wss://aiworlded.00labs.net/ws`; editor builds connect to it by
-default. To run your own relay, see [`docs/SELF_HOSTING.md`](docs/SELF_HOSTING.md).
+## Install your own relay
 
-```
-bun install
-bun test            # unit + integration tests (real local server, dummy proxy secret)
-bun run typecheck
-bun run start       # listens on 0.0.0.0:8081 (HOST / PORT override)
-```
+You need Docker with Docker Compose and a TLS reverse proxy for a public browser
+installation. The repository's root `compose.yaml` builds the supplied Dockerfile;
+no published image or separate database is required.
 
-Running your own relay (executable, Docker, TLS, reverse proxies, every setting):
-[`docs/SELF_HOSTING.md`](docs/SELF_HOSTING.md).
+1. Check out this repository and copy `.env.example` to `.env` in the checkout.
+   Keep the real file private and out of source control.
+2. Configure the root Compose recipe:
+   - `BIND_ADDRESS` is required: choose an interface reachable by your proxy,
+     not an unintentionally public listener. Review the Compose port publication
+     against your network and firewall policy.
+   - `TRUST_PROXY=true` enables forwarded client addresses. Generate a strong
+     private `FORWARDED_SECRET` of at least 16 characters, and configure the
+     proxy to supply the same value in `X-Forwarded-Secret`. Do not send it to
+     editor clients. Forward `X-Real-IP` or `X-Forwarded-For` correctly.
+   - Set `ALLOWED_ORIGINS` to the origins hosting your editors, for example
+     `https://editor.example.com`. Use exact origins unless a wildcard is
+     deliberately required.
+   - `WEBSOCKET_PATH` selects the WebSocket route (default `/ws`). Other limits
+     are optional environment settings. The complete variable reference is
+     [SELF_HOSTING.md](docs/SELF_HOSTING.md); defaults and validation live in
+     [server_configuration.ts](src/config/server_configuration.ts) and
+     [configuration_variable_table.ts](src/config/variables/configuration_variable_table.ts).
+   - Leave internal test rooms disabled on public installations.
+3. Build and start from the checkout:
 
-## Architecture
+   ```sh
+   docker compose up -d --build relay
+   docker compose ps relay
+   ```
 
-```
-AiWorldEd client ──wss──► reverse proxy (TLS, X-Real-IP, optional X-Forwarded-Secret) ──ws──► relay :8081
-```
+4. Terminate TLS at your reverse proxy and expose, for example,
+   `wss://relay.example.com/ws`. Forward WebSocket upgrades and preserve the
+   configured route. Also route `/healthz` and the transfer URLs under the
+   WebSocket route if file sharing is needed. Use timeouts suitable for long-lived
+   WebSockets and streaming downloads. Keep direct access to the relay restricted
+   to your intended trusted network. The root Compose recipe assumes this
+   proxy-terminated TLS arrangement; its health check uses plain HTTP internally.
+5. Confirm the public health endpoint and connect an editor:
 
-| Path              | Role                                                                                                                                                                    |
-| ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `src/shared/`     | Dependency-free modules the client can import directly: protocol constants and types, binary frame codec, password policy, password generator, room/display name rules. |
-| `src/protocol/`   | Strict closed-object schema validator and the schema of every client message.                                                                                           |
-| `src/network/`    | Proxy trust (secret check, client IP), Origin allow list, token bucket, per-key counters, failure windows.                                                              |
-| `src/connection/` | Per-connection session state and the bounded, coalescing outbound queue.                                                                                                |
-| `src/rooms/`      | Room, lock table, registry (per-IP / total room limits), broadcast helpers.                                                                                             |
-| `src/handlers/`   | Message handlers: rooms, locks, edits, streams/assets.                                                                                                                  |
-| `src/server/`     | `ServerCore` (handshake, rate limits, dispatch, lifecycle) and the `Bun.serve` wiring.                                                                                  |
+   ```sh
+   curl --fail https://relay.example.com/healthz
+   ```
 
-Memory model: a room is metadata + members + lock table + the state of streams
-in flight. Edits exist only in recipients' outbound queues until the socket
-accepts them, then they are dropped. Each edit is serialized once and the same
-string is shared by all recipient queues. Consecutive queued edits are sent as one
-`edits` frame ("replicate these N edits").
+   `GET /healthz` returns `ok` followed by a newline. Compose also has a container
+   health check. Health alone does not exercise collaboration: check a
+   `hello`/`welcome` exchange and a two-editor create/join session as well.
 
-## Protocol (version 2)
+To update, obtain the desired revision, then run `docker compose up -d --build
+relay` again. Existing rooms are not persisted, so arrange updates with users and
+have them save first. Retain your private environment configuration. The container
+runs as a non-root user with a read-only filesystem; Compose supplies temporary
+scratch space and resource limits.
 
-Text frames are JSON objects with a `t` type. Every client message is checked against
-a strict schema: unknown types, unknown fields, wrong types, out-of-range values or
-`__proto__` tricks close the connection with `4001`. Binary frames are only used for
-stream chunks and presence. An optional `r` (int 0..2^31-1) on requests is echoed back in replies and errors.
-Version 1 (selection locks) is no longer served; see [Protocol evolution](#protocol-evolution).
+An alternative standalone recipe is supplied in
+`deploy/self-host/compose.yaml`, with optional `relay.env` and a certificate
+mount. It is a different recipe, not an override for the root file: review its
+published listener and TLS settings before using it. The Dockerfile health check
+supports direct TLS; the root Compose health-check override is for proxy TLS.
 
-### Handshake
+## Protocol
 
-The first frame must be `hello` within 5 s:
+This reference is derived from the closed client schemas, shared wire constants
+and handlers in `src/protocol/`, `src/shared/` and `src/handlers/`.
+
+### Transport, types and handshake
+
+Use a WebSocket at the configured route. Control messages are UTF-8 JSON objects
+with a literal `t` discriminator. Binary messages have the formats below. Unknown
+client message types, unknown fields, invalid types or invalid bounds are protocol
+violations; only the explicitly supported `x` extension object admits unknown
+keys. Never insert remote strings into HTML: render names, chat, versions and
+error text as inert text, and validate any supplied links independently.
+
+Notation: `?` means optional, `int[a..b]` is an inclusive safe-integer range,
+`string[a..b]` counts UTF-16 code units on the wire, and `T[n..m]` is an array
+length bound. `u32` is an unsigned 32-bit integer; binary integers are big-endian.
+An optional request id `r` is echoed only where the schema permits it.
+
+The first message must be `hello` within five seconds:
 
 ```json
 {
@@ -62,617 +102,443 @@ The first frame must be `hello` within 5 s:
   "protocol": "aiworlded-collab",
   "version": 2,
   "minVersion": 2,
-  "client": "AiWorldEd/0.1",
-  "name": "Henry",
-  "caps": ["select"],
-  "x": {}
+  "client": "MyEditor/1.2.3",
+  "name": "Builder",
+  "caps": ["select", "transfer", "stats", "typing"]
 }
 ```
 
-`version` is the newest protocol version the editor speaks, `minVersion` (default `version`) the oldest.
-`client` is the editor build (printable ASCII, ≤64); the relay records it on rooms the editor creates.
-`caps` lists optional features the editor supports; `x` is an extension object (see Protocol evolution).
+Both supported protocol bounds are currently **2**. The relay selects the newest
+common protocol version and intersects the offered optional transport capabilities
+`select`, `transfer`, `stats`, `typing`. These are unrelated to room software
+identity. No common version produces `protocol_unsupported`, followed by close 4008. A room must also use the connection's negotiated protocol version.
+`client` identifies the editor name/build shown in the room list.
 
-Reply: `{"t":"welcome","protocol":"aiworlded-collab","version":2,"versions":{"min":2,"max":2},"caps":["select"],"user":7,"name":"Henry","via":"proxy","limits":{...}}`.
-`version` is the negotiated version (the newest both sides speak), `versions` the relay's range and
-`caps` the agreed capabilities (the editor's list intersected with the relay's; unknown ones are ignored).
-Without a common version the relay sends
-`error {code:'protocol_unsupported', versions:{min,max}, message}` and closes with `4008`; `message` says
-whether the editor or the server needs an update.
-Display names are at most 12 characters (trimmed, no control characters). A longer hello name is
-cut to 12; a missing or invalid one becomes `User N` (`N` = user id modulo 10^7).
-`via` is `proxy` when the request carried the correct `X-Forwarded-Secret`, otherwise `direct`.
-`limits` reports the effective limits (payload, chunk, window, snapshot/asset sizes, ids per
-message, ops per edit, messages per second, rooms per IP, room entries per IP per minute, users per room, locks per user, presence
-rate, `roomListMaximum`, `roomListPushIntervalMs`, and the chat limits `chatIntervalMs`, `chatTextLength`
-and `chatTextLines`, and the transfer link limits `transferIntervalMs`, `transferLifetimeMs` and
-`transferBytes`).
-Every relay supports the live room list (`room.subscribe`). Optional features added later are capability flags.
+The response is `welcome` with `protocol:string`, `version:int`,
+`versions:{min:int,max:int}`, `caps:string[]`, `user:u32`, `name:string`,
+`via:"direct"|"proxy"`, and `limits:object`; `online:int` is present when `stats`
+is negotiated. Every `limits` value is numeric. Its fields are:
+`maxPayloadBytes`, `streamChunkBytes`, `streamWindowBytes`, `snapshotBytes`,
+`assetBytes`, `idsPerMessage`, `opsPerEdit`, `messagesPerSecond`, `roomsPerIp`,
+`roomEntriesPerIpPerMinute`, `usersPerRoom`, `locksPerUser`, `presencePerSecond`,
+`lockLeaseMs`, `roomListMaximum`, `roomListPushIntervalMs`, `chatIntervalMs`,
+`chatTextLength`, `chatTextLines`, `transferIntervalMs`, `transferLifetimeMs`,
+`transferBytes`, `customBytesPerSecond`, `customMessagesPerSecond`,
+`compatibilityTimeoutMs`. Read effective values rather than assuming defaults.
 
-### Client → server
+### Client commands
 
-| Type                | Fields                                                                                                   | Notes                                                                                                                                                                                                                                                                                                                                   |
-| ------------------- | -------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `ping`              |                                                                                                          | → `pong`                                                                                                                                                                                                                                                                                                                                |
-| `room.list`         |                                                                                                          | → `room.list {rooms:[{id,name,private,users,maxUsers,owner,protocol,editor}]}`. `owner` is the owner's display name; `protocol` and `editor` are the version and editor build the room was created with.                                                                                                                                |
-| `room.subscribe`    |                                                                                                          | → `room.subscribed {rooms, intervalMs}` (full list), then `room.list.update` pushes until unsubscribed or disconnected. Error `subscription_limit` when the relay has too many subscribers.                                                                                                                                             |
-| `room.unsubscribe`  |                                                                                                          | → `room.unsubscribed`. Not an error without a subscription.                                                                                                                                                                                                                                                                             |
-| `room.create`       | `name`, `private`, `password?`, `maxUsers?` (clamped to 32, default 16), `internalTest?`, `displayName?` | → `room.created {room, you, name, color}`. Creator becomes owner. One room per connection.                                                                                                                                                                                                                                              |
-| `room.join`         | `room`, `discardLocalWork: true`, `password?`, `displayName?`                                            | → `room.joined {room, you, name, color, owner, members, locks}` (`name` is the joiner's final, unique name); members are `{user, name, owner, color}`. `discardLocalWork` must be literally `true`: joining always discards local work. A room of another protocol version → `protocol_mismatch {roomProtocol, yourProtocol, message}`. |
-| `room.leave`        |                                                                                                          | → `room.left`. If the owner leaves, the room closes.                                                                                                                                                                                                                                                                                    |
-| `name.set`          | `name`                                                                                                   | Outside a room → `name.changed {name}`. Inside a room → error `name_locked`: a member's name is fixed until it leaves.                                                                                                                                                                                                                  |
-| `chat`              | `text` (≤8192 UTF-16 units on the wire), `file?`                                                         | Room members only. `file {link, name, size, mime}` attaches one of the sender's live transfer links. → `chat.sent {id, from, name, color, text, at}`; others get `chat` with the same fields. See Chat.                                                                                                                                 |
-| `transfer.create`   |                                                                                                          | `transfer` capability. → `transfer.created {link, expiresInMs}` or `transfer_rate_limited {retryAfterMs}`. See Transfer links.                                                                                                                                                                                                          |
-| `transfer.info`     | `q`, `size`, `name`, `mime`                                                                              | Answer to `transfer.get` (no `r`). See Transfer links.                                                                                                                                                                                                                                                                                  |
-| `transfer.missing`  | `q`                                                                                                      | Answer to `transfer.get` when the file is gone (no `r`).                                                                                                                                                                                                                                                                                |
-| `select`            | `ids[]` (≤256, may be empty)                                                                             | Never locks. Relayed as `selected {by, ids}` to members with the `select` capability. 10/s (burst 20) per member; floods are dropped.                                                                                                                                                                                                   |
-| `lock.acquire`      | `lease`, `ids[]`, `replace?`, `shared?[]`                                                                | Starts (or extends) the member's one edit operation. All-or-nothing. → `lock.result {ok:true, add, remove}` or `{ok:false, code}` with `lock_conflict {conflicts:[{id,by,shared?}]}`, `lock_limit`, `lock_unverified {why}`, `lease_busy`, `lease_stale`, `rate_limited`, `throttled`. See Edit leases.                                 |
-| `verify.result`     | `q`, `v: ok\|invalid\|deleted`                                                                           | Owner only: answer to a relay `verify` query (see Owner verification). Does not count against the owner's rate limits.                                                                                                                                                                                                                  |
-| `lock.release`      | `ids?`                                                                                                   | Omit `ids` to end the operation; the lease ends once nothing is held.                                                                                                                                                                                                                                                                   |
-| `lock.renew`        | `lease` (no `r`)                                                                                         | Keepalive of the running lease while input is active. 4/s (burst 8); more counts as misuse. No reply.                                                                                                                                                                                                                                   |
-| `edit`              | `seq`, `lease?`, `ops:[{k, ids, d?, p?}]`                                                                | See Edit leases. Accepted edits come back in the sender's own `edits` stream as `{from:you, seq}` (the ack); rejection: `edit.rejected {seq, reason, ids}`.                                                                                                                                                                             |
-| `asset.request`     | `name`                                                                                                   | Member asks the owner for an asset (relayed as `asset.request {from, name}`).                                                                                                                                                                                                                                                           |
-| `asset.missing`     | `to`, `name`                                                                                             | Owner answers that an asset does not exist.                                                                                                                                                                                                                                                                                             |
-| `stream.begin`      | `to`, `stream`, `kind: snapshot\|asset`, `size`, `name?`, `mime?`                                        | Owner only. `name` is required for assets.                                                                                                                                                                                                                                                                                              |
-| _(binary chunk)_    | see below                                                                                                | Owner only.                                                                                                                                                                                                                                                                                                                             |
-| _(binary presence)_ | see below                                                                                                | Synced members only. Low priority, latest-only.                                                                                                                                                                                                                                                                                         |
-| `stream.end`        | `to`, `stream`                                                                                           | Must follow exactly `size` bytes.                                                                                                                                                                                                                                                                                                       |
-| `stream.abort`      | `to`, `stream`, `reason?`                                                                                |                                                                                                                                                                                                                                                                                                                                         |
+The following field lists are rendered directly from
+`CLIENT_MESSAGE_SCHEMAS` in `src/protocol/protocol_message_schemas.ts`.
+The discriminator `t` is the command name. Unless listed, no other fields are
+accepted. Bounds below are wire bounds; handlers can impose stricter effective
+limits and semantic checks.
 
-Object ids: 1–64 chars of `[A-Za-z0-9_.:-]`, max 4096 per message. Room ids: 16 chars base64url.
-Edit kinds: `transform`, `geometry`, `property`, `texture`, `reparent`, `delete`, `create`;
-max 256 ops per edit; `d` is opaque JSON (max depth 32, max 200k nodes) relayed verbatim.
+- **`hello`**: `protocol: "aiworlded-collab"; version: int[1..65535]; client: string[1..64] matching /^[\x20-\x7e]+$/; name?: string[1..64]; minVersion?: int[1..65535]; caps?: (string[1..32] matching /^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*$/)[0..32]; x?: extension(keys<=16, key=/^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*$/, depth<=4, nodes<=256)`.
+- **`ping`**: `r?: int[0..2147483647]`.
+- **`room.list`**: `r?: int[0..2147483647]`.
+- **`room.subscribe`**: `r?: int[0..2147483647]`.
+- **`room.unsubscribe`**: `r?: int[0..2147483647]`.
+- **`room.create`**: `name: string[1..512]; private: boolean; r?: int[0..2147483647]; password?: string[1..256]; internalTest?: boolean; maxUsers?: int[2..1000]; displayName?: string[1..64]; x?: extension(keys<=16, key=/^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*$/, depth<=4, nodes<=256)`.
+- **`room.join`**: `room: string[16..16] matching /^[A-Za-z0-9_-]{16}$/; discardLocalWork: true; r?: int[0..2147483647]; password?: string[1..256]; displayName?: string[1..64]; compatibility?: {version: string[1..64]; homeUrl: string[1..256]}`.
+- **`compatibility.result`**: `q: int[1..4294967295]; allow: boolean; reason?: "incompatible_client"|"owner_left"|"owner_timeout"; homeUrl?: string[1..256]`.
+- **`room.leave`**: `r?: int[0..2147483647]`.
+- **`name.set`**: `name: string[1..64]; r?: int[0..2147483647]`.
+- **`chat`**: `text: string[1..8192]; r?: int[0..2147483647]; file?: {link: string[43..43] matching /^[A-Za-z0-9_-]{43}$/; name: string[0..1020]; size: int[0..9007199254740991]; mime: string[0..255]}`.
+- **`lock.acquire`**: `lease: int[1..9007199254740991]; ids: (string[1..64] matching /^[A-Za-z0-9_.:-]+$/)[1..4096]; r?: int[0..2147483647]; replace?: boolean; shared?: (string[1..64] matching /^[A-Za-z0-9_.:-]+$/)[1..4096]`.
+- **`lock.release`**: `r?: int[0..2147483647]; ids?: (string[1..64] matching /^[A-Za-z0-9_.:-]+$/)[1..4096]`.
+- **`lock.renew`**: `lease: int[1..9007199254740991]`.
+- **`select`**: `ids: (string[1..64] matching /^[A-Za-z0-9_.:-]+$/)[0..256]`.
+- **`typing`**: `stop?: boolean`.
+- **`edit`**: `seq: int[0..9007199254740991]; ops: ({k: "transform"|"geometry"|"property"|"texture"|"reparent"|"delete"|"create"; ids: (string[1..64] matching /^[A-Za-z0-9_.:-]+$/)[1..4096]; d?: opaque JSON(depth<=32, nodes<=200000); p?: (string[1..64] matching /^[A-Za-z0-9_.:-]+$/)[1..4096]})[1..256]; lease?: int[1..9007199254740991]`.
+- **`verify.result`**: `q: int[1..4294967295]; v: "ok"|"invalid"|"deleted"`.
+- **`asset.request`**: `name: string[1..512] matching /^[^\p{Cc}]+$/u; r?: int[0..2147483647]`.
+- **`asset.missing`**: `to: int[1..4294967295]; name: string[1..512] matching /^[^\p{Cc}]+$/u`.
+- **`stream.begin`**: `to: int[1..4294967295]; stream: int[1..4294967295]; kind: "snapshot"|"asset"; size: int[0..536870912]; name?: string[1..512] matching /^[^\p{Cc}]+$/u; mime?: string[1..100] matching /^[\w.+-]+\/[\w.+-]+$/`.
+- **`stream.end`**: `to: int[1..4294967295]; stream: int[1..4294967295]`.
+- **`stream.abort`**: `to: int[1..4294967295]; stream: int[1..4294967295]; reason?: string[1..200] matching /^[\x20-\x7e]+$/`.
+- **`transfer.create`**: `r?: int[0..2147483647]`.
+- **`transfer.info`**: `q: int[1..4294967295]; size: int[0..9007199254740991]; name: string[0..1020]; mime: string[0..255]`.
+- **`transfer.missing`**: `q: int[1..4294967295]`.
 
-### Server → client
+### Replies and events
 
-| Type                                                                                                                     | Fields                                                                                                                               |
-| ------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------ |
-| `welcome`, `pong`, `room.list`, `room.created`, `room.joined`, `room.left {reason}`                                      | replies                                                                                                                              |
-| `room.subscribed {rooms, intervalMs}`, `room.unsubscribed`                                                               | replies to `room.subscribe` / `room.unsubscribe`                                                                                     |
-| `room.list.update {rooms, removed}`                                                                                      | live list: new or changed entries, removed room ids                                                                                  |
-| `member.joined {user, name, color}`, `member.left {user}`                                                                | membership                                                                                                                           |
-| `chat {id, from, name, color, text, at, file?}`                                                                          | chat message of another member; `file` as sanitized by the relay                                                                     |
-| `locks {by, add?, remove?, expired?}`                                                                                    | lock changes of another user; `expired:true` (sent to the holder too) when a lease timed out: revert previews to the committed state |
-| `selected {by, ids}`                                                                                                     | selection of another member (`select` capability only)                                                                               |
-| `transfer.created {link, expiresInMs}`                                                                                   | reply to `transfer.create`                                                                                                           |
-| `transfer.get {q, link}`, `transfer.chunk {q, offset, length}`                                                           | somebody downloads one of your links: answer with `transfer.info` / `transfer.missing`, then with binary transfer chunks             |
-| `lock.result`                                                                                                            | reply to `lock.acquire` / `lock.release`                                                                                             |
-| `edits {list:[{from, seq, ops}]}`                                                                                        | relayed edits in relay order; own edits are acked as `{from:you, seq}` without ops                                                   |
-| `edit.rejected {seq, reason, ids, why?}`                                                                                 | `lock_conflict`, `lock_limit`, `lock_unverified`, `outside_lease`, `lease_stale`, `rate_limited`, `throttled`                        |
-| `verify {q, ids, anc}`                                                                                                   | owner only: confirm a member's claim, answer `verify.result`                                                                         |
-| `snapshot.request {for}`                                                                                                 | owner only: send the world to user `for`                                                                                             |
-| `stream.begin {from, stream, kind, size, name?, mime?}`, binary chunks, `stream.end {from, stream}`, `stream.abort {from | to, stream, reason}`                                                                                                                 | streams |
-| `stream.credit {to, stream, delivered}`                                                                                  | owner only: bytes of a stream handed to the recipient                                                                                |
-| `asset.request {from, name}` (owner), `asset.missing {from, name}`                                                       | assets                                                                                                                               |
-| `room.closed {reason:'owner_left', offline:true, message}`                                                               | the owner left: you are now offline, save locally                                                                                    |
-| `error {code, r?, ...}`                                                                                                  | see error codes                                                                                                                      |
+Replies with a permitted request id include `r?:int[0..2147483647]`.
 
-`displayName` on create and join replaces the hello name for this room; an invalid one is rejected with
-`invalid_name {reason, field: "displayName"}`. `color` is a color slot: the lowest slot no current member
-of the room holds (owner 0), freed when the member leaves. Clients map slots to colors.
+Common records:
 
-Error codes: `not_in_room`, `not_synced`, `not_owner`, `already_in_room`, `busy`, `invalid_name`,
-`password_required`, `password_not_allowed`, `weak_password {issues}`, `wrong_password`,
-`too_many_attempts`, `room_not_found`, `room_full`, `room_limit_ip`, `room_limit_server`,
-`internal_test_forbidden`, `stream_invalid {detail}`, `name_locked`, `invalid_chat {reason}`
-(`empty`, `too_long`, `too_many_lines`), `chat_rate_limited {retryAfterMs}`,
-`transfer_rate_limited {retryAfterMs}`, `transfer_unavailable` (chat `file` link not live or not the sender's),
-`protocol_unsupported {versions, message}`, `protocol_mismatch {roomProtocol, yourProtocol, message}`.
+- `Room = {id:string, name:string, private:boolean, users:int, maxUsers:int,
+owner:string, protocol:int, editor:string}`. `owner` here is a display name.
+- `Member = {user:u32, name:string, owner:boolean, color:int}`.
+- `LockSet = {by:u32, ids:string[]}`.
+- `Operation = {k:"transform"|"geometry"|"property"|"texture"|"reparent"|"delete"|"create",
+ids:string[], d?:unknown JSON, p?:string[]}`. `p` is the claimed parent chain,
+  parent first. Object ids have 1–64 characters matching `[A-Za-z0-9_.:-]+`.
+- `File = {link:string, name:string, size:int, mime:string}`. The link token has
+  exactly 43 base64url characters. File names and MIME types are sanitized.
 
-Display names are unique per room: a joiner whose name (compared NFKC-normalized and case-insensitively)
-is already used gets the lowest free number appended (`Henry`, `Henry2`, `Henry3`, ...), shortening the
-name so it stays within 12 characters. The final name comes back in `room.joined.name` and is used in
-`member.joined`, member lists and chat. It stays fixed until the member leaves.
+Server messages, excluding the third-party messages documented below:
 
-### Chat
+- `pong`: no additional fields.
+- `room.list`: `rooms:Room[]`.
+- `room.subscribed`: `rooms:Room[], intervalMs:int`.
+- `room.unsubscribed`: no additional fields.
+- `room.list.update`: `rooms:Room[], removed:string[]`; changed/new entries and
+  ids removed since the preceding list. Internal test rooms are not public listings.
+- `room.created`: `room:Room, you:u32, name:string, color:int`.
+- `room.joined`: `room:Room, you:u32, name:string, color:int, owner:u32,
+members:Member[], locks:LockSet[]`.
+- `room.left`: `reason:string`; the owner's explicit leave uses `closed`.
+- `room.closed`: `reason:"owner_left", offline:true, message:string`.
+- `member.joined`: `user:u32, name:string, color:int`.
+- `member.left`: `user:u32`.
+- `name.changed`: `name:string`.
+- `compatibility.check`: `q:u32, compatibility:{homeUrl:string,version:string}`.
+- `snapshot.request`: `for:u32` (owner only).
+- `asset.request`: `from:u32, name:string` (to owner).
+- `asset.missing`: `from:u32, name:string` (to requesting member).
+- `stream.begin`: `from:u32, stream:u32, kind:"snapshot"|"asset", size:int,
+name?:string, mime?:string`.
+- `stream.end`: `from:u32, stream:u32`.
+- `stream.abort`: `stream:u32, reason:string`, with `from:u32` to a recipient or
+  `to:u32` to an owner.
+- `stream.credit`: `to:u32, stream:u32, delivered:int` (to owner; cumulative
+  bytes handed to the recipient).
+- `lock.result`: `ok:boolean, add?:string[], remove?:string[], code?:string,
+conflicts?:{id:string,by:u32,shared?:boolean}[], why?:string`.
+  Success includes `add`/`remove`; failure includes `code` and relevant details.
+- `locks`: `by:u32, add?:string[], remove?:string[], expired?:boolean`.
+- `verify`: `q:u32, ids:string[], anc:string[]` (owner only).
+- `edits`: `list:{from:u32,seq:int,ops?:Operation[]}[]`. The sender's own entry
+  omits `ops` and acknowledges its sequence; other members receive the operations.
+- `edit.rejected`: `seq:int, reason:string, ids:string[], why?:string`.
+- `selected`: `by:u32, ids:string[]` (negotiated `select` only).
+- `typing`: `users:u32[]` (negotiated `typing` only; recipient's own id omitted).
+- `chat` / `chat.sent`: `id:int, from:u32, name:string, color:int, text:string,
+at:int, file?:File`. `at` is epoch milliseconds; only `chat.sent` is the sender's reply.
+- `transfer.created`: `link:string, expiresInMs:int`.
+- `transfer.get`: `q:u32, link:string` (to the link's connected owner).
+- `transfer.chunk`: `q:u32, offset:int, length:int` (request for the next bytes).
+- `stats`: `online:int` (negotiated `stats` only, updates at most every five seconds).
+- `error`: `code:string, r?:int`, plus the code-specific fields described below.
 
-`chat {text}` sends one message to the room. The relay normalizes the text with `chatTextNormalize`
-(`src/shared/chat_text_policy.ts`, shared with the client): NFC, `\r\n`/`\r`/U+2028/U+2029 become `\n`,
-control characters other than `\n`, bidi and other format characters (zero width spaces, overrides,
-isolates, tags), private-use and lone surrogate code points and blank-looking fillers are removed, a zero
-width joiner survives only between emoji, combining marks are capped at 4 per character, tabs become
-spaces, trailing spaces and runs of blank lines are trimmed. The result must be non-empty, at most
-`chatTextLength` (2000) code points and at most `chatTextLines` (20) lines, else `invalid_chat {reason}`.
-Each session may send one message per `chatIntervalMs` (5 s); a faster one gets
-`chat_rate_limited {retryAfterMs}` and does not count. Members get `{id, from, name, color, text, at}`:
-`id` grows per room, `at` is the relay clock (epoch ms). The relay keeps no history: a message reaches
-only the members in the room when it was sent, and leaving drops anything still waiting. Delivery has
-lower priority than edits and streams: each recipient keeps a FIFO of at most `chatPendingPerRecipient`
-(64) messages that drains only while its outbound queue is empty (ahead of presence); when a slow
-recipient falls further behind, its oldest waiting message is dropped. Clients must render chat as
-plain text only (no HTML, markdown or links).
+### Room lifecycle and software identity
 
-Close codes: `4001` protocol violation, `4002` rate limited, `4003` handshake timeout,
-`4004` slow consumer (outbound queue overflow), `4005` reserved, `4006` shutting down,
-`4007` abuse (repeated protocol misuse; the address may not enter rooms for 60 s),
-`4008` protocol unsupported (no common version; preceded by `error protocol_unsupported`).
-Refused upgrades complete the handshake and close at once with a reason the editor can show:
-`4009` origin refused (`origin not allowed: <origin>`), `4010` proxy refused (wrong
-`X-Forwarded-Secret`), `4011` too many connections from one address, `4005` server full.
-At most `refusedSocketsMaximum` (256) refused sockets wait to close; beyond that the upgrade
-gets plain HTTP 403 / 429 / 503.
-`1009` is used by Bun for frames above the payload limit.
+A connection belongs to at most one room. Creation makes it the owner and marks
+it synced. A private room needs a password satisfying the shared password policy;
+`private:false` must not include a password. Room names have additional
+normalization/validation in `room_name_policy.ts`. Display names are normalized,
+limited to 12 characters by the name policy and made unique within the room;
+create/join can supply `displayName`, while `name.set` is allowed outside rooms.
+Room color slots are unique among current members and freed on leave.
 
-### Binary stream chunk
+Joining must explicitly send `discardLocalWork:true` and a compatibility object
+containing the fork's single home URL constant (1–256 characters) and actual
+editor build version (1–64 characters). Although the wire schema permits an absent
+compatibility object, admission then fails closed; it is never a legacy bypass.
+Before adding the joiner or requesting a snapshot, the relay sends the identity
+unchanged to the owner in `compatibility.check`. Only that owner can answer the
+matching query using `compatibility.result`.
 
+The editor admits only an **exact match of both URL and version**, using the same
+`APPLICATION_VERSION` source as its settings window and release builds. There
+are no scene-schema/capability admission policies. Denial uses
+`client_incompatible` with `reason:"incompatible_client"`; an owner may include
+its own `homeUrl`. Only bounded HTTP(S) hints are forwarded. Treat this URL as
+untrusted: show inert text plus an explicit-click link, never auto-open it or
+interpret HTML. Safe external links use `rel="noopener noreferrer"` and
+`target="_blank"`.
+
+An unanswered check fails after five seconds with `owner_timeout`; departure
+uses `owner_left`. At 32 pending checks per room, the oldest pending attempt is
+denied with the retryable timeout reason to admit the newest check. These
+lifecycle failures are not software-incompatibility dialogs. The pending joiner
+has no room membership or scene data. Approval is followed by a fresh room-state
+and capacity check, `room.joined`, membership notification and `snapshot.request`.
+
+### Snapshots, assets and binary frames
+
+The owner answers `snapshot.request` using `stream.begin`, binary chunks and
+`stream.end`. Only the owner streams snapshots/assets to a room member. Asset
+streams require a name. Stream ids are nonzero and scoped to the recipient.
+`stream.end` requires exactly the declared size; finishing a snapshot marks the
+recipient synced. A snapshot timeout or abort removes that pending member.
+`stream.credit` allows at most the announced stream window in flight. The relay
+counts and routes bytes but does not decode the world or asset content; clients
+coordinate how their snapshot boundary relates to edits.
+
+Binary kind 1 (stream chunk), all integers big-endian:
+
+| Offset    | Type  | Meaning                                         |
+| --------- | ----- | ----------------------------------------------- |
+| 0         | u8    | `0xA7`                                          |
+| 1         | u8    | `1`                                             |
+| 2–3       | u16   | zero                                            |
+| 4–7       | u32   | stream id                                       |
+| 8–11      | u32   | target user when sent; sender user when relayed |
+| 12 onward | bytes | nonempty chunk, at most 256 KiB by default      |
+
+Kind 2 is low-priority presence, **not** this 12-byte format. Client header:
+magic, kind `2`, format version `1`, entry count (four u8 values). Relaying inserts
+a sender u32 after that header. At most six 18-byte entries follow: id:u8,
+position:3×float32, packed smallest-three quaternion:u32, and fov/flags:u8.
+Camera ids are 0–15 with fov 1–179; character id is 255, using flag bits 1, 2 and 4.
+Coordinates must be finite and within absolute value 1,000,000. See
+`src/shared/presence_frame.ts` for packing. Only synced members send presence;
+it is latest-only and may be dropped under load.
+
+### Edits, locks and leases
+
+`edit` carries opaque JSON `d`; the relay checks envelope structure, ids, locks,
+parent claims, sequencing/rate budgets and lease rules, not scene semantics.
+Accepted edits are relayed in relay order. Rejected edits are explicit and must
+not be treated as committed. Clients implement scene changes, undo, snapshots
+and merging themselves.
+
+`lock.acquire` is all-or-nothing. `ids` requests exclusive locks; `shared` names
+shared ancestor/container locks. One member has one active edit lease, identified
+by a monotonically growing positive safe integer. Reusing the active lease adds
+ids; another lease needs `replace:true` or gets `lease_busy`. Releasing all locks
+ends the lease. Selection never acquires locks.
+
+Lease-bound edits must match the active lease (`lease_stale`) and remain within
+its ids (`outside_lease`); conflicting holders cause `lock_conflict`. Parent
+chains must not cross another member's exclusive locks. One-shot edits without
+a lease still undergo lock/conflict checks. New ids and deletions update lock
+ownership under the existing edit rules. Scene and custom locks have separate
+key namespaces but share the room's total lock budget.
+
+For previously unheld shared containers, the relay may ask the owner `verify`.
+The owner answers `verify.result` with `ok`, `invalid` or `deleted`; it checks ids
+exist and the claimed ancestor relationships. Queries expire after five seconds.
+A sender's later edits, lock operations and custom frames wait in its same
+bounded FIFO while verification is pending; custom frames cannot overtake an
+earlier edit. `lock_unverified` includes `why` (`invalid`, `deleted`,
+`owner_timeout`, `owner_left`, `rate_limited`).
+
+Accepted edits or renewals extend a lease's five-second idle deadline; renew
+about every 1.5 seconds while an operation is active. There is also a 60-second
+limit without accepted edit progress and a ten-minute total lifetime. Expiry
+releases locks and sends `locks {expired:true}`, including to the holder, whose
+client must revert uncommitted previews. Leaving/disconnecting releases locks.
+
+### Chat, typing and file-transfer chunks
+
+Text chat is a single JSON `chat` message, **not a 256 KiB chunk stream**. It is
+normalized by `chat_text_policy.ts`: NFC, normalized newlines and removal of
+unsafe/invisible characters. Default limits are 2,000 code points, 20 lines and
+one accepted message every five seconds; raw wire input allows up to 8,192
+UTF-16 units before normalization. Empty/overlong/too-many-line messages return
+`invalid_chat`; fast sends return `chat_rate_limited` with `retryAfterMs`.
+There is no chat history. Each recipient has a low-priority 64-message FIFO;
+when full its oldest waiting chat is dropped. Render text inertly.
+
+`typing` starts/refreshes a ten-second indicator, and `typing {stop:true}` clears
+it. Accepted chat and leaving also clear it. Only peers with the negotiated
+`typing` capability receive the user list; other clients may safely ignore it.
+
+With negotiated `transfer`, `transfer.create` produces a one-hour link token,
+at most once every five seconds per owner connection. A chat `file` must refer
+to a live link owned by its sender. File bytes are **not uploaded or stored** by
+the relay. HTTP downloads use `<WebSocket route>/transfer/<link>` on the relay
+origin. The link owner must stay connected and answer `transfer.get` with
+`transfer.info` or `transfer.missing`. The relay requests byte ranges through
+`transfer.chunk`, and the owner answers with binary kind 3:
+
+`magic:u8=0xA7, kind:u8=3, reserved:u16=0, q:u32, offset:u32, payload:bytes`.
+
+Chunks are at most 256 KiB; files are at most 100 MiB, with up to 16 concurrent
+downloads per owner and a 20-second reply timeout. Tokens stop working when the
+owner disconnects or the relay restarts. GET, HEAD, OPTIONS and a single HTTP
+byte Range are supported. Responses sanitize names/MIME and use conservative
+download behavior; query flags `raw` / `download` control raw delivery/download.
+The HTTP handler also supports safe preview metadata for crawlers; clients must
+not assume an arbitrary shared file is an executable web page.
+
+### Errors, reason codes and close codes
+
+The `error.code` literals below are extracted from the shared `ErrorCode` type.
+Malformed wire messages close the connection rather than becoming domain errors.
+Other details are code-specific: `invalid_name` can carry `reason`/`field`,
+`weak_password` carries `issues`, password/join failures carry their code,
+`stream_invalid` can carry `to`/`stream`/`detail`, rate errors may carry
+`retryAfterMs`, protocol errors carry version ranges or room/connection versions
+and a `message`. Incompatibility can include the validated `homeUrl` hint.
+Lock failures use `lock.result {ok:false,code,...}`; edit failures use
+`edit.rejected {seq,reason,ids,why?}`. Inspect the discriminator before deciding
+which failure shape to handle.
+
+`owner_timeout`, `owner_left`, `client_incompatible`, `custom_rate_limited`, `custom_too_large`, `custom_target_invalid`, `invalid_name`, `weak_password`, `password_required`, `password_not_allowed`, `wrong_password`, `too_many_attempts`, `room_not_found`, `room_full`, `room_limit_ip`, `room_limit_server`, `already_in_room`, `not_in_room`, `not_owner`, `not_synced`, `internal_test_forbidden`, `lock_conflict`, `lock_limit`, `not_locked`, `lock_unverified`, `lease_busy`, `lease_stale`, `outside_lease`, `rate_limited`, `throttled`, `stream_invalid`, `subscription_limit`, `name_locked`, `invalid_chat`, `chat_rate_limited`, `busy`, `protocol_unsupported`, `protocol_mismatch`, `transfer_rate_limited`, `transfer_unavailable`.
+
+Chat reasons: `empty`, `too_long`, `too_many_lines`. Compatibility reasons: `incompatible_client`, `owner_timeout`, `owner_left`. Verification `why`: `invalid`, `deleted`, `owner_timeout`, `owner_left`, `rate_limited`.
+
+| Close code | Meaning             |
+| ---------- | ------------------- |
+| 4001       | protocolViolation   |
+| 4002       | rateLimited         |
+| 4003       | handshakeTimeout    |
+| 4004       | slowConsumer        |
+| 4005       | serverFull          |
+| 4006       | shuttingDown        |
+| 4007       | abuse               |
+| 4008       | protocolUnsupported |
+| 4009       | originRefused       |
+| 4010       | proxyRefused        |
+| 4011       | tooManyConnections  |
+
+Bun may also close oversized frames with 1009. A protocol-unsupported refusal sends its error before closing. Refused upgrades may become HTTP 403/429/503 when the bounded refusal queue is full.
+
+### Rate limits and quotas
+
+The following numeric defaults are read directly from `configurationDefault()`. Names containing `Bytes` are byte budgets, `Ms` milliseconds and `Seconds` seconds; `PerSecond`/`PerMinute` are rates, and corresponding `Burst` fields are token-bucket burst allowances. Other maximum/count fields are resource caps. The custom channel is the sliding-window exception described below. Environment configuration may change effective values; `welcome.limits` exposes the subset listed above.
+
+| Configuration field            | Default     |
+| ------------------------------ | ----------- |
+| `compatibilityTimeoutMs`       | 5,000       |
+| `compatibilityPendingPerRoom`  | 32          |
+| `customBytesPerSecond`         | 262,144     |
+| `customMessagesPerSecond`      | 4,096       |
+| `maxPayloadBytes`              | 1,048,576   |
+| `streamChunkBytesMaximum`      | 262,144     |
+| `handshakeTimeoutMs`           | 5,000       |
+| `idleTimeoutSeconds`           | 60          |
+| `messagesPerSecond`            | 120         |
+| `messageBurst`                 | 400         |
+| `bytesPerSecond`               | 16,777,216  |
+| `byteBurst`                    | 33,554,432  |
+| `connectionsPerIp`             | 24          |
+| `connectionsTotal`             | 2,000       |
+| `refusedSocketsMaximum`        | 256         |
+| `roomsPerIp`                   | 8           |
+| `roomsTotal`                   | 500         |
+| `usersPerRoomDefault`          | 16          |
+| `usersPerRoomMaximum`          | 32          |
+| `locksPerUser`                 | 20,000      |
+| `locksPerRoom`                 | 100,000     |
+| `outboundQueueBytesMaximum`    | 16,777,216  |
+| `outboundBacklogBytesTotal`    | 268,435,456 |
+| `socketBufferHighWaterBytes`   | 1,048,576   |
+| `snapshotBytesMaximum`         | 268,435,456 |
+| `assetBytesMaximum`            | 67,108,864  |
+| `streamWindowBytes`            | 4,194,304   |
+| `streamsPerRecipient`          | 8           |
+| `snapshotTimeoutMs`            | 60,000      |
+| `joinFailuresPerIpPerMinute`   | 10          |
+| `joinFailuresPerRoomPerMinute` | 30          |
+| `passwordHashConcurrency`      | 4           |
+| `passwordHashConcurrencyPerIp` | 1           |
+| `roomEntriesPerIpPerMinute`    | 30          |
+| `roomEntryBurstPerIp`          | 10          |
+| `roomListMaximum`              | 200         |
+| `roomListSubscribersMaximum`   | 1,000       |
+| `roomListPushIntervalMs`       | 500         |
+| `presencePerSecond`            | 10          |
+| `presenceBurst`                | 20          |
+| `presenceHighWaterBytes`       | 65,536      |
+| `chatIntervalMs`               | 5,000       |
+| `chatTextLengthMaximum`        | 2,000       |
+| `chatTextLinesMaximum`         | 20          |
+| `chatPendingPerRecipient`      | 64          |
+| `verifyTimeoutMs`              | 5,000       |
+| `verifyPerMemberPerSecond`     | 10          |
+| `verifyPerMemberBurst`         | 20          |
+| `verifyPerRoomPerSecond`       | 50          |
+| `verifyPerRoomBurst`           | 100         |
+| `verifyQueueMessagesMaximum`   | 64          |
+| `verifyQueueBytesMaximum`      | 4,194,304   |
+| `lockLeaseMs`                  | 5,000       |
+| `lockLeaseIdleMaximumMs`       | 60,000      |
+| `lockLeaseTotalMaximumMs`      | 600,000     |
+| `lockLeaseSweepMs`             | 500         |
+| `leasesPerSecond`              | 10          |
+| `leaseBurst`                   | 20          |
+| `leaseRenewsPerSecond`         | 4           |
+| `leaseRenewBurst`              | 8           |
+| `oneShotEditsPerSecond`        | 20          |
+| `oneShotEditBurst`             | 60          |
+| `oneShotEditsPerRoomPerSecond` | 200         |
+| `oneShotEditRoomBurst`         | 400         |
+| `liveEditsPerSecond`           | 60          |
+| `liveEditBurst`                | 120         |
+| `bulkIdsPerSecond`             | 10,000      |
+| `bulkIdBurst`                  | 250,000     |
+| `selectsPerSecond`             | 10          |
+| `selectBurst`                  | 20          |
+| `typingExpiryMs`               | 10,000      |
+| `abuseDecayPerSecond`          | 1           |
+| `abuseThrottleScore`           | 20          |
+| `abuseDisconnectScore`         | 60          |
+| `abuseRoomCooldownMs`          | 60,000      |
+| `transferLinkLifetimeMs`       | 3,600,000   |
+| `transferCreateIntervalMs`     | 5,000       |
+| `transferSizeMaximum`          | 104,857,600 |
+| `transferChunkBytes`           | 262,144     |
+| `transferDownloadsPerOwner`    | 16          |
+| `transferReplyTimeoutMs`       | 20,000      |
+
+Rate abuse can throttle or disconnect clients under the existing abuse scorer. Selection/presence are lossy under load; chat has its own FIFO policy. Custom byte/frame-window refusals are explicit and add no abuse points. Per-room lock totals are independent between rooms. See [SELF_HOSTING.md](docs/SELF_HOSTING.md) for environment-variable names and validation bounds.
+
+## Third-party custom messages
+
+This is a fully general, bidirectional binary application channel. The relay
+never parses application payload bytes or persists application state. Forks can
+choose their own encoding and may use it for previews, progress, pings, UI hints
+or fully self-managed state. Use ordinary **edits** for changes that should
+participate in the editor's scene serialization, undo, snapshots and merge.
+Custom traffic does not automatically acquire those semantics.
+
+### Binary frame and routing
+
+| Offset    | Type  | Meaning                                                         |
+| --------- | ----- | --------------------------------------------------------------- |
+| 0         | u8    | magic `0xA7`                                                    |
+| 1         | u8    | kind `4`                                                        |
+| 2–3       | u16   | UTF-8 guard byte length, 0–16,384                               |
+| 4–7       | u32   | sender correlation id `r`                                       |
+| 8–11      | u32   | target member; zero means owner (or owner-authorized broadcast) |
+| 12 onward | bytes | guard JSON, followed immediately by opaque payload bytes        |
+
+A zero-length guard means `{}`. Otherwise it must be a closed JSON object with
+only the following optional fields:
+
+`broadcast?: boolean; lease?: int[1..9007199254740991]; ids?: (string[1..64] matching /^[A-Za-z0-9_.:-]+$/)[1..256]`.
+
+Members may send only to the owner (peer zero). The owner may send to a specific synced member id, or use peer zero with `broadcast:true` to reach all other synced members. No member-to-member or member-to-everyone path exists; an owner may relay traffic itself. Recipients see the sender's user id rewritten into bytes 8–11. Both sender and recipient must have finished joining and syncing. A nonexistent/forbidden/unsynced target yields `custom_target_invalid`; an unsynced sender gets `not_synced`. Broadcast excludes the owner and skips unsynced members.
+
+Successful routing replies with `custom.sent {r:u32}`. Errors use `error {r:u32,code:string}`. Correlation is relay acceptance, not an application acknowledgement; implement your own acknowledgement if your protocol needs one.
+
+### Limits, ordering and optional locks
+
+- Payloads are limited to **256 KiB per message** and **256 KiB in a rolling one-second window per sender**, with at most **4096 frames** in that window. Empty payloads cost one byte. Hundreds of small messages may pass in a second; this is not a one-message-per-second gate. A broadcast charges the sender once, not once per recipient.
+- A single oversized payload gets `custom_too_large`; window excess gets `custom_rate_limited`, not a silent drop. Rejected window attempts consume no extra credit and add no abuse points. Attempts admitted by the rate window spend the sender's budget even if later routing/lock validation refuses them. Malformed envelopes remain protocol violations. General connection protections still apply.
+- All outbound traffic shares the original **16 MiB** per-connection limit, counting the server queue **plus socket buffered bytes**. Exceeding it disconnects that receiver with close 4004. This measures network backlog, not application-level consumption; forks needing stronger acknowledgement must define it themselves.
+- The editor has a separate bounded custom send FIFO, paced to the default byte/frame limits and yielding between batches. Ready edits/control messages take priority over unsent custom traffic. Custom FIFO order is preserved. Once on the wire, custom frames enter the same per-sender verification-hold FIFO as edits/locks, count toward its 64-frame/4-MiB defaults, and cannot overtake an earlier edit. Recipient delivery uses the ordered outbound queue. Network arrival jitter may still cause an explicit rate refusal.
+- Optional `lease`/`ids` guards reuse the scene edit-lock validation: stale leases yield `lease_stale`, ids outside the active operation yield `outside_lease`, and another holder yields `lock_conflict`. Guarded custom messages do not renew leases or commit scene edits.
+
+Custom keys use a separate room-local namespace from scene ids. Commands and exact bounds:
+
+- **`custom.lock.acquire`**: `keys: (string[1..256])[1..256]; r?: int[0..2147483647]`.
+- **`custom.lock.release`**: `r?: int[0..2147483647]; keys?: (string[1..256])[1..256]`.
+
+Acquire replies `custom.lock.acquired {r?:int,keys:string[]}`; release replies `custom.lock.released {r?:int,keys:string[]}`. Omitting release keys releases all the sender's custom keys. Conflicts and limits are explicit errors. Scene and custom tables share the configured total lock budget **of that room only**, and release keys on leave/disconnect. Custom locks are not scene edit leases; optional scene guards above still use the ordinary lease rules.
+
+### Fork example
+
+In the editor, `runtime.custom` exposes `sendToOwner(bytes, guard?)`, `sendToMember(memberId, bytes, guard?)`, `sendToAll(bytes, guard?)`, `onMessage(listener)`, `lockAcquire(keys)` and `lockRelease(keys?)`. The listener receives `(senderId, bytes)`; one throwing listener does not stop the others. Sending returns a promise that rejects on explicit relay refusal.
+
+A terrain painter can hold a normal scene lease, stream compact binary previews with `{lease, ids:[terrainId]}`, and commit its geometry through an ordinary edit before releasing the lease. For a self-managed activity, it can instead lock an opaque custom key such as `terrain:preview` and define its own state/acknowledgement protocol. That custom state does not automatically become editor scene data.
+
+```ts
+const stop = runtime.custom.onMessage((senderId, bytes) => {
+  // Decode only your fork's own protocol; the relay leaves these bytes opaque.
+  showTerrainPreview(senderId, bytes);
+});
+await runtime.custom.sendToOwner(previewBytes, { lease, ids: [terrainId] });
+// Only the owner may call these:
+await runtime.custom.sendToMember(memberId, previewBytes);
+await runtime.custom.sendToAll(previewBytes);
+// On teardown:
+stop();
 ```
-offset 0  u8   magic 0xA7
-offset 1  u8   kind  1 (stream chunk)
-offset 2  u16  reserved, must be 0
-offset 4  u32  stream id (big endian, != 0)
-offset 8  u32  peer user id (big endian): recipient when sent by the owner, sender when relayed
-offset 12 ...  payload (1..256 KiB)
-```
 
-`src/shared/binary_frame.ts` has `binaryFrameEncode`, `binaryFrameParse`, `binaryFramePayload`.
-
-### Binary presence
-
-Viewport cameras and the play-mode character of a member, for drawing remote users. Shared codec:
-`src/shared/presence_frame.ts` (`presenceFrameEncode`, `presenceFrameCheck`, `presenceFrameRelay`,
-`presenceFrameDecode`).
-
-```
-client → relay: [0xA7][kind 2][version 1][count 0..6][entries]
-relay → client: [0xA7][kind 2][version 1][count][sender u32 BE][entries]
-entry (18 B):   [id u8: camera 0..15 | 0xFF character][x y z float32 BE]
-                [orientation u32: smallest-three quaternion, 2 + 3×10 bits][fov u8: 1..179, 0 for the character]
-```
-
-A count of 0 clears the sender's presence. One camera is 22 bytes up and 26 bytes down (plus WebSocket
-framing). The length must match the count exactly, ids must be unique and positions finite and within
-±10^6; anything else closes the connection with `4001`. Each member may send 10 presence frames per second
-(burst 20); excess frames and frames from members that are not synced are dropped silently.
-`welcome.limits.presencePerSecond` advertises presence support: clients must not send presence frames to a relay
-that leaves it out, because older relays close the connection on an unknown binary frame kind.
-
-The relay keeps one mailbox slot per sender per recipient: a newer frame replaces an undelivered older
-one, and the mailbox is delivered only while the recipient's outbound queue is empty and its socket
-buffer is below 64 KiB. Presence therefore never delays edits or streams and never builds a backlog. The
-latest frame of every member is handed to a joiner once its snapshot is complete. A member's presence
-is forgotten when it leaves; clients drop it on `member.left`.
-
-### Transfer links
-
-Capability `transfer`. An editor shares a file it keeps in memory: `transfer.create` returns a
-`link` (43 base64url characters; user id, link counter and a 192-bit HMAC under a secret the relay
-generates at start, so links are unguessable and need no stored state). Anybody can download it
-with plain HTTP `GET` (or `HEAD`) on `<WEBSOCKET_PATH>/transfer/<link>`, e.g.
-`https://relay.example.com/ws/transfer/<link>`. There is no file extension in the URL; name and type
-come only from the headers.
-
-Nothing is uploaded ahead of time. On a request the relay sends the owner `transfer.get {q, link}`;
-the owner answers `transfer.info {q, size, name, mime}` or `transfer.missing {q}` within
-20 s (else 504). Files above 100 MiB get 413; the size is only checked here, because the sender
-is not trusted, and a chat `file` may announce any size. The relay then asks for
-256 KiB chunks with `transfer.chunk {q, offset, length}` and the owner answers each with a binary
-frame:
-
-```
-offset 0  u8   magic 0xA7
-offset 1  u8   kind  3 (transfer chunk)
-offset 2  u16  reserved, must be 0
-offset 4  u32  q (big endian, != 0)
-offset 8  u32  byte offset (big endian)
-offset 12 ...  exactly `length` bytes
-```
-
-Across all downloads of one connection exactly one chunk is in flight; the next one is requested
-only when the HTTP response has taken the previous one, so concurrent downloads interleave and a
-slow downloader only slows itself. A wrong offset or length, or a malformed chunk frame, fails only
-that download (502) and counts toward the abuse score like late answers; the sender stays connected. At most `TRANSFER_DOWNLOADS_PER_OWNER` (16) downloads per
-connection run at once (503 beyond that). A stalled owner or downloader ends the download.
-
-A connection may create one link per 5 s (`transfer_rate_limited {retryAfterMs}`, which also adds
-abuse points; a throttled session waits at least 1 s). Links live one hour and die when the
-owner's connection closes or the relay restarts, so a connection holds at most 720 live links,
-8 bytes each. Unknown, expired and revoked links answer 404.
-
-Responses carry `Content-Type` (only a plain `type/subtype`, else `application/octet-stream`),
-`Content-Length` (always on `HEAD`; Bun 1.4 streams `GET` bodies chunked, `Content-Range` still
-carries the full size), `Content-Disposition: inline|attachment; filename="…"; filename*=UTF-8''…`,
-`X-Content-Type-Options: nosniff`, a CSP without scripts (with `sandbox` except for inline PDF, whose
-viewer is a plugin), `Cache-Control: no-store` and `Access-Control-Allow-Origin: *`. Raster images
-(PNG, JPEG, GIF, WebP, AVIF, BMP), MP4/WebM/Ogg video, audio and PDF open inline; SVG, HTML, XML,
-scripts and everything else download. `?download` always downloads. `Accept-Ranges: bytes`: one
-`Range: bytes=a-b` (also `a-` and `-n`) answers 206 with `Content-Range` and is streamed by asking
-the editor for chunks at that offset; several ranges or an unsatisfiable one answer 416. An aborted
-range frees the in-flight slot as soon as its pending chunk arrives. The relay sanitizes the announced name
-(`src/shared/transfer_file_policy.ts`, shared with the editor): last path segment only, no control,
-bidi or Windows-invalid characters, no trailing dots or spaces, at most 255 characters with the
-extension kept; empty names and reserved device names (`CON`, `NUL`, `COM1`, …) become the link id.
-Refused downloads (404, 413, 502, 503, 504) answer a small HTML page with a readable reason, e.g.
-"This file exceeds the 100 MiB limit."
-
-### Flow control
-
-The owner may have at most `streamWindowBytes` (4 MiB) of a stream sent but not yet
-credited; exceeding it aborts the stream. `stream.credit.delivered` is cumulative and
-arrives at least every 256 KiB and when the stream is fully delivered. Up to 8 concurrent
-streams per recipient. Snapshot ≤ 256 MiB, asset ≤ 64 MiB.
-
-### Joining and the snapshot ordering rule
-
-1. Joiner sends `room.join` → gets `room.joined` (members + current locks), others get `member.joined`,
-   the owner gets `snapshot.request {for}`.
-2. The owner serializes the world **and sends `stream.begin` synchronously, without applying new
-   local edits in between**, then streams the bytes and `stream.end`.
-3. The server drops the owner's own edits to the joiner until that `stream.begin` arrives (they
-   are in the snapshot). Edits from other members are always delivered.
-4. The joiner **buffers every `edits` frame received before `stream.end` of the snapshot** and
-   applies them in order after loading the snapshot.
-5. After `stream.end` the joiner is synced and may lock and edit; before that `lock.acquire` and
-   `edit` answer `not_synced`. If no snapshot completes within 60 s, or the owner aborts it, the
-   joiner is removed (`room.left {reason:'snapshot_timeout'|'snapshot_failed'}`).
-
-Assets (textures etc.) are then fetched on demand: member `asset.request` → owner streams
-`kind:'asset'` (or `asset.missing`). The owner may also push assets unasked.
-
-### Selection, edit leases and edit rules
-
-Modelled on Google Sheets: anybody may select anything, and only a running edit holds a lock.
-
-- **Selection never locks.** `select {ids}` is presence only; other members draw it as a coloured
-  outline with the member's name. A lease holder is drawn distinctly.
-- **One operation per member.** A drag, gizmo, tool or Edit Mode drag sends `lock.acquire {lease, ids,
-shared}` when it starts and `lock.release` when it commits or is cancelled. `lease` is a number the
-  member picks, growing per connection. Sending the running lease number again extends the operation
-  (more objects); a higher number while one runs is refused with `lease_busy` unless `replace:true`
-  ends the old operation in the same step; a number not above the last one is `lease_stale`.
-  A lease covers at most `idsPerMessage` (4096) ids per request and `locksPerUser` in total.
-- **Leases expire.** The relay sweeps every 500 ms. A lease ends 5 s after the last `lock.renew` or
-  accepted edit, 60 s after the last accepted edit even when renewed (renewals only bridge a held
-  mouse or key), and after 600 s in total. Expiry broadcasts `locks {by, remove, expired:true}` to
-  the whole room, the holder included: everybody reverts that member's previews to the committed state.
-- **Edits inside a lease.** While a member runs an operation every `edit` must carry its `lease`
-  and touch only ids it holds (ids created earlier in the same edit and objects it creates count);
-  anything else is `outside_lease`. A `lease` that is not the running one is `lease_stale`.
-- **One-shot edits need no lock.** Without a running operation, `transform`, `geometry`, `property`,
-  `texture`, `reparent` and `delete` ops are id-addressed and last-writer-wins in relay order. They
-  are refused (`lock_conflict`) only when another member's lease covers a target exclusively
-  ("Bob is dragging this"); a `delete` is also refused when a target is shared by another lease
-  (somebody edits inside it). `create` requires that nobody else holds the new ids.
-- Each `edit` is validated as a whole. Objects created during an operation join its lease; deleted
-  ids leave the sender's locks while the lease stays. The owner follows the same rules.
-- Accepted edits are acked in the sender's own `edits` stream as `{from:you, seq}`, so the editor
-  knows its relay order. All locks of a member are released on leave or disconnect.
-
-### Abuse detection
-
-Honest use never trips this: races between members are answered with refusals that score nothing.
-Protocol misuse scores points per member that decay by 1 per second: `lease_busy`, a `lease_stale`
-lease number that was never issued, `outside_lease`, more than 10 new leases/s (burst 20), more than
-4 renewals/s (burst 8) and edit floods each score 1. At 20 points the member is throttled (lease
-requests and edits answer `throttled`) and flagged; at 60 it is closed with `4007`, flagged for the
-kick feature and its address (IPv6 per /64) may not enter rooms for 60 s. A new connection from the
-same address starts with up to half the throttle score of the last one, so reconnect loops gain
-nothing. One-shot edits are limited to 20/s (burst 60) per member and 200/s (burst 400) per room,
-live previews to 60/s (burst 120), and created plus deleted ids to 10 000/s (burst 250 000), so a
-giant paste or delete passes as one op but cannot repeat endlessly. Only monotonic clocks are used.
-
-### Hierarchical (shared) locks
-
-The relay does not know the scene hierarchy, so the editor sends it: an operation leases every
-edited object with its whole subtree exclusively (`ids`) and the ancestors of each edited
-object as `shared`. Several members may share an id (siblings stay editable side by side), but
-an exclusive request is refused while another member shares the id (conflict entry
-`{id, by, shared:true}`, meaning `by` edits something inside it) and a shared request is refused
-while another member holds the id exclusively. `replace:true` replaces both kinds; release, leave,
-expiry and disconnect free both; both count against the lock limits. `locks` broadcasts and
-`room.joined` list exclusive locks only.
-
-`create` and `reparent` ops may carry `p`, the new parent chain (parent first). The edit is
-rejected with `lock_conflict` when another member holds any of those ids exclusively (ids created
-earlier in the same edit excepted); otherwise the sender gets shared locks on the chain, so nobody
-can grab the new container from a stale view. Ops without `p` keep the old behaviour.
-
-### Owner verification
-
-The owner's editor is the source of truth for the hierarchy, so a member cannot make up ancestors
-to block containers it is not inside. Whenever a member's `lock.acquire` or `edit` would give it
-shared locks it does not already hold, the relay first sends the owner
-`verify {q, ids, anc}`. The owner answers `verify.result {q, v}`: `ok` when every id in `ids`
-exists and every id in `anc` is an ancestor of at least one of them, `deleted` when an id is
-unknown, `invalid` otherwise. For `lock.acquire`, `ids` are the requested ids and `anc` the new
-shared ids. For `edit`, `ids` are the first ids of the parent chains and `anc` the rest; a chain
-whose first id is created earlier in the same edit must continue with that create's own chain
-and is checked by the relay alone (otherwise `invalid` without asking).
-
-- The owner's own requests and requests whose shared ids the member already holds are never
-  verified: ancestors a member shares were already confirmed, so they act as the cache and the
-  relay keeps no copy of the hierarchy.
-- Conflicts are checked before asking. Anything other than `ok` refuses the request:
-  `lock.result {ok:false, code:'lock_unverified', why}` or `edit.rejected {reason:'lock_unverified', ids:[], why}`
-  with `why` = `invalid`, `deleted`, `owner_timeout` (no answer within 5 s), `owner_left` or
-  `rate_limited`. After an `ok` the request is checked against the locks again and applied.
-- Each member has at most one open query. Its later `lock.acquire`, `lock.release` and `edit`
-  messages wait behind it in order (at most 64 messages / 4 MiB, more closes 4002).
-- Queries are limited to 10/s (burst 20) per member and 50/s (burst 100) per room. The relay
-  counts refuted claims per connection (for a future kick rule).
-- An answer can be one owner round trip stale; a reparent in flight can only make a true claim
-  look false (the member retries) or confirm an ancestor that was just moved away, which blocks
-  nothing more than an honest selection made a moment earlier would have.
-
-### Owner disconnect / offline sessions
-
-When the owner disconnects or leaves, every member gets
-`room.closed {reason:'owner_left', offline:true, message}` and the room is removed. The client must
-warn the user that they are offline and should save locally. Re-joining any room requires
-`discardLocalWork:true`, i.e. the client must discard the local project first (it is an online project).
-
-## Protocol evolution
-
-The protocol has to stay stable for years across many editor builds, so changes follow these rules
-(`src/shared/protocol_versioning.ts`, `src/shared/protocol_golden_vectors.ts`):
-
-- **Versions.** `version` is a 16-bit integer. The editor sends its range (`minVersion`..`version`),
-  the relay picks the newest common version or refuses with `protocol_unsupported` + `4008`. Rooms
-  record the version and editor build they were created with and only members that negotiated the
-  same version may join, so a relay can later host rooms of several versions side by side.
-- **Capabilities first.** Optional additions get a capability flag (lowercase, `[a-z0-9.-]`, ≤32
-  chars, ≤32 flags) instead of a version bump. The relay only sends capability-gated messages and
-  fields to members that announced the flag; unknown flags are ignored. Bump the version only for
-  changes an old peer cannot ignore (changed meaning, removed messages, new required fields).
-- **Strict schemas, one escape hatch.** Every client message is a closed schema; unknown fields close
-  the connection. The only place unknown keys are accepted is an extension object `x` (on `hello` and
-  `room.create`; ≤16 keys, depth 4, 256 nodes), and receivers ignore keys they do not know.
-- **Message types are an enum.** An unknown client message type is a protocol violation (`4001`).
-  Clients must ignore unknown server message types and unknown fields in server messages; the relay
-  only sends new ones behind a version or capability, so this never hides an error.
-- **Fixed widths.** Versions 16-bit, user ids and stream ids 32-bit unsigned, request ids 31-bit,
-  `seq` and lease numbers up to 2^53-1, object ids 1–64 chars of `[A-Za-z0-9_.:-]`, room ids 16 chars.
-  Integers are integers on the wire (no floats where an int suffices); binary frames are big endian.
-- **Generic field ops.** Field-level edits are path + value (`d.f`), so new object fields need no
-  protocol change.
-- **Deprecation.** A version is deprecated by announcing it in this README and the editor release
-  notes at least one editor release before the relay stops accepting it; the relay keeps accepting a
-  deprecated version for at least 90 days. Removing a version raises `PROTOCOL_VERSION_MINIMUM`, and
-  old editors get `protocol_unsupported` with an update message instead of a silent failure.
-- **Golden vectors.** Every version has recorded client frames (with the verdict they must get),
-  server frames and binary frames. Relay and editor replay them in CI. Vectors of a released
-  version are frozen: never edit or remove one, only add.
-
-## Passwords
-
-- Policy (`src/shared/password_policy.ts`, shared with the client): 8–128 chars, at least one
-  uppercase, one digit, one special character, plus heuristics: no runs of 4+ identical chars or
-  a char making up >50 %, no 4+ sequences (`abcd`, `1234`, `4321`) or keyboard runs (QWERTY/QWERTZ/AZERTY rows),
-  ≥5 distinct chars, no common passwords even with leetspeak (`P@ssw0rd1!`), and an entropy estimate ≥40 bits.
-  `passwordPolicyEvaluate(pw)` returns `{ok, issues[], estimatedBits}` for UI feedback.
-- Generator (`src/shared/password_generator.ts`): `passwordGenerate(16)` uses `crypto.getRandomValues`
-  with rejection sampling, unambiguous alphabets, guarantees each class, and always passes the policy.
-  Use it to prefill the private room password field.
-- The server stores only argon2id hashes (`Bun.password`, 19 MiB, t=2), verifies in constant time,
-  at most 4 hash operations concurrently and 1 per IP (IPv6 per /64), and limits wrong passwords to
-  10/min per IP and 30/min per room.
-
-## Abuse resistance and limits
-
-| Limit            | Default                                                                                               |
-| ---------------- | ----------------------------------------------------------------------------------------------------- |
-| Max frame        | 1 MiB (binary chunk payload 256 KiB)                                                                  |
-| Messages         | 120/s, burst 400 → close 4002                                                                         |
-| Bytes in         | 16 MiB/s, burst 32 MiB → close 4002                                                                   |
-| Connections      | 24 per IP (IPv6 per /64), 2000 total                                                                  |
-| Rooms            | 8 owned per IP, 500 total; 1 room per connection                                                      |
-| Room entries     | create + join 30/min per IP (burst 10) → error `too_many_attempts`                                    |
-| Users per room   | 16 default, max 32                                                                                    |
-| Locks            | 20 000 per user, 100 000 per room (scene + custom)                                                    |
-| Outbound queue   | 16 MiB per recipient, 256 MiB backlog (queue + socket buffer) across all → close 4004 (slow consumer) |
-| Handshake / idle | 5 s / 60 s (with ping/pong)                                                                           |
-| Snapshot / asset | 256 MiB / 64 MiB, 4 MiB window, 8 streams per recipient, 60 s snapshot timeout                        |
-| Room list        | 200 entries                                                                                           |
-| Room list pushes | 1000 subscribers, at most one update per 500 ms per subscriber, low priority                          |
-| Presence         | 10 frames/s per member (burst 20), latest-only per sender per recipient, 116 bytes max                |
-| Chat             | 1 message per 5 s per session, 2000 code points, 20 lines, 64 waiting per recipient, no history       |
-| Transfer links   | 1 link per 5 s per connection, 1 h lifetime, 100 MiB per file, 16 downloads, 1 chunk in flight        |
-| Owner verify     | 5 s timeout, 10/s (burst 20) per member, 50/s (burst 100) per room, 64 msgs / 4 MiB held per member   |
-| Edit leases      | 1 running per member, 5 s without renew/progress, 60 s idle, 600 s total; 10 new/s, 4 renews/s        |
-| Edits            | one-shot 20/s per member, 200/s per room; live 60/s; created + deleted ids 10 000/s (burst 250 000)   |
-| Selection        | 256 ids, 10/s (burst 20) per member, excess dropped                                                   |
-| Abuse score      | decays 1/s; throttle at 20, close 4007 at 60 + 60 s room cooldown per address                         |
-
-Other measures: versioned hello handshake with capability negotiation; strict schemas; only allowed `Origin`s
-(`https://henry00is.github.io`, `http://localhost:*`, `http://127.0.0.1:*`, `http://[::1]:*`,
-`views://main_ui`; override with `ALLOWED_ORIGINS`); only `/ws` upgrades; no compression
-(no zip bombs, low CPU); only the owner can stream and only to members of its room; a joiner
-receives only a snapshot it was promised. The relay can't be used as a general pipe: every text
-frame must be a known AiWorldEd message and binary frames must belong to an open, size-declared stream
-or be a well-formed presence frame from a synced room member, or a transfer chunk the relay asked for.
-
-### Proxy trust model
-
-- **`TRUST_PROXY` off (default)**: every connection is direct. The socket address is used;
-  `X-Real-IP` / `X-Forwarded-For` / `X-Forwarded-Secret` are ignored (they could be spoofed).
-- **`TRUST_PROXY=true` with `FORWARDED_SECRET`**:
-  - no `X-Forwarded-Secret`: direct, socket address;
-  - correct secret (sha256 + `timingSafeEqual`): proxied. Client IP = `X-Real-IP`, else the last
-    `X-Forwarded-For` hop, else the socket address. `welcome.via = "proxy"`;
-  - wrong or empty secret: refused with close code `4010`. A wrong secret means someone is
-    impersonating the proxy, so it is neither trusted nor treated as direct.
-- **`TRUST_PROXY=true` without a secret**: every connection is proxied (only safe when the port is
-  reachable through the proxy alone; the relay warns at start when it listens on all interfaces).
-
-`FORWARDED_SECRET` without `TRUST_PROXY=true` is a startup error.
-
-### Internal test rooms
-
-`room.create {internalTest:true}` is accepted only on direct connections (no `X-Forwarded-Secret`),
-i.e. local tests. Such rooms are hidden from proxied clients' room lists and cannot be joined through
-the proxy (`room_not_found`). Proxied creation attempts get `internal_test_forbidden`. They are
-off by default; development relays set `INTERNAL_TEST_ROOMS=true`. `INTERNAL_TEST_ROOMS_VIA_PROXY=true`
-also allows them through the proxy, for test suites against a private development relay; it defaults
-to off and must never be set on a public relay. Tests use the dummy secret in
-`tests/support/test_configuration.ts`; the real secret is never in this repository.
-
-## Configuration (environment)
-
-Every setting, its default and accepted range is listed in
-[`docs/SELF_HOSTING.md`](docs/SELF_HOSTING.md#settings) (`bun run config:table` prints the same
-table). Values are validated at start; an invalid one stops the relay with a `relay.error` line.
-The same names work as keys of an optional JSON file (`--config <path>` or `CONFIG_FILE`).
-Compose-only variables:
-
-| Variable                      | Meaning                                                                  |
-| ----------------------------- | ------------------------------------------------------------------------ |
-| `BIND_ADDRESS`                | compose only: host address to publish the port on                        |
-| `CONTAINER_NAME`, `IMAGE_TAG` | compose only: dev instance names (defaults `aiworlded-server`, `latest`) |
-
-## Deployment with compose.yaml
-
-`docs/SELF_HOSTING.md` covers every way to run the relay (release executable, Docker,
-`deploy/self-host/compose.yaml`, built-in TLS, Caddy and nginx). The root `compose.yaml` is a
-hardened variant for running the relay behind a reverse proxy on another machine of a private
-network: copy `.env.example` to `.env` (chmod 600) next to it, set `BIND_ADDRESS` to the private
-address the proxy reaches, `TRUST_PROXY=true` and a random `FORWARDED_SECRET`, then
-`docker compose up -d --build`. `CONTAINER_NAME`, `IMAGE_TAG`, `COMPOSE_PROJECT_NAME` and `PORT`
-let a second (test) instance share the same file.
-
-The container (`oven/bun:1.4.4-slim`) runs as user `bun`, read-only root FS, all capabilities
-dropped, `no-new-privileges`, 768 MiB / 2 CPUs / 256 pids, log rotation, `restart: unless-stopped`
-and a `/healthz` health check. Only forward the WebSocket path through the proxy.
-
-Verify a deployment end to end with `bun scripts/verify_public.ts wss://relay.example.com/ws`
-(expects `via=proxy`), or locally with
-`EXPECT_VIA=direct EXPECT_INTERNAL_TEST=allowed bun scripts/verify_public.ts ws://127.0.0.1:8081/ws`.
-
-### Keeping the port private
-
-Docker-published ports are DNAT'ed before the host `INPUT` chain, so ufw/iptables INPUT rules do
-**not** protect them. Publish the port only on a private address (`BIND_ADDRESS`), never on
-`0.0.0.0` of a machine with a public address. If the proxy runs on the same host in a Docker
-network, attach the relay to that network and drop the `ports:` mapping instead. For stricter
-filtering add a `DOCKER-USER` iptables rule that only admits the proxy's network, for example
-`iptables -I DOCKER-USER -p tcp --dport 8081 ! -s 192.0.2.0/24 -j DROP`. In addition, the relay
-only trusts forwarded headers that carry the right secret.
-
-### Live room list
-
-While a client's room browser is open it sends `room.subscribe`; it sends `room.unsubscribe` when the
-browser closes (a dropped socket unsubscribes too). Any change to the list (room created or closed,
-member count changed) marks every subscriber dirty. Each subscriber then gets one `room.list.update`
-with only the entries that are new or changed and the ids that disappeared, at most once per
-`roomListPushIntervalMs` (changes in between are coalesced). The list is capped at `roomListMaximum`
-entries. Pushes have lower priority than edits and streams: a push is only handed to the socket when the
-recipient's outbound queue is empty and its socket buffer is below the presence high water mark;
-otherwise it waits another interval and is recomputed. Internal test rooms are never pushed to proxied
-subscribers, even when `INTERNAL_TEST_ROOMS_VIA_PROXY` is set.
-
-## Client integration checklist (AiWorldEd)
-
-- Copy or import `src/shared/*` (protocol constants/types, binary frames, presence frames, password policy + generator, name rules).
-- Connect to `wss://aiworlded.00labs.net/ws` (Origin must be allowed), send `hello {version, minVersion, client, caps}`,
-  read `welcome.version`, `welcome.caps` and `welcome.limits`; show `protocol_unsupported.message` and stop reconnecting on `4008`.
-- Room browser: show each room's `protocol` and `editor`; grey out rooms of another protocol version and show
-  `protocol_mismatch.message` if a join is refused.
-- Room browser: `room.subscribe` while open (`room.list` for a one-off read); create dialog with name (≤128) and private toggle; prefill the password with
-  `passwordGenerate()` and show `passwordPolicyEvaluate()` issues live.
-- Joining: confirm "discard local work", send `room.join {discardLocalWork:true}`, load the snapshot
-  stream, buffer `edits` until snapshot `stream.end`, then apply them.
-- Owner: answer `snapshot.request` (serialize + `stream.begin` synchronously), stream chunks respecting
-  `stream.credit`; answer `asset.request` with an asset stream or `asset.missing`.
-- Selection → `select {ids}` (debounced); render `selected` as coloured outlines with names and `locks`
-  holders distinctly. Selecting never locks.
-- Operation start (drag, gizmo, tool, Edit Mode drag) → `lock.acquire {lease, ids, shared, replace:true}`;
-  `lock.renew` every 1.5 s while input is active; commit or cancel → `lock.release`. On a refusal or
-  `locks {expired:true}` for yourself, cancel the tool cleanly (revert the preview, keep the selection) and
-  name the holder. One operation at a time.
-- One-shot edits (typed values, delete, reparent) go without a lease; `lock_conflict` means somebody is
-  dragging that object.
-- Owner: answer every `verify` with `verify.result` from the live scene. Members: on `lock_unverified` retry
-  briefly, then tell the user the owner did not confirm.
-- Send edits batched per frame/operation with increasing `seq`; handle `edit.rejected` by reverting locally.
-- On `room.closed {offline:true}` show the offline warning and offer "save locally".
-- Handle close codes (4002 back off, 4004 reconnect & rejoin, 4006 server restart, 4007 do not reconnect for
-  60 s, 4008 update needed).
-
-## Fork compatibility and custom channel
-
-### Exact software identity
-
-`room.join` declares `compatibility: {homeUrl, version}`. The URL is a nonempty
-string of at most 256 characters; version is 1–64 characters. Fork authors set
-one `COLLABORATION_EDITOR_HOME` constant. Version comes from
-`APPLICATION_VERSION`, the same package/build source used by the settings UI
-and assigned by release builds. There are no scene-schema/capability admission
-policies or legacy fallbacks: old editors must refresh or update.
-
-Before adding membership or requesting a snapshot, the relay sends the owner
-`compatibility.check {q, compatibility}` unchanged. The owner admits only when
-both strings exactly match its own. It answers
-`compatibility.result {q, allow, reason?, homeUrl?}`. Only the queried owner can
-answer; unique pending query ids prevent stale answers from admitting a client.
-Identity declarations are compatibility checks, not authentication.
-
-A mismatch returns `error {code: "client_incompatible", r, reason, homeUrl?}`
-with the owner's home URL. Only valid bounded HTTP(S) URLs without credentials
-are shown, as plain text and an explicit `noopener noreferrer` link; no HTML
-interpretation or automatic opening. Other remote names/build labels are text
-only. A silent owner fails closed after five seconds (`owner_timeout`), with a
-clear retry message; an owner leaving mid-check returns `owner_left`. When the
-32-slot room admission queue fills, its oldest pending join is denied with
-`owner_timeout`, allowing the new request to be checked. No pending joiner gets
-scene data. Creating a room requires no admission check.
-
-### General-purpose opaque application data
-
-`runtime.custom` exposes `sendToOwner(bytes)`, owner-only
-`sendToMember(id, bytes)` / `sendToAll(bytes)`, `onMessage(listener)` (returns
-unsubscribe), and custom-key `acquire(keys)` / `release(keys?)`. Only synced
-members send/receive. There is no member-to-member/broadcast route. The owner
-may relay data itself. Listener failures are isolated from other listeners.
-Payloads are arbitrary opaque bytes; the relay neither decodes nor retains
-application history. Custom messages are fully general, including fork-managed
-state; edits remain the primary scene path for built-in undo/snapshots/merge.
-
-Kind-4 wire frame (big endian): magic `0xA7`, kind `4`, u16 metadata length,
-u32 request id, u32 target id, then JSON metadata and untouched payload bytes.
-Metadata is a closed `{broadcast?, lease?, ids?}` object, at most 16 KiB with
-at most 256 scene ids. Members target `0` for the owner; owner broadcast uses
-`0` plus `broadcast: true`. Relayed target becomes sender id. Success is
-`custom.sent {r}` (relay acceptance, not application consumption); failure is
-`error {r, code}`, including `custom_target_invalid`, `custom_too_large` or
-`custom_rate_limited`.
-
-Each sender gets **256 KiB payload in every sliding second** `(now−1000, now]`,
-and at most 4096 frames; empty frames cost one byte. A single payload over
-256 KiB is rejected. Over-window attempts return explicit errors, consume no
-additional window credit and add **no abuse points**: honest forks are neither
-throttled nor kicked for exceeding this custom window. Existing transport and
-connection-wide byte limits still apply. The editor has its own bounded
-16 MiB custom send FIFO, independently paced to these limits, yielding between
-64-frame tasks so hundreds of small messages work without delaying edits.
-Response timeouts start when a queued request actually sends.
-
-Ready edits/control traffic take priority over **unsent** custom frames. Custom
-frames keep their own FIFO order. For an application dependency, await the send
-ack before issuing a dependent edit. Once on the wire, a sender's custom frames
-wait in the same held FIFO as edits/locks behind pending owner verification,
-counting toward its existing held-message/byte limits. They cannot overtake an
-earlier edit. Recipient delivery uses the existing ordered outbound queue.
-All traffic shares the original **16 MiB** per-connection outbound limit,
-including socket buffered bytes; excess closes with `slowConsumer` (4004).
-Network consumption is not application consumption: forks needing that must
-add acknowledgements to their own protocol.
-
-Optional `{lease, ids}` guards reuse scene edit validation (`lease_stale`,
-`outside_lease`, `lock_conflict`). Custom opaque-key locks are separately
-namespaced from scene ids: `custom.lock.acquire {r?, keys}` /
-`custom.lock.release {r?, keys?}`; omitted release keys releases all. Up to 256
-keys/request, each 1–256 characters. They reuse the lock table and release on
-leave/disconnect. Each room owns its combined scene/custom lock budget; rooms
-never consume each other's locks. Replies are `custom.lock.acquired` /
-`custom.lock.released`; failures include `lock_conflict` / `lock_limit`.
-
-Example: a terrain fork holds a scene lease, sends opaque lease-bound previews
-with `sendToOwner(bytes, {lease, ids})`, and the owner sends/broadcasts preview
-results. Commit a geometry edit for built-in undo and snapshots, then release
-the lease. Fully self-managed fork state may instead define its own custom
-protocol and persistence.
-
-Unknown fields on supported entry/brush/model/group records survive edits,
-merges and save/load; current editor-written values always win at every depth.
-Known-field records are type-exhaustive, so adding a serializer field without
-updating preservation fails strict typechecking. Wire-envelope extras use the
-reserved persistence field `aiworlded:wire`. Unknown node kinds and new array
-semantics are not interpreted; use colon namespaces for extension fields.
+Unknown/namespaced scene fields are preserved by the editor through sync, edits, merge and save/load. Current editor-written values take precedence at every depth. Exhaustive typed known-field records must be updated when adding serialized fields or node kinds; custom protocols should still define ownership of their own data.
