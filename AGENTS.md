@@ -99,7 +99,6 @@ documentation comments, inline comments, non-null assertions, naming).
     		layouts/
     			paintbrush_layout.ts
     			paintbrush_layout_default.ts
-    			paintbrush_layout_blender.ts
     		renderers/
     			paintbrush_renderer.ts
     			paintbrush_renderer_stroke.ts
