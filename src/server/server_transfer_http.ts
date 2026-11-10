@@ -56,7 +56,7 @@ const TRANSFER_INLINE_TYPES = new Set([
 ]);
 
 /** Extensions of files whose owner renders a `?thumbnail` PNG preview. */
-const TRANSFER_THUMBNAIL_EXTENSIONS = ['.curve'];
+const TRANSFER_THUMBNAIL_EXTENSIONS = ['.aicurve', '.curve'];
 
 /** Messages of refused downloads; `{limit}` becomes the size cap. */
 const TRANSFER_STATUS_TEXT: Readonly<Record<number, string>> = {

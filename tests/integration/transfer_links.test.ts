@@ -208,28 +208,31 @@ describe('transfer links', () => {
     expect(raw.headers.get('accept-ranges')).toBe('bytes');
   });
 
-  test('curve cards point og:image at ?thumbnail, which serves only the owner PNG preview', async () => {
-    const editor = await editorConnect();
-    const curve = await editor.share({ bytes: new Uint8Array(40), name: 'ramp.curve', mime: 'application/json' });
-    const png = fileOf(CHUNK + 9, 'ramp.png', 'image/png');
-    editor.thumbnails.set(curve, png);
-    const discordUa = 'Mozilla/5.0 (compatible; Discordbot/2.0; +https://discordapp.com)';
-    const card = await (await fetch(urlOf(curve), { headers: { 'User-Agent': discordUa } })).text();
-    expect(card).toContain(`<meta property="og:image" content="${urlOf(curve)}?thumbnail">`);
-    expect(card).toContain('summary_large_image');
-    expect(card).toContain('<meta property="og:image:width" content="1200">');
-    expect(card).toContain('<meta property="og:image:height" content="630">');
-    expect(card).toContain(`<meta name="twitter:image" content="${urlOf(curve)}?thumbnail">`);
-    expect(card).toContain('<meta property="og:image:alt" content="Curve preview of ramp.curve">');
-    const thumbnail = await fetch(`${urlOf(curve)}?thumbnail`, { headers: { 'User-Agent': discordUa } });
-    expect(thumbnail.status).toBe(200);
-    expect(thumbnail.headers.get('content-type')).toBe('image/png');
-    expect(thumbnail.headers.get('content-disposition')).toStartWith('inline;');
-    expect(thumbnail.headers.get('content-security-policy')).toEndWith('; sandbox');
-    expect(thumbnail.headers.get('x-content-type-options')).toBe('nosniff');
-    expect(sha256(new Uint8Array(await thumbnail.arrayBuffer()))).toBe(sha256(png.bytes));
-    expect(editor.getLog.map((get) => get.thumbnail)).toEqual([false, true]);
-  });
+  test.each(['ramp.curve', 'Profile.aicurve'] as const)(
+    'curve cards of %s point og:image at ?thumbnail, which serves only the owner PNG preview',
+    async (name) => {
+      const editor = await editorConnect();
+      const curve = await editor.share({ bytes: new Uint8Array(40), name, mime: 'application/json' });
+      const png = fileOf(CHUNK + 9, 'preview.png', 'image/png');
+      editor.thumbnails.set(curve, png);
+      const discordUa = 'Mozilla/5.0 (compatible; Discordbot/2.0; +https://discordapp.com)';
+      const card = await (await fetch(urlOf(curve), { headers: { 'User-Agent': discordUa } })).text();
+      expect(card).toContain(`<meta property="og:image" content="${urlOf(curve)}?thumbnail">`);
+      expect(card).toContain('summary_large_image');
+      expect(card).toContain('<meta property="og:image:width" content="1200">');
+      expect(card).toContain('<meta property="og:image:height" content="630">');
+      expect(card).toContain(`<meta name="twitter:image" content="${urlOf(curve)}?thumbnail">`);
+      expect(card).toContain(`<meta property="og:image:alt" content="Curve preview of ${name}">`);
+      const thumbnail = await fetch(`${urlOf(curve)}?thumbnail`, { headers: { 'User-Agent': discordUa } });
+      expect(thumbnail.status).toBe(200);
+      expect(thumbnail.headers.get('content-type')).toBe('image/png');
+      expect(thumbnail.headers.get('content-disposition')).toStartWith('inline;');
+      expect(thumbnail.headers.get('content-security-policy')).toEndWith('; sandbox');
+      expect(thumbnail.headers.get('x-content-type-options')).toBe('nosniff');
+      expect(sha256(new Uint8Array(await thumbnail.arrayBuffer()))).toBe(sha256(png.bytes));
+      expect(editor.getLog.map((get) => get.thumbnail)).toEqual([false, true]);
+    },
+  );
 
   test('other cards have no og:image and a plain download still serves the curve file', async () => {
     const editor = await editorConnect();

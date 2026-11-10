@@ -15,7 +15,9 @@ describe('transfer card URLs', () => {
   test('only curve files get a ?thumbnail preview image', () => {
     const url = new URL(`${LINK_URL}?raw=1`);
     expect(transferHttpThumbnailUrl(url, 'Ramp.CURVE')).toBe(`${LINK_URL}?thumbnail`);
+    expect(transferHttpThumbnailUrl(url, 'Profile.AICURVE')).toBe(`${LINK_URL}?thumbnail`);
     expect(transferHttpThumbnailUrl(url, 'ramp.curve.txt')).toBeNull();
+    expect(transferHttpThumbnailUrl(url, 'ramp.aicurve.txt')).toBeNull();
     expect(transferHttpThumbnailUrl(url, 'clip.mp4')).toBeNull();
   });
 });

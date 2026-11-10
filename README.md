@@ -361,7 +361,7 @@ The HTTP handler also supports safe preview metadata for crawlers; clients must
 not assume an arbitrary shared file is an executable web page. `?thumbnail`
 sends `transfer.get` with `thumbnail:true`; the relay serves the answer only as
 an `image/png` of at most 1 MiB and otherwise answers 404. Crawler cards of
-`.curve` files use it as their preview image.
+`.aicurve` files (and legacy `.curve`) use it as their preview image.
 
 ### Errors, reason codes and close codes
 
