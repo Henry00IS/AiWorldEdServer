@@ -11,6 +11,7 @@ import type { ServerCore } from '../server/server_core.ts';
 import { chatTextNormalize } from '../shared/chat_text_policy.ts';
 import type { ChatFileAttachment, ChatMessageEntry, ClientMessage } from '../shared/protocol_definitions.ts';
 import { transferMimeSanitize, transferNameSanitize } from '../shared/transfer_file_policy.ts';
+import { chatReactableRemember } from './handler_chat_react.ts';
 import { handlerTransferLinkOwner } from './handler_transfer.ts';
 
 /** Client chat message. */
@@ -44,6 +45,7 @@ export function handlerChat(core: ServerCore, session: ConnectionSession, messag
     ...(file === undefined ? {} : { file }),
   };
   sessionSend(session, { t: 'chat.sent', ...(message.r === undefined ? {} : { r: message.r }), ...entry });
+  chatReactableRemember(room, entry.id, entry.at);
   chatRelay(core, room, session, entry);
 }
 

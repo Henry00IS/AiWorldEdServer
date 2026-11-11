@@ -17,6 +17,7 @@ import {
 } from '../connection/connection_session.ts';
 import { handlerEdit } from '../handlers/handler_edit.ts';
 import { chatFlush, handlerChat } from '../handlers/handler_chat.ts';
+import { handlerChatReact } from '../handlers/handler_chat_react.ts';
 import { handlerNameSet } from '../handlers/handler_name.ts';
 import { handlerPresence, presenceFlush } from '../handlers/handler_presence.ts';
 import { handlerLockAcquire, handlerLockRelease, handlerLockRenew, leasesSweep } from '../handlers/handler_lock.ts';
@@ -103,6 +104,15 @@ function sessionPresenceState(
 }
 
 /**
+ * Builds the chat queue and send times of a new session.
+ *
+ * @returns Fresh chat state.
+ */
+function sessionChatState(): Pick<SessionInitialState, 'chatPending' | 'chatLastAt' | 'chatReactTimes'> {
+  return { chatPending: [], chatLastAt: Number.NEGATIVE_INFINITY, chatReactTimes: [] };
+}
+
+/**
  * Builds the rate limiters and initial flags of a new session.
  *
  * @param config Effective configuration.
@@ -113,8 +123,7 @@ function sessionInitialState(config: ServerConfiguration): SessionInitialState {
     messageBucket: new LimiterTokenBucket(config.messagesPerSecond, config.messageBurst),
     byteBucket: new LimiterTokenBucket(config.bytesPerSecond, config.byteBurst),
     ...sessionPresenceState(config),
-    chatPending: [],
-    chatLastAt: Number.NEGATIVE_INFINITY,
+    ...sessionChatState(),
     name: '',
     nameChosen: '',
     helloDone: false,
@@ -608,6 +617,8 @@ export class ServerCore {
     switch (message.t) {
       case 'chat':
         return handlerChat(this, session, message);
+      case 'chat.react':
+        return handlerChatReact(this, session, message);
       case 'asset.request':
         return handlerAssetRequest(this, session, message);
       case 'asset.missing':

@@ -286,6 +286,8 @@ const GOLDEN_CLIENT_V3: readonly GoldenClientVector[] = [
   { name: 'object id with space', verdict: 'reject', frame: '{"t":"select","ids":["a b"]}' },
   { name: 'unknown type', verdict: 'reject', frame: '{"t":"proxy.connect","host":"example.com"}' },
   { name: 'chat', verdict: 'accept', frame: '{"t":"chat","text":"hi"}' },
+  { name: 'chat.react', verdict: 'accept', frame: '{"t":"chat.react","id":1,"emoji":"x","on":true}' },
+  { name: 'chat.react without on', verdict: 'reject', frame: '{"t":"chat.react","id":1,"emoji":"x"}' },
   { name: 'ping', verdict: 'accept', frame: '{"t":"ping","r":9}' },
   { name: 'transfer.create', verdict: 'accept', frame: '{"t":"transfer.create","r":3}' },
   {

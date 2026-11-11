@@ -24,6 +24,7 @@ test('capabilities are intersected in relay order and unknown ones dropped', () 
   expect(protocolCapabilitiesAgree(['zzz', 'select', 'select'])).toEqual(['select']);
   expect(protocolCapabilitiesAgree([])).toEqual([]);
   expect(protocolCapabilitiesAgree(['typing', 'select', 'stats'])).toEqual(['select', 'stats', 'typing']);
+  expect(protocolCapabilitiesAgree(['chat.react', 'typing'])).toEqual(['typing', 'chat.react']);
 });
 
 test('refusal messages tell who needs to update', () => {
