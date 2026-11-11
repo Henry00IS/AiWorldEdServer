@@ -69,6 +69,16 @@ export interface RoomChatEditable {
   edits: number;
 }
 
+/** Reactions of a recent chat message; its text is not kept. */
+export interface RoomChatReactable {
+  /** Relay time the message was sent (epoch ms). */
+  at: number;
+  /** Members who reacted, by emoji. */
+  readonly reactions: Map<string, Set<number>>;
+  /** Reactions of all members together. */
+  total: number;
+}
+
 /** Live room state. */
 export class Room {
   readonly id: string;
@@ -98,6 +108,8 @@ export class Room {
   readonly presenceLatest = new Map<number, Uint8Array>();
   /** Id of the last chat message sent in the room (chat itself is not kept). */
   chatSequence = 0;
+  /** Reactions of the recent chat messages by id, oldest first. */
+  readonly chatReactable = new Map<number, RoomChatReactable>();
   /**
    * Sender, time and edit count of the messages that may still be edited, by
    * id, oldest first; their text is not kept.

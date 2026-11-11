@@ -247,6 +247,7 @@ export type ClientMessage =
   | { t: 'name.set'; r?: number; name: string }
   | { t: 'chat'; r?: number; text: string; file?: ChatFileAttachment }
   | { t: 'chat.edit'; r?: number; id: number; text: string }
+  | { t: 'chat.react'; r?: number; id: number; emoji: string; on: boolean }
   | { t: 'lock.acquire'; r?: number; lease: number; ids: string[]; replace?: boolean; shared?: string[] }
   | { t: 'lock.release'; r?: number; ids?: string[] }
   | { t: 'lock.renew'; lease: number }
@@ -371,6 +372,7 @@ export type ErrorCode =
   | 'invalid_chat'
   | 'chat_rate_limited'
   | 'chat_edit_refused'
+  | 'chat_react_refused'
   | 'busy'
   | 'protocol_unsupported'
   | 'protocol_mismatch'
@@ -417,4 +419,18 @@ export interface ChatEditedMessage {
   from: number;
   text: string;
   at: number;
+}
+
+/**
+ * A member added or removed a reaction on a chat message (capability
+ * `chat.react`), pushed to the other members and sent to the reacting member as
+ * its reply. `from` is the member who reacted.
+ */
+export interface ChatReactionMessage {
+  t: 'chat.reaction';
+  r?: number;
+  id: number;
+  from: number;
+  emoji: string;
+  on: boolean;
 }

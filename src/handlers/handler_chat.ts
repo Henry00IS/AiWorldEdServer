@@ -11,6 +11,7 @@ import type { ServerCore } from '../server/server_core.ts';
 import { CHAT_EDIT_WINDOW_MS, chatTextNormalize } from '../shared/chat_text_policy.ts';
 import type { ChatFileAttachment, ChatMessageEntry, ClientMessage } from '../shared/protocol_definitions.ts';
 import { transferMimeSanitize, transferNameSanitize } from '../shared/transfer_file_policy.ts';
+import { chatReactableRemember } from './handler_chat_react.ts';
 import { handlerTransferLinkOwner } from './handler_transfer.ts';
 
 /** Most messages per room kept for editing. */
@@ -47,8 +48,20 @@ export function handlerChat(core: ServerCore, session: ConnectionSession, messag
     ...(file === undefined ? {} : { file }),
   };
   sessionSend(session, { t: 'chat.sent', ...(message.r === undefined ? {} : { r: message.r }), ...entry });
-  chatEditableRemember(room, entry);
+  chatRemember(room, entry);
   chatRelay(core, room, session, entry);
+}
+
+/**
+ * Remembers a sent message so its sender may edit it and members may react to
+ * it.
+ *
+ * @param room Room of the message.
+ * @param entry Chat message.
+ */
+function chatRemember(room: Room, entry: ChatMessageEntry): void {
+  chatEditableRemember(room, entry);
+  chatReactableRemember(room, entry.id, entry.at);
 }
 
 /**

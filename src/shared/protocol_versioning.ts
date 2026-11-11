@@ -26,8 +26,10 @@ export const PROTOCOL_VERSION_LIMIT = 0xffff;
  *   broadcasts of who is typing in the room.
  * - `chat.edit`: senders edit their own chat messages for a few minutes,
  *   `chat.edit` requests and `chat.edited` messages.
+ * - `chat.react`: emoji reactions on chat messages, `chat.react` requests and
+ *   `chat.reaction` messages.
  */
-export const PROTOCOL_CAPABILITIES = ['select', 'transfer', 'stats', 'typing', 'chat.edit'] as const;
+export const PROTOCOL_CAPABILITIES = ['select', 'transfer', 'stats', 'typing', 'chat.edit', 'chat.react'] as const;
 /** Union of capability names this relay knows. */
 export type ProtocolCapability = (typeof PROTOCOL_CAPABILITIES)[number];
 /** Wire format of a capability name: lowercase, dot-separated words. */

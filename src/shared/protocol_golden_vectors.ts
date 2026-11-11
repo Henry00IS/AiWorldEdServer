@@ -288,6 +288,8 @@ const GOLDEN_CLIENT_V3: readonly GoldenClientVector[] = [
   { name: 'chat', verdict: 'accept', frame: '{"t":"chat","text":"hi"}' },
   { name: 'chat.edit', verdict: 'accept', frame: '{"t":"chat.edit","id":1,"text":"hi"}' },
   { name: 'chat.edit id zero', verdict: 'reject', frame: '{"t":"chat.edit","id":0,"text":"hi"}' },
+  { name: 'chat.react', verdict: 'accept', frame: '{"t":"chat.react","id":1,"emoji":"x","on":true}' },
+  { name: 'chat.react without on', verdict: 'reject', frame: '{"t":"chat.react","id":1,"emoji":"x"}' },
   { name: 'ping', verdict: 'accept', frame: '{"t":"ping","r":9}' },
   { name: 'transfer.create', verdict: 'accept', frame: '{"t":"transfer.create","r":3}' },
   {

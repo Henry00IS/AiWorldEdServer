@@ -18,6 +18,7 @@ import {
 import { handlerEdit } from '../handlers/handler_edit.ts';
 import { chatFlush, handlerChat } from '../handlers/handler_chat.ts';
 import { handlerChatEdit } from '../handlers/handler_chat_edit.ts';
+import { handlerChatReact } from '../handlers/handler_chat_react.ts';
 import { handlerNameSet } from '../handlers/handler_name.ts';
 import { handlerPresence, presenceFlush } from '../handlers/handler_presence.ts';
 import { handlerLockAcquire, handlerLockRelease, handlerLockRenew, leasesSweep } from '../handlers/handler_lock.ts';
@@ -108,8 +109,16 @@ function sessionPresenceState(
  *
  * @returns Fresh chat state.
  */
-function sessionChatState(): Pick<SessionInitialState, 'chatPending' | 'chatLastAt' | 'chatEditLastAt'> {
-  return { chatPending: [], chatLastAt: Number.NEGATIVE_INFINITY, chatEditLastAt: Number.NEGATIVE_INFINITY };
+function sessionChatState(): Pick<
+  SessionInitialState,
+  'chatPending' | 'chatLastAt' | 'chatEditLastAt' | 'chatReactTimes'
+> {
+  return {
+    chatPending: [],
+    chatLastAt: Number.NEGATIVE_INFINITY,
+    chatEditLastAt: Number.NEGATIVE_INFINITY,
+    chatReactTimes: [],
+  };
 }
 
 /**
@@ -608,6 +617,26 @@ export class ServerCore {
   }
 
   /**
+   * Routes a validated chat message to its handler.
+   *
+   * @param session Sender.
+   * @param message Validated chat, edit or reaction message.
+   */
+  private dispatchChat(
+    session: ConnectionSession,
+    message: Extract<ContentMessage, { t: 'chat' | 'chat.edit' | 'chat.react' }>,
+  ): void {
+    switch (message.t) {
+      case 'chat':
+        return handlerChat(this, session, message);
+      case 'chat.edit':
+        return handlerChatEdit(this, session, message);
+      case 'chat.react':
+        return handlerChatReact(this, session, message);
+    }
+  }
+
+  /**
    * Routes a validated chat, asset or stream message to its handler.
    *
    * @param session Sender.
@@ -616,9 +645,9 @@ export class ServerCore {
   private dispatchTransfer(session: ConnectionSession, message: ContentMessage): void {
     switch (message.t) {
       case 'chat':
-        return handlerChat(this, session, message);
       case 'chat.edit':
-        return handlerChatEdit(this, session, message);
+      case 'chat.react':
+        return this.dispatchChat(session, message);
       case 'asset.request':
         return handlerAssetRequest(this, session, message);
       case 'asset.missing':
