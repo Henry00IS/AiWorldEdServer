@@ -6,6 +6,12 @@ export const CHAT_TEXT_LENGTH_MAXIMUM = 2000;
 export const CHAT_TEXT_LINES_MAXIMUM = 20;
 /** Minimum time between two chat messages of one session in milliseconds. */
 export const CHAT_SEND_INTERVAL_MS = 5000;
+/** How long after it was sent a chat message may be edited by its sender. */
+export const CHAT_EDIT_WINDOW_MS = 5 * 60 * 1000;
+/** Minimum time between two edits of one session in milliseconds. */
+export const CHAT_EDIT_INTERVAL_MS = 1000;
+/** Most edits of one chat message. */
+export const CHAT_EDITS_PER_MESSAGE_MAXIMUM = 20;
 /**
  * Largest raw chat text accepted on the wire in UTF-16 code units: enough for
  * the maximum length in astral emoji plus characters that normalizing strips.

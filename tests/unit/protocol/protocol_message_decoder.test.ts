@@ -14,6 +14,7 @@ const valid = [
   { t: 'select', ids: [] },
   { t: 'typing' },
   { t: 'typing', stop: true },
+  { t: 'chat.edit', id: 3, text: 'fixed', r: 4 },
   { t: 'edit', seq: 8, ops: [{ k: 'reparent', ids: ['brush:1'], d: {}, p: ['group:1'] }] },
   { t: 'lock.release' },
   { t: 'verify.result', q: 4294967295, v: 'deleted' },

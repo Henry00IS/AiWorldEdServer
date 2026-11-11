@@ -246,6 +246,7 @@ export type ClientMessage =
   | { t: 'room.leave'; r?: number }
   | { t: 'name.set'; r?: number; name: string }
   | { t: 'chat'; r?: number; text: string; file?: ChatFileAttachment }
+  | { t: 'chat.edit'; r?: number; id: number; text: string }
   | { t: 'lock.acquire'; r?: number; lease: number; ids: string[]; replace?: boolean; shared?: string[] }
   | { t: 'lock.release'; r?: number; ids?: string[] }
   | { t: 'lock.renew'; lease: number }
@@ -369,6 +370,7 @@ export type ErrorCode =
   | 'name_locked'
   | 'invalid_chat'
   | 'chat_rate_limited'
+  | 'chat_edit_refused'
   | 'busy'
   | 'protocol_unsupported'
   | 'protocol_mismatch'
@@ -401,4 +403,18 @@ export interface ChatMessage extends ChatMessageEntry {
 export interface ChatSentMessage extends ChatMessageEntry {
   t: 'chat.sent';
   r?: number;
+}
+
+/**
+ * New text of an edited chat message (capability `chat.edit`), pushed to the
+ * other members and sent to the editor as its reply. `from` is the sender of
+ * the message and `at` the relay time of the edit.
+ */
+export interface ChatEditedMessage {
+  t: 'chat.edited';
+  r?: number;
+  id: number;
+  from: number;
+  text: string;
+  at: number;
 }

@@ -24,8 +24,10 @@ export const PROTOCOL_VERSION_LIMIT = 0xffff;
  *   {online}` when it changes, at most once every 5 seconds.
  * - `typing`: chat typing presence, `typing` client signals and `typing {users}`
  *   broadcasts of who is typing in the room.
+ * - `chat.edit`: senders edit their own chat messages for a few minutes,
+ *   `chat.edit` requests and `chat.edited` messages.
  */
-export const PROTOCOL_CAPABILITIES = ['select', 'transfer', 'stats', 'typing'] as const;
+export const PROTOCOL_CAPABILITIES = ['select', 'transfer', 'stats', 'typing', 'chat.edit'] as const;
 /** Union of capability names this relay knows. */
 export type ProtocolCapability = (typeof PROTOCOL_CAPABILITIES)[number];
 /** Wire format of a capability name: lowercase, dot-separated words. */

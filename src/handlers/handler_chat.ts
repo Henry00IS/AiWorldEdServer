@@ -8,10 +8,13 @@
 import { sessionSend, sessionSendError, type ConnectionSession } from '../connection/connection_session.ts';
 import type { Room } from '../rooms/room.ts';
 import type { ServerCore } from '../server/server_core.ts';
-import { chatTextNormalize } from '../shared/chat_text_policy.ts';
+import { CHAT_EDIT_WINDOW_MS, chatTextNormalize } from '../shared/chat_text_policy.ts';
 import type { ChatFileAttachment, ChatMessageEntry, ClientMessage } from '../shared/protocol_definitions.ts';
 import { transferMimeSanitize, transferNameSanitize } from '../shared/transfer_file_policy.ts';
 import { handlerTransferLinkOwner } from './handler_transfer.ts';
+
+/** Most messages per room kept for editing. */
+const CHAT_EDITABLE_MAXIMUM = 512;
 
 /** Client chat message. */
 type ChatClientMessage = Extract<ClientMessage, { t: 'chat' }>;
@@ -44,6 +47,7 @@ export function handlerChat(core: ServerCore, session: ConnectionSession, messag
     ...(file === undefined ? {} : { file }),
   };
   sessionSend(session, { t: 'chat.sent', ...(message.r === undefined ? {} : { r: message.r }), ...entry });
+  chatEditableRemember(room, entry);
   chatRelay(core, room, session, entry);
 }
 
@@ -96,6 +100,33 @@ function chatAdmit(
   if (text.ok) return text.text;
   sessionSendError(session, 'invalid_chat', message.r, { reason: text.reason });
   return null;
+}
+
+/**
+ * Remembers who sent a message and when, so its sender may edit it for a few
+ * minutes; messages past that time are forgotten.
+ *
+ * @param room Room of the message.
+ * @param entry Chat message.
+ */
+function chatEditableRemember(room: Room, entry: ChatMessageEntry): void {
+  room.chatEditable.set(entry.id, { from: entry.from, at: entry.at, edits: 0 });
+  chatEditableForget(room, entry.at);
+}
+
+/**
+ * Forgets the oldest messages that can no longer be edited, and the oldest
+ * beyond the cap.
+ *
+ * @param room Room.
+ * @param now Current time (epoch ms).
+ */
+export function chatEditableForget(room: Room, now: number): void {
+  for (const [id, editable] of room.chatEditable) {
+    const crowded = room.chatEditable.size > CHAT_EDITABLE_MAXIMUM;
+    if (!crowded && now - editable.at <= CHAT_EDIT_WINDOW_MS) return;
+    room.chatEditable.delete(id);
+  }
 }
 
 /**

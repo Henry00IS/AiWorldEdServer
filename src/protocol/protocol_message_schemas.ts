@@ -186,6 +186,10 @@ export const CLIENT_MESSAGE_SCHEMAS: Readonly<Record<ClientMessageType, Schema>>
     { text: { type: 'string', min: 1, max: CHAT_TEXT_WIRE_MAXIMUM } },
     { file: SCHEMA_CHAT_FILE },
   ),
+  'chat.edit': messageSchema('chat.edit', {
+    id: { type: 'int', min: 1, max: Number.MAX_SAFE_INTEGER },
+    text: { type: 'string', min: 1, max: CHAT_TEXT_WIRE_MAXIMUM },
+  }),
   'lock.acquire': messageSchema(
     'lock.acquire',
     { lease: SCHEMA_LEASE_ID, ids: SCHEMA_OBJECT_IDS },

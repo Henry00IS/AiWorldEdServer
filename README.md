@@ -104,13 +104,13 @@ The first message must be `hello` within five seconds:
   "minVersion": 3,
   "client": "MyEditor/1.2.3",
   "name": "Builder",
-  "caps": ["select", "transfer", "stats", "typing"]
+  "caps": ["select", "transfer", "stats", "typing", "chat.edit"]
 }
 ```
 
 Both supported protocol bounds are currently **2**. The relay selects the newest
 common protocol version and intersects the offered optional transport capabilities
-`select`, `transfer`, `stats`, `typing`. These are unrelated to room software
+`select`, `transfer`, `stats`, `typing`, `chat.edit`. These are unrelated to room software
 identity. No common version produces `protocol_unsupported`, followed by close 4008. A room must also use the connection's negotiated protocol version.
 `client` identifies the editor name/build shown in the room list.
 
@@ -145,6 +145,7 @@ limits and semantic checks.
 - **`room.leave`**: `r?: int[0..2147483647]`.
 - **`name.set`**: `name: string[1..64]; r?: int[0..2147483647]`.
 - **`chat`**: `text: string[1..8192]; r?: int[0..2147483647]; file?: {link: string[43..43] matching /^[A-Za-z0-9_-]{43}$/; name: string[0..1020]; size: int[0..9007199254740991]; mime: string[0..255]}`.
+- **`chat.edit`**: `id: int[1..9007199254740991]; text: string[1..8192]; r?: int[0..2147483647]`.
 - **`lock.acquire`**: `lease: int[1..9007199254740991]; ids: (string[1..64] matching /^[A-Za-z0-9_.:-]+$/)[1..4096]; r?: int[0..2147483647]; replace?: boolean; shared?: (string[1..64] matching /^[A-Za-z0-9_.:-]+$/)[1..4096]`.
 - **`lock.release`**: `r?: int[0..2147483647]; ids?: (string[1..64] matching /^[A-Za-z0-9_.:-]+$/)[1..4096]`.
 - **`lock.renew`**: `lease: int[1..9007199254740991]`.
@@ -216,6 +217,8 @@ conflicts?:{id:string,by:u32,shared?:boolean}[], why?:string`.
 - `typing`: `users:u32[]` (negotiated `typing` only; recipient's own id omitted).
 - `chat` / `chat.sent`: `id:int, from:u32, name:string, color:int, text:string,
 at:int, file?:File`. `at` is epoch milliseconds; only `chat.sent` is the sender's reply.
+- `chat.edited`: `id:int, from:u32, text:string, at:int` (negotiated `chat.edit`
+  only; also the editor's reply). `at` is the relay time of the edit.
 - `transfer.created`: `link:string, expiresInMs:int`.
 - `transfer.get`: `q:u32, link:string, thumbnail?:true` (to the link's connected owner;
   `thumbnail` asks for a PNG preview of the file instead).
@@ -333,6 +336,17 @@ UTF-16 units before normalization. Empty/overlong/too-many-line messages return
 `invalid_chat`; fast sends return `chat_rate_limited` with `retryAfterMs`.
 There is no chat history. Each recipient has a low-priority 64-message FIFO;
 when full its oldest waiting chat is dropped. Render text inertly.
+
+With negotiated `chat.edit`, the sender of a message may replace its text with
+`chat.edit {id, text}` for five minutes after the relay accepted it, at most 20
+times and once a second. The text is normalized like a new message. Edits by
+anyone else, of unknown or older messages, or beyond the cap return
+`chat_edit_refused` with `reason` `not_author`, `not_found`, `expired`,
+`too_many` or `unsupported`; fast edits return `chat_rate_limited`. A reconnect
+is a new connection and cannot edit earlier messages. Accepted edits go to the
+other members that negotiated `chat.edit` through the same chat FIFO, so an edit
+never arrives before its message. Receivers should still check that the edit
+comes from the sender of a message they hold and is not older than the window.
 
 `typing` starts/refreshes a ten-second indicator, and `typing {stop:true}` clears
 it. Accepted chat and leaving also clear it. Only peers with the negotiated
