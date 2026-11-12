@@ -90,6 +90,10 @@ export interface ServerConfiguration {
   presencePerSecond: number;
   presenceBurst: number;
   presenceHighWaterBytes: number;
+  /** Toy snapshot frames one member may send per second. */
+  toysPerSecond: number;
+  /** Burst of toy snapshot frames of one member. */
+  toysBurst: number;
   /** Minimum time between two chat messages of one session. */
   chatIntervalMs: number;
   /** Maximum chat message length in code points (at most the protocol cap). */
@@ -236,6 +240,8 @@ const CONFIGURATION_ROOM_LIMITS_DEFAULT = {
   presencePerSecond: 10,
   presenceBurst: 20,
   presenceHighWaterBytes: 64 * 1024,
+  toysPerSecond: 5,
+  toysBurst: 10,
   chatIntervalMs: CHAT_SEND_INTERVAL_MS,
   chatTextLengthMaximum: CHAT_TEXT_LENGTH_MAXIMUM,
   chatTextLinesMaximum: CHAT_TEXT_LINES_MAXIMUM,

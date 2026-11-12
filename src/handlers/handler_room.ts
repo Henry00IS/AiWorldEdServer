@@ -11,6 +11,7 @@ import { displayNameNormalize, displayNameUnique, roomNameNormalize } from '../s
 import { chatPurge } from './handler_chat.ts';
 import { typingClear, typingClearAll } from './handler_typing.ts';
 import { presencePurge } from './handler_presence.ts';
+import { toyPurge } from './handler_toy.ts';
 import { verifyCancel } from './handler_verify.ts';
 
 type RoomCreateMessage = Extract<ClientMessage, { t: 'room.create' }>;
@@ -537,6 +538,7 @@ function roomMemberRemove(room: Room, session: ConnectionSession): void {
   typingClear(room, session.user);
   room.memberDelete(session.user);
   presencePurge(room, session);
+  toyPurge(room, session);
   sessionRoomStateReset(session);
   roomBroadcastLocks(room, session, [], room.locks.release(session.user));
   for (const stream of room.streamsRemoveFor(session.user)) {
@@ -560,6 +562,7 @@ function roomClose(core: ServerCore, room: Room): void {
   room.locks.releaseEverything();
   room.customLocks.releaseEverything();
   room.presenceLatest.clear();
+  room.toyLatest.clear();
   for (const member of room.members.values()) verifyCancel(member, 'owner_left');
   room.verifyWaiting.clear();
   for (const member of room.members.values()) {

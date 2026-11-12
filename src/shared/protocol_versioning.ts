@@ -28,8 +28,18 @@ export const PROTOCOL_VERSION_LIMIT = 0xffff;
  *   `chat.edit` requests and `chat.edited` messages.
  * - `chat.react`: emoji reactions on chat messages, `chat.react` requests and
  *   `chat.reaction` messages.
+ * - `toys`: snapshots of the toys each member owns and simulates (binary kind 5,
+ *   from any member to every other member).
  */
-export const PROTOCOL_CAPABILITIES = ['select', 'transfer', 'stats', 'typing', 'chat.edit', 'chat.react'] as const;
+export const PROTOCOL_CAPABILITIES = [
+  'select',
+  'transfer',
+  'stats',
+  'typing',
+  'chat.edit',
+  'chat.react',
+  'toys',
+] as const;
 /** Union of capability names this relay knows. */
 export type ProtocolCapability = (typeof PROTOCOL_CAPABILITIES)[number];
 /** Wire format of a capability name: lowercase, dot-separated words. */

@@ -34,6 +34,13 @@ export const BINARY_FRAME_KIND_TRANSFER_CHUNK = 3;
 /** Opaque third-party data: request id at 4..7, target/sender at 8..11. */
 export const BINARY_FRAME_KIND_CUSTOM = 4;
 
+/**
+ * Binary frame kind: low-priority, latest-only snapshot of the toys a member
+ * owns and simulates (props such as the balls it threw). Members that
+ * negotiated the `toys` capability send and receive it. See `toy_frame.ts`.
+ */
+export const BINARY_FRAME_KIND_TOY = 5;
+
 /** Bytes the relay asks for per transfer chunk (256 KiB). */
 export const TRANSFER_CHUNK_BYTES = 256 * 1024;
 /** Largest file a transfer link may serve (100 MiB). */

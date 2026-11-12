@@ -104,13 +104,13 @@ The first message must be `hello` within five seconds:
   "minVersion": 3,
   "client": "MyEditor/1.2.3",
   "name": "Builder",
-  "caps": ["select", "transfer", "stats", "typing", "chat.edit", "chat.react"]
+  "caps": ["select", "transfer", "stats", "typing", "chat.edit", "chat.react", "toys"]
 }
 ```
 
 Both supported protocol bounds are currently **2**. The relay selects the newest
 common protocol version and intersects the offered optional transport capabilities
-`select`, `transfer`, `stats`, `typing`, `chat.edit`, `chat.react`. These are unrelated to room software
+`select`, `transfer`, `stats`, `typing`, `chat.edit`, `chat.react`, `toys`. These are unrelated to room software
 identity. No common version produces `protocol_unsupported`, followed by close 4008. A room must also use the connection's negotiated protocol version.
 `client` identifies the editor name/build shown in the room list.
 
@@ -124,7 +124,8 @@ is negotiated. Every `limits` value is numeric. Its fields are:
 `lockLeaseMs`, `roomListMaximum`, `roomListPushIntervalMs`, `chatIntervalMs`,
 `chatTextLength`, `chatTextLines`, `transferIntervalMs`, `transferLifetimeMs`,
 `transferBytes`, `customBytesPerSecond`, `customMessagesPerSecond`,
-`compatibilityTimeoutMs`. Read effective values rather than assuming defaults.
+`compatibilityTimeoutMs`, and `toysPerSecond` and `toysPerMember` for the
+`toys` capability. Read effective values rather than assuming defaults.
 
 ### Client commands
 
@@ -292,7 +293,78 @@ position:3×float32, packed smallest-three quaternion:u32, and fov/flags:u8.
 Camera ids are 0–15 with fov 1–179; character id is 255, using flag bits 1, 2 and 4.
 Coordinates must be finite and within absolute value 1,000,000. See
 `src/shared/presence_frame.ts` for packing. Only synced members send presence;
-it is latest-only and may be dropped under load.
+it is latest-only and may be dropped under load. Kind 5 carries
+toys (player-owned props such as thrown balls), described next; kind 4 is the third-party custom
+channel.
+
+### Toys (binary kind 5)
+
+Capability `toys`. Toys are temporary, player-owned things that vanish with their player: today the tennis
+balls a member throws in play mode, other kinds later (real scene entities are a separate, future feature).
+The thrower simulates its toys; every other member only interpolates what the relay forwards. Toys travel
+like presence: member to relay to everyone else, latest-only, lowest priority. Shared codec:
+`src/shared/toy_frame.ts` (`toyFrameEncode`, `toyFrameCheck`, `toyFrameRelay`, `toyFrameDecode`).
+
+```
+member → relay: [0xA7][kind 5][version 1][count 0..4][frame flags u8: 1 full][tick u16 BE]
+                [precision bits k u8 0..9][origin x y z float32 BE][entries]
+relay → others: [0xA7][kind 5][version 1][count][sender u32 BE][frame flags]...[entries]
+entry:          [type u8 1..255][id u8 1..4][flags u8: 1 sleeping, 2 grounded][payload length u8 0..22]
+                [position x y z int16 BE][payload]
+```
+
+The relay validates only the envelope (header and fixed entry parts), so a new toy type never needs a relay
+change. Every toy has a position, so it is part of each entry: a 10-byte fixed part plus an opaque payload
+of at most 22 bytes (an entry is at most 32 bytes, a frame at most 148 bytes up and 152 down).
+
+| Bytes | Field                                                                                    |
+| ----- | ---------------------------------------------------------------------------------------- |
+| 0     | Toy type 1..255 (`TOY_TYPE_TENNIS_BALL` = 1); the relay passes every type through        |
+| 1     | Toy id 1..4, unique in the frame                                                         |
+| 2     | Entry flags: 1 sleeping, 2 grounded (moves along a surface); other bits must be zero     |
+| 3     | Payload length 0..22                                                                     |
+| 4..9  | Position x, y, z: int16 BE, origin + value / 2^k (k = 9 is about 2 mm); always valid     |
+| 10..  | Payload, defined per type and validated by clients, which ignore types they do not know; |
+|       | a type that needs finer positions adds its own correction here                           |
+
+Tennis ball payload (7 bytes, entry 17 bytes; one ball is 37 bytes up and 41 down):
+
+| Payload bytes | Field                                                                                   |
+| ------------- | --------------------------------------------------------------------------------------- |
+| 0             | High nibble: bounce counter (one more per bounce, wraps at 16); low nibble: strength of |
+|               | the latest bounce in steps of 2 m/s (0..30 m/s)                                         |
+| 1..6          | Velocity x, y, z: int16 BE within ±32767, value / 512 m/s (about 2 mm/s, up to 64 m/s)  |
+
+The client frame has no owner or member field: the relay inserts the sender's user id, so every toy in a
+frame belongs to the connection that sent it and nobody can publish or remove someone else's toys. Receivers
+only interpolate, so a sender publishes on events (throw, contacts, waking, falling asleep) and as a slow
+keepalive, and nothing while its toys rest; the bounce counter lets receivers play every bounce. A full
+snapshot lists every toy of the sender (its toys missing from it are gone; a count of 0 clears them all); a
+changes-only snapshot lists only the toys that changed and must list at least one. A member owns at most
+four toys (`toysPerMember`). The tick is the sender's 120 Hz simulation step (wrapping), so receivers place
+the state in time.
+
+Validation is as strict as presence for everything the relay understands: the version, at most four
+entries, only defined frame and entry flag bits, non-zero types, ids 1..4 unique per frame, payload
+lengths of at most 22 bytes adding up to the exact frame length, a precision of at most 9 bits and a finite
+origin within ±10^6. Anything else, or a toy frame from a connection without the capability, closes the
+connection with `4001`. A frame shaped like a relayed frame (with a sender id) fails the length check, so a
+client cannot claim another sender.
+
+Each member may send 5 snapshots per second (`toysPerSecond`, burst 10). Toy frames also count against the
+general message and byte limits (close `4002`). Every frame over the member's toy rate is dropped and scores
+one abuse point (see [Rate limits and quotas](#rate-limits-and-quotas)): past `abuseThrottleScore` nothing the
+member sends is relayed, a flood that goes on reaches `abuseDisconnectScore` and is closed with `4007`,
+flagged in the room and kept out of it for `abuseRoomCooldownMs`, and a reconnect from the same address
+starts with the carried score (at most half the throttle score). Frames within the rate never score.
+Frames from members that have not synced yet are dropped.
+
+Full and changes-only snapshots have a mailbox slot each per sender and recipient, delivered only while the
+recipient's outbound path is idle; a newer changes-only snapshot replaces an undelivered one, and a full
+snapshot drops both and is delivered after anything else still pending. The relay keeps the latest full
+snapshot of every member; a joining member with the capability gets them after its snapshot; members
+without the capability never receive toy frames. A leaver's latest snapshot and pending frames are dropped.
+Kind 6 is unused.
 
 ### Edits, locks and leases
 
@@ -472,6 +544,8 @@ The following numeric defaults are read directly from `configurationDefault()`. 
 | `presencePerSecond`            | 10          |
 | `presenceBurst`                | 20          |
 | `presenceHighWaterBytes`       | 65,536      |
+| `toysPerSecond`                | 5           |
+| `toysBurst`                    | 10          |
 | `chatIntervalMs`               | 5,000       |
 | `chatTextLengthMaximum`        | 2,000       |
 | `chatTextLinesMaximum`         | 20          |
@@ -513,7 +587,7 @@ The following numeric defaults are read directly from `configurationDefault()`. 
 | `transferDownloadsPerOwner`    | 16          |
 | `transferReplyTimeoutMs`       | 20,000      |
 
-Rate abuse can throttle or disconnect clients under the existing abuse scorer. Selection/presence are lossy under load; chat has its own FIFO policy. Custom byte/frame-window refusals are explicit and add no abuse points. Per-room lock totals are independent between rooms. See [SELF_HOSTING.md](docs/SELF_HOSTING.md) for environment-variable names and validation bounds.
+Rate abuse can throttle or disconnect clients under the existing abuse scorer. Selection/presence are lossy under load; toy frames over a member's toy rate score one abuse point each; chat has its own FIFO policy. Custom byte/frame-window refusals are explicit and add no abuse points. Per-room lock totals are independent between rooms. See [SELF_HOSTING.md](docs/SELF_HOSTING.md) for environment-variable names and validation bounds.
 
 ## Third-party custom messages
 

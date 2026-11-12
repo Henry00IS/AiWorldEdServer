@@ -21,6 +21,8 @@ import { handlerChatEdit } from '../handlers/handler_chat_edit.ts';
 import { handlerChatReact } from '../handlers/handler_chat_react.ts';
 import { handlerNameSet } from '../handlers/handler_name.ts';
 import { handlerPresence, presenceFlush } from '../handlers/handler_presence.ts';
+import { handlerToy } from '../handlers/handler_toy.ts';
+import { TOY_ENTRIES_MAXIMUM } from '../shared/toy_frame.ts';
 import { handlerLockAcquire, handlerLockRelease, handlerLockRenew, leasesSweep } from '../handlers/handler_lock.ts';
 import { handlerSelect } from '../handlers/handler_select.ts';
 import { handlerTyping } from '../handlers/handler_typing.ts';
@@ -58,6 +60,7 @@ import { handlerRoomSubscribe, handlerRoomUnsubscribe } from '../handlers/handle
 import { displayNameFallback, displayNameNormalize, DISPLAY_NAME_LENGTH_MAXIMUM } from '../shared/room_name_policy.ts';
 import {
   BINARY_FRAME_KIND_CUSTOM,
+  BINARY_FRAME_KIND_TOY,
   BINARY_FRAME_KIND_PRESENCE,
   BINARY_FRAME_KIND_TRANSFER_CHUNK,
   CLOSE_CODES,
@@ -96,11 +99,12 @@ type SessionInitialState = Omit<
  */
 function sessionPresenceState(
   config: ServerConfiguration,
-): Pick<SessionInitialState, 'presenceBucket' | 'presencePending' | 'presenceHighWaterBytes'> {
+): Pick<SessionInitialState, 'presenceBucket' | 'presencePending' | 'presenceHighWaterBytes' | 'toyBucket'> {
   return {
     presenceBucket: new LimiterTokenBucket(config.presencePerSecond, config.presenceBurst),
     presencePending: new Map(),
     presenceHighWaterBytes: config.presenceHighWaterBytes,
+    toyBucket: new LimiterTokenBucket(config.toysPerSecond, config.toysBurst),
   };
 }
 
@@ -204,6 +208,8 @@ function welcomeLimits(config: ServerConfiguration): object {
     usersPerRoom: config.usersPerRoomMaximum,
     locksPerUser: config.locksPerUser,
     presencePerSecond: config.presencePerSecond,
+    toysPerSecond: config.toysPerSecond,
+    toysPerMember: TOY_ENTRIES_MAXIMUM,
     ...welcomeLimitsRooms(config),
   };
 }
@@ -500,6 +506,7 @@ export class ServerCore {
     if (!session.helloDone) return this.violation(session, 'binary before hello');
     if (frame[1] === BINARY_FRAME_KIND_CUSTOM) return verifyHoldOrRun(this, session, frame, frame.byteLength);
     if (frame[1] === BINARY_FRAME_KIND_PRESENCE) return handlerPresence(this, session, frame);
+    if (frame[1] === BINARY_FRAME_KIND_TOY) return handlerToy(this, session, frame);
     if (frame[1] === BINARY_FRAME_KIND_TRANSFER_CHUNK) return handlerTransferChunk(this, session, frame);
     handlerStreamChunk(this, session, frame);
   }

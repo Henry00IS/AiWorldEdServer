@@ -106,6 +106,11 @@ export class Room {
    * finish syncing.
    */
   readonly presenceLatest = new Map<number, Uint8Array>();
+  /**
+   * Latest full relayed toy snapshot per member, handed to members with the
+   * `toys` capability when they finish syncing.
+   */
+  readonly toyLatest = new Map<number, Uint8Array>();
   /** Id of the last chat message sent in the room (chat itself is not kept). */
   chatSequence = 0;
   /** Reactions of the recent chat messages by id, oldest first. */

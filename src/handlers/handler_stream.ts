@@ -8,6 +8,7 @@ import type { ServerCore } from '../server/server_core.ts';
 import { binaryFrameCopyWithPeer, binaryFrameParse } from '../shared/binary_frame.ts';
 import type { ClientMessage } from '../shared/protocol_definitions.ts';
 import { presenceCatchUp } from './handler_presence.ts';
+import { toyCatchUp } from './handler_toy.ts';
 import { roomMembershipEnd } from './handler_room.ts';
 
 type StreamBeginMessage = Extract<ClientMessage, { t: 'stream.begin' }>;
@@ -224,6 +225,7 @@ function streamFinish(room: Room, owner: ConnectionSession, target: ConnectionSe
   if (target.snapshotTimer) clearTimeout(target.snapshotTimer);
   target.snapshotTimer = null;
   presenceCatchUp(room, target);
+  toyCatchUp(room, target);
 }
 
 /**
