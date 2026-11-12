@@ -1,14 +1,18 @@
 /**
  * Presence relay: latest-only, lowest priority. Each recipient has a mailbox
  * holding at most one frame per sender; a newer frame replaces the older one
- * and frames leave the mailbox only while the recipient's outbound queue is
- * empty and its socket buffer is nearly drained, so presence never delays or
- * queues behind edits and never builds a backlog.
+ * and frames leave the mailbox while the recipient's outbound queue is empty
+ * and its socket buffer is nearly drained, so presence never delays or queues
+ * behind edits and never builds a backlog. Behind a long bulk stream the
+ * mailbox goes ahead of the queue at most every PRESENCE_INTERLEAVE_MS.
  */
 import type { ConnectionSession } from '../connection/connection_session.ts';
 import type { Room } from '../rooms/room.ts';
 import type { ServerCore } from '../server/server_core.ts';
 import { presenceFrameCheck, presenceFrameRelay } from '../shared/presence_frame.ts';
+
+/** Longest time presence waits behind a busy outbound queue before going ahead. */
+export const PRESENCE_INTERLEAVE_MS = 200;
 
 /**
  * Validates a presence frame and offers it to every other synced member. Frames
@@ -45,16 +49,28 @@ export function presenceOffer(recipient: ConnectionSession, sender: number, fram
 }
 
 /**
- * Delivers the mailbox when the recipient's outbound path is idle.
+ * Delivers the mailbox when the recipient's outbound path is idle. Behind a
+ * long bulk stream (a joiner downloading large textures) the mailbox goes ahead
+ * of the queue once PRESENCE_INTERLEAVE_MS passed since the last delivery, so
+ * presence keeps flowing at a bounded rate instead of waiting for the whole
+ * transfer.
  *
  * @param recipient Recipient.
+ * @param now Current time (epoch ms).
  */
-export function presenceFlush(recipient: ConnectionSession): void {
+export function presenceFlush(recipient: ConnectionSession, now: number = Date.now()): void {
   if (recipient.presencePending.size === 0 || recipient.closed) return;
+  const ahead = now - recipient.presenceSentAt >= PRESENCE_INTERLEAVE_MS;
+  let sent = false;
   for (const [sender, frame] of recipient.presencePending) {
-    if (!recipient.outbound.sendIfIdle(frame, recipient.presenceHighWaterBytes)) return;
+    const delivered =
+      recipient.outbound.sendIfIdle(frame, recipient.presenceHighWaterBytes) ||
+      (ahead && recipient.outbound.sendAhead(frame));
+    if (!delivered) break;
     recipient.presencePending.delete(sender);
+    sent = true;
   }
+  if (sent) recipient.presenceSentAt = now;
 }
 
 /**

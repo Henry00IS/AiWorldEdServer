@@ -1,7 +1,12 @@
 import { expect, test } from 'bun:test';
 import { ConnectionOutboundQueue } from '../../../src/connection/connection_outbound_queue.ts';
 import type { ConnectionSession } from '../../../src/connection/connection_session.ts';
-import { presenceFlush, presenceOffer, presencePurge } from '../../../src/handlers/handler_presence.ts';
+import {
+  PRESENCE_INTERLEAVE_MS,
+  presenceFlush,
+  presenceOffer,
+  presencePurge,
+} from '../../../src/handlers/handler_presence.ts';
 import { Room } from '../../../src/rooms/room.ts';
 
 /**
@@ -27,6 +32,7 @@ function sessionFake(user: number) {
     synced: true,
     presencePending: new Map(),
     presenceHighWaterBytes: 100,
+    presenceSentAt: Date.now(),
     protocol: { version: 2, caps: new Set(['select']), client: 'test' },
   } as unknown as ConnectionSession;
   outbound.idleListener = () => presenceFlush(session);
@@ -92,4 +98,28 @@ test('purge forgets a leaver in every mailbox and in the room', () => {
   presencePurge(room, leaver.session);
   expect([...other.session.presencePending.keys()]).toEqual([1]);
   expect(room.presenceLatest.has(3)).toBe(false);
+});
+
+test('behind a long bulk stream presence goes ahead at a bounded rate instead of waiting for the transfer', () => {
+  const recipient = sessionFake(1);
+  const { session, socket, sent } = recipient;
+  socket.buffered = 1200;
+  for (let chunk = 0; chunk < 20; chunk++) session.outbound.pushBinary(new Uint8Array(256));
+  expect(session.outbound.length()).toBe(20);
+  const start = session.presenceSentAt;
+  session.presencePending.set(2, new Uint8Array([1]));
+  presenceFlush(session, start + PRESENCE_INTERLEAVE_MS - 1);
+  expect(sent.length).toBe(0);
+  presenceFlush(session, start + PRESENCE_INTERLEAVE_MS);
+  expect(sent.map((frame) => frame[0])).toEqual([1]);
+  expect(session.outbound.length()).toBe(20);
+  session.presencePending.set(2, new Uint8Array([2]));
+  presenceFlush(session, start + PRESENCE_INTERLEAVE_MS + 50);
+  expect(sent.length).toBe(1);
+  socket.buffered = 2000;
+  presenceFlush(session, start + 3 * PRESENCE_INTERLEAVE_MS);
+  expect(sent.length).toBe(1);
+  socket.buffered = 1200;
+  presenceFlush(session, start + 3 * PRESENCE_INTERLEAVE_MS);
+  expect(sent.map((frame) => frame[0])).toEqual([1, 2]);
 });

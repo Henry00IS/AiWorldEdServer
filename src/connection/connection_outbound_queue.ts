@@ -114,6 +114,20 @@ export class ConnectionOutboundQueue {
   }
 
   /** Drops everything (connection closing). */
+  /**
+   * Sends a small frame ahead of the queued items (presence that waited too
+   * long behind a bulk stream), while the socket buffer stays below twice its
+   * high-water mark.
+   *
+   * @param data Frame.
+   * @returns True when sent.
+   */
+  sendAhead(data: string | Uint8Array): boolean {
+    if (this.overflowed || this.socket.getBufferedAmount() >= 2 * this.socketHighWaterBytes) return false;
+    this.socket.send(data);
+    return true;
+  }
+
   clear(): void {
     this.items.length = 0;
     this.head = 0;

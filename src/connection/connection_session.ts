@@ -55,6 +55,8 @@ export interface ConnectionSession {
   readonly presencePending: Map<number, Uint8Array>;
   /** Socket buffer level above which presence waits. */
   readonly presenceHighWaterBytes: number;
+  /** When presence was last delivered to this member (epoch ms). */
+  presenceSentAt: number;
   /** Toy snapshot frames this member sends. */
   readonly toyBucket: LimiterTokenBucket;
   /**

@@ -99,11 +99,15 @@ type SessionInitialState = Omit<
  */
 function sessionPresenceState(
   config: ServerConfiguration,
-): Pick<SessionInitialState, 'presenceBucket' | 'presencePending' | 'presenceHighWaterBytes' | 'toyBucket'> {
+): Pick<
+  SessionInitialState,
+  'presenceBucket' | 'presencePending' | 'presenceHighWaterBytes' | 'presenceSentAt' | 'toyBucket'
+> {
   return {
     presenceBucket: new LimiterTokenBucket(config.presencePerSecond, config.presenceBurst),
     presencePending: new Map(),
     presenceHighWaterBytes: config.presenceHighWaterBytes,
+    presenceSentAt: 0,
     toyBucket: new LimiterTokenBucket(config.toysPerSecond, config.toysBurst),
   };
 }
