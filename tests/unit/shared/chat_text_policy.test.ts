@@ -7,6 +7,7 @@ import {
   chatTextLength,
   chatTextLines,
   chatTextNormalize,
+  chatReactionEmojiIs,
 } from '../../../src/shared/chat_text_policy.ts';
 
 /**
@@ -84,5 +85,31 @@ describe('chat text normalization', () => {
   test('leaves markup as inert text for the client to render as text', () => {
     const markup = '<script>alert(1)</script><img src=x onerror=alert(1)>';
     expect(chatTextNormalize(markup)).toEqual({ ok: true, text: markup });
+  });
+});
+
+describe('chatReactionEmojiIs', () => {
+  test('accepts exactly one emoji, flags, keycaps, skin tones and joined sequences', () => {
+    for (const emoji of ['👍', '❤️', '❤', '👍🏽', '👨‍👩‍👧', '🇩🇪', '1️⃣', '🏴󠁧󠁢󠁥󠁮󠁧󠁿']) expect(chatReactionEmojiIs(emoji)).toBe(true);
+  });
+
+  test('refuses text, several emoji, spaces, lone joiners and overlong sequences', () => {
+    for (const text of [
+      '',
+      'a',
+      '1',
+      '👍👍',
+      '👍 ',
+      '<b>',
+      '\u200D👍',
+      '👍\u200D',
+      '👍\u202E',
+      '👨‍'.repeat(12) + '👨',
+    ])
+      expect(chatReactionEmojiIs(text)).toBe(false);
+  });
+
+  test('refuses text that is not in normalized form', () => {
+    expect(chatReactionEmojiIs('\u0041\u030A')).toBe(false);
   });
 });

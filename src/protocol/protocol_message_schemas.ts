@@ -16,7 +16,7 @@ import {
   PROTOCOL_CAPABILITY_PATTERN,
   PROTOCOL_VERSION_LIMIT,
 } from '../shared/protocol_versioning.ts';
-import { CHAT_TEXT_WIRE_MAXIMUM } from '../shared/chat_text_policy.ts';
+import { CHAT_REACTION_EMOJI_LENGTH_MAXIMUM, CHAT_TEXT_WIRE_MAXIMUM } from '../shared/chat_text_policy.ts';
 import type { Schema } from './schema_validator.ts';
 
 /** Absolute protocol caps (configuration may be stricter, never looser). */
@@ -186,6 +186,15 @@ export const CLIENT_MESSAGE_SCHEMAS: Readonly<Record<ClientMessageType, Schema>>
     { text: { type: 'string', min: 1, max: CHAT_TEXT_WIRE_MAXIMUM } },
     { file: SCHEMA_CHAT_FILE },
   ),
+  'chat.edit': messageSchema('chat.edit', {
+    id: { type: 'int', min: 1, max: Number.MAX_SAFE_INTEGER },
+    text: { type: 'string', min: 1, max: CHAT_TEXT_WIRE_MAXIMUM },
+  }),
+  'chat.react': messageSchema('chat.react', {
+    id: { type: 'int', min: 1, max: Number.MAX_SAFE_INTEGER },
+    emoji: { type: 'string', min: 1, max: CHAT_REACTION_EMOJI_LENGTH_MAXIMUM },
+    on: { type: 'bool' },
+  }),
   'lock.acquire': messageSchema(
     'lock.acquire',
     { lease: SCHEMA_LEASE_ID, ids: SCHEMA_OBJECT_IDS },

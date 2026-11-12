@@ -62,6 +62,10 @@ export interface ConnectionSession {
   readonly chatPending: string[];
   /** Time of the last accepted chat message (epoch ms). */
   chatLastAt: number;
+  /** Time of the last accepted chat edit (epoch ms). */
+  chatEditLastAt: number;
+  /** Times of the recent reaction changes (epoch ms), oldest first. */
+  readonly chatReactTimes: number[];
   readonly close: (code: number, reason: string) => void;
   /** Display name in the current room (unique there), else the chosen name. */
   name: string;

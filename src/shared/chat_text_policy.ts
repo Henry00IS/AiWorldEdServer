@@ -6,6 +6,36 @@ export const CHAT_TEXT_LENGTH_MAXIMUM = 2000;
 export const CHAT_TEXT_LINES_MAXIMUM = 20;
 /** Minimum time between two chat messages of one session in milliseconds. */
 export const CHAT_SEND_INTERVAL_MS = 5000;
+/** How long after it was sent a chat message may be edited by its sender. */
+export const CHAT_EDIT_WINDOW_MS = 5 * 60 * 1000;
+/** Minimum time between two edits of one session in milliseconds. */
+export const CHAT_EDIT_INTERVAL_MS = 1000;
+/** Most edits of one chat message. */
+export const CHAT_EDITS_PER_MESSAGE_MAXIMUM = 20;
+/** Most different emoji one chat message may carry as reactions. */
+export const CHAT_REACTION_EMOJIS_PER_MESSAGE_MAXIMUM = 20;
+/** Most reactions of all members together on one chat message. */
+export const CHAT_REACTIONS_PER_MESSAGE_MAXIMUM = 200;
+/** Most reactions of one member on one chat message. */
+export const CHAT_REACTIONS_PER_MEMBER_MAXIMUM = 10;
+/** Most reaction changes of one session per reaction window. */
+export const CHAT_REACTIONS_PER_WINDOW = 10;
+/** Length of the reaction rate window in milliseconds. */
+export const CHAT_REACTION_WINDOW_MS = 5000;
+/** How long a chat message can be reacted to, in milliseconds (one hour). */
+export const CHAT_REACTION_AGE_MAXIMUM_MS = 60 * 60 * 1000;
+/** Most recent chat messages per room that can be reacted to. */
+export const CHAT_REACTION_MESSAGES_MAXIMUM = 300;
+/** Longest reaction emoji in UTF-16 code units. */
+export const CHAT_REACTION_EMOJI_LENGTH_MAXIMUM = 32;
+/**
+ * Exactly one emoji: a flag, a keycap, or a pictograph with an optional
+ * presentation selector, skin tone or subdivision tag, joined to more with zero
+ * width joiners.
+ */
+const CHAT_REACTION_EMOJI =
+  /^(?:\p{RI}\p{RI}|[#*0-9]\uFE0F?\u20E3|\p{Extended_Pictographic}(?:\uFE0F|\p{Emoji_Modifier})?(?:[\u{E0020}-\u{E007E}]+\u{E007F})?(?:\u200D\p{Extended_Pictographic}(?:\uFE0F|\p{Emoji_Modifier})?)*)$/u;
+
 /**
  * Largest raw chat text accepted on the wire in UTF-16 code units: enough for
  * the maximum length in astral emoji plus characters that normalizing strips.
@@ -115,4 +145,15 @@ export function chatTextLines(text: string): number {
   let lines = 1;
   for (let index = text.indexOf('\n'); index >= 0; index = text.indexOf('\n', index + 1)) lines++;
   return lines;
+}
+
+/**
+ * Returns whether a text is exactly one emoji that may be used as a reaction.
+ *
+ * @param text Untrusted text.
+ * @returns True for a single emoji in normalized form.
+ */
+export function chatReactionEmojiIs(text: string): boolean {
+  if (text.length === 0 || text.length > CHAT_REACTION_EMOJI_LENGTH_MAXIMUM) return false;
+  return text.normalize('NFC') === text && CHAT_REACTION_EMOJI.test(text);
 }
