@@ -293,7 +293,9 @@ position:3×float32, packed smallest-three quaternion:u32, and fov/flags:u8.
 Camera ids are 0–15 with fov 1–179; character id is 255, using flag bits 1, 2 and 4.
 Coordinates must be finite and within absolute value 1,000,000. See
 `src/shared/presence_frame.ts` for packing. Only synced members send presence;
-it is latest-only and may be dropped under load. Kind 5 carries
+it is latest-only and may be dropped under load. Each recipient's mailbox is delivered while its outbound
+queue is idle; behind a long bulk stream (a joiner downloading large textures) it goes ahead of the queue at
+most every 200 ms while the socket buffer stays below twice `socketBufferHighWaterBytes`. Kind 5 carries
 toys (player-owned props such as thrown balls), described next; kind 4 is the third-party custom
 channel.
 
@@ -359,8 +361,8 @@ flagged in the room and kept out of it for `abuseRoomCooldownMs`, and a reconnec
 starts with the carried score (at most half the throttle score). Frames within the rate never score.
 Frames from members that have not synced yet are dropped.
 
-Full and changes-only snapshots have a mailbox slot each per sender and recipient, delivered only while the
-recipient's outbound path is idle; a newer changes-only snapshot replaces an undelivered one, and a full
+Full and changes-only snapshots have a mailbox slot each per sender and recipient, delivered like presence
+(while the recipient's outbound path is idle, or ahead of a long bulk stream at most every 200 ms); a newer changes-only snapshot replaces an undelivered one, and a full
 snapshot drops both and is delivered after anything else still pending. The relay keeps the latest full
 snapshot of every member; a joining member with the capability gets them after its snapshot; members
 without the capability never receive toy frames. A leaver's latest snapshot and pending frames are dropped.
