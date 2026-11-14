@@ -308,16 +308,19 @@ like presence: member to relay to everyone else, latest-only, lowest priority. S
 `src/shared/toy_frame.ts` (`toyFrameEncode`, `toyFrameCheck`, `toyFrameRelay`, `toyFrameDecode`).
 
 ```
-member → relay: [0xA7][kind 5][version 1][count 0..4][frame flags u8: 1 full][tick u16 BE]
-                [precision bits k u8 0..9][origin x y z float32 BE][entries]
-relay → others: [0xA7][kind 5][version 1][count][sender u32 BE][frame flags]...[entries]
+member → relay: [0xA7][kind 5][version 2][count 0..4][frame flags u8: 1 full][tick u16 BE]
+                [precision bits k u8 0..9][origin x y z float32 BE][toy state u8][entries]
+relay → others: [0xA7][kind 5][version 2][count][sender u32 BE][frame flags]...[entries]
 entry:          [type u8 1..255][id u8 1..4][flags u8: 1 sleeping, 2 grounded][payload length u8 0..22]
                 [position x y z int16 BE][payload]
 ```
 
 The relay validates only the envelope (header and fixed entry parts), so a new toy type never needs a relay
 change. Every toy has a position, so it is part of each entry: a 10-byte fixed part plus an opaque payload
-of at most 22 bytes (an entry is at most 32 bytes, a frame at most 148 bytes up and 152 down).
+of at most 22 bytes (an entry is at most 32 bytes, a frame at most 149 bytes up and 153 down). The toy state
+byte belongs to the sender, not to an entry: its low nibble flags the toys just respawned (bit n for toy id n + 1), so
+receivers start them afresh instead of interpolating from their previous life, and its high nibble is the toy
+type the sender holds (0: empty hands). Every value is valid; the relay passes it through.
 
 | Bytes | Field                                                                                    |
 | ----- | ---------------------------------------------------------------------------------------- |
@@ -329,7 +332,7 @@ of at most 22 bytes (an entry is at most 32 bytes, a frame at most 148 bytes up 
 | 10..  | Payload, defined per type and validated by clients, which ignore types they do not know; |
 |       | a type that needs finer positions adds its own correction here                           |
 
-Tennis ball payload (7 bytes, entry 17 bytes; one ball is 37 bytes up and 41 down):
+Tennis ball payload (7 bytes, entry 17 bytes; one ball is 38 bytes up and 42 down):
 
 | Payload bytes | Field                                                                                   |
 | ------------- | --------------------------------------------------------------------------------------- |
@@ -342,7 +345,8 @@ frame belongs to the connection that sent it and nobody can publish or remove so
 only interpolate, so a sender publishes on events (throw, contacts, waking, falling asleep) and as a slow
 keepalive, and nothing while its toys rest; the bounce counter lets receivers play every bounce. A full
 snapshot lists every toy of the sender (its toys missing from it are gone; a count of 0 clears them all); a
-changes-only snapshot lists only the toys that changed and must list at least one. A member owns at most
+changes-only snapshot lists only the toys that changed and must list at least one (an empty full snapshot still
+carries the held toy). A member owns at most
 four toys (`toysPerMember`). The tick is the sender's 120 Hz simulation step (wrapping), so receivers place
 the state in time.
 

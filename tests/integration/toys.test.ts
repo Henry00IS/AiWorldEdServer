@@ -81,7 +81,7 @@ function ball(x: number, id = 1, type = TOY_TYPE_TENNIS_BALL): ToyEntry {
  * @returns Client frame.
  */
 function frameOf(entries: ToyEntry[], full = true): Uint8Array {
-  return toyFrameEncode({ full, tick: 1, bits: 9, origin: [0, 1, 0], entries });
+  return toyFrameEncode({ full, tick: 1, bits: 9, origin: [0, 1, 0], respawned: 0, held: 0, entries });
 }
 
 /**
@@ -250,8 +250,8 @@ describe('toy violations', () => {
   test('malformed snapshots close the connection with 4001', async () => {
     const second = TOY_CLIENT_HEADER_BYTES + TOY_ENTRY_FIXED_BYTES + 7;
     const malformed = [
-      new Uint8Array([0xa7, BINARY_FRAME_KIND_TOY, 1, 1, 0]),
-      damaged((frame) => (frame[2] = 2)),
+      new Uint8Array([0xa7, BINARY_FRAME_KIND_TOY, 2, 1, 0]),
+      damaged((frame) => (frame[2] = 1)),
       damaged((frame) => (frame[3] = 1)),
       damaged((frame) => (frame[4] = 2)),
       damaged((frame) => (frame[second] = 0)),

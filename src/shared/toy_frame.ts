@@ -7,14 +7,17 @@
  * validate the payloads of the types they know and ignore the others.
  * Dependency-free, shared by relay and client.
  *
- * Client frame (20-byte header): [0] magic 0xA7, [1] kind 5, [2] format
+ * Client frame (21-byte header): [0] magic 0xA7, [1] kind 5, [2] format
  * version, [3] entry count (at most TOY_ENTRIES_MAXIMUM), [4] frame flags
  * (TOY_FRAME_FULL: the frame lists every toy of the sender and toys missing
  * from it are gone; without it, only toys that changed are listed), [5..6]
  * sender simulation tick (u16 BE, 120 Hz, wraps), [7] position precision bits k
  * (0..TOY_PRECISION_BITS_MAXIMUM) of the entry positions, [8..19] position
- * origin (3 x float32 BE), then the entries. Relayed frame: the same with the
- * sender user id (u32 BE) inserted after byte 3.
+ * origin (3 x float32 BE), [20] toy state (every value is valid): low nibble
+ * the respawn flags (bit n set: toy id n + 1 was just respawned, so receivers
+ * start it afresh instead of interpolating from its previous life), high nibble
+ * the toy type the sender holds (0: empty hands). Then the entries. Relayed
+ * frame: the same with the sender user id (u32 BE) inserted after byte 3.
  *
  * Entry: 10-byte fixed part [0] toy type (1..255, see TOY_TYPE__), [1] toy id
  * (1..TOY_ID_MAXIMUM, unique in the frame), [2] entry flags (TOY_FLAG__, other
@@ -27,7 +30,7 @@
 import { BINARY_FRAME_KIND_TOY, BINARY_FRAME_MAGIC } from './protocol_definitions.ts';
 
 /** Toy payload format version. */
-export const TOY_FORMAT_VERSION = 1;
+export const TOY_FORMAT_VERSION = 2;
 /** Most toys one member owns, and so most entries in one frame. */
 export const TOY_ENTRIES_MAXIMUM = 4;
 /** Largest toy id (one id per toy a member may own). */
@@ -39,9 +42,11 @@ export const TOY_PAYLOAD_BYTES_MAXIMUM = 22;
 /** Largest stored position magnitude (int16, keeping -32768 unused). */
 export const TOY_POSITION_UNITS_MAXIMUM = 32767;
 /** Header bytes of a client frame. */
-export const TOY_CLIENT_HEADER_BYTES = 20;
+export const TOY_CLIENT_HEADER_BYTES = 21;
 /** Header bytes of a relayed frame. */
-export const TOY_RELAY_HEADER_BYTES = 24;
+export const TOY_RELAY_HEADER_BYTES = 25;
+/** Offset of the toy state byte (respawn flags and held toy type). */
+const TOY_STATE_OFFSET = 20;
 /** Bytes before the sender id in a relayed frame (magic, kind, version, count). */
 const TOY_SENDER_OFFSET = 4;
 /** Largest accepted absolute origin coordinate. */
@@ -56,7 +61,9 @@ export const TOY_FLAG_SLEEPING = 1;
 export const TOY_FLAG_GROUNDED = 2;
 /** Every defined entry flag bit. */
 export const TOY_FLAGS_MASK = TOY_FLAG_SLEEPING | TOY_FLAG_GROUNDED;
-/** Toy type: a thrown tennis ball (7-byte payload, see the editor). */
+/** Largest held toy type (one nibble; 0 is empty hands). */
+export const TOY_HELD_MAXIMUM = 15;
+/** Toy type: a thrown tennis ball (payload defined by the editor). */
 export const TOY_TYPE_TENNIS_BALL = 1;
 
 /** One entry: fixed fields, the position in meters and the opaque payload. */
@@ -76,6 +83,10 @@ export interface ToySnapshot {
   bits: number;
   /** Position origin of the entries (float32 values). */
   origin: [number, number, number];
+  /** Respawn flags: bit n set when toy id n + 1 was just respawned. */
+  respawned: number;
+  /** Toy type the sender holds (0..TOY_HELD_MAXIMUM, 0: empty hands). */
+  held: number;
   entries: ToyEntry[];
 }
 
@@ -206,6 +217,7 @@ export function toyFrameEncode(snapshot: ToySnapshot): Uint8Array {
   view.setUint16(5, snapshot.tick & 0xffff);
   frame[7] = snapshot.bits;
   snapshot.origin.forEach((value, axis) => view.setFloat32(8 + axis * 4, value));
+  frame[TOY_STATE_OFFSET] = ((snapshot.held & TOY_HELD_MAXIMUM) << 4) | (snapshot.respawned & 0x0f);
   let offset = TOY_CLIENT_HEADER_BYTES;
   for (const entry of entries) {
     frame.set([entry.type, entry.id, entry.flags, entry.payload.byteLength], offset);
@@ -238,8 +250,10 @@ export function toyFrameDecode(frame: Uint8Array): ToyFrame | null {
   if (sender === 0 || !toyFrameCheck(client)) return null;
   const header = new DataView(client.buffer);
   const origin: [number, number, number] = [header.getFloat32(8), header.getFloat32(12), header.getFloat32(16)];
+  const state = client[TOY_STATE_OFFSET] ?? 0;
   const snapshot = { full: toyFrameIsFull(client), tick: header.getUint16(5), bits: client[7] ?? 0, origin };
-  return { sender, ...snapshot, entries: toyEntriesRead(client, header, snapshot) };
+  const toys = { respawned: state & 0x0f, held: state >> 4 };
+  return { sender, ...snapshot, ...toys, entries: toyEntriesRead(client, header, snapshot) };
 }
 
 /**

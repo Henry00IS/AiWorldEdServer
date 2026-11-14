@@ -5,6 +5,7 @@ import {
   TOY_ENTRY_FIXED_BYTES,
   TOY_FLAG_GROUNDED,
   TOY_FLAG_SLEEPING,
+  TOY_HELD_MAXIMUM,
   TOY_PAYLOAD_BYTES_MAXIMUM,
   TOY_POSITION_UNITS_MAXIMUM,
   TOY_PRECISION_BITS_MAXIMUM,
@@ -43,7 +44,7 @@ function toy(id: number, type = TOY_TYPE_TENNIS_BALL, length = BALL_PAYLOAD_BYTE
  * @returns Client frame.
  */
 function changes(entries: ToyEntry[]): Uint8Array {
-  return toyFrameEncode({ full: false, tick: 7, bits: 9, origin: [1.5, -2, 1000], entries });
+  return toyFrameEncode({ full: false, tick: 7, bits: 9, origin: [1.5, -2, 1000], respawned: 0, held: 0, entries });
 }
 
 /**
@@ -59,20 +60,21 @@ function damaged(damage: (frame: Uint8Array, view: DataView) => void): Uint8Arra
 }
 
 describe('toy frames', () => {
-  test('a ball entry is 17 bytes, so one ball is 37 bytes up and 41 bytes down', () => {
+  test('a ball entry is 17 bytes, so one ball is 38 bytes up and 42 bytes down', () => {
     const frame = changes([toy(1)]);
     expect(TOY_ENTRY_FIXED_BYTES + BALL_PAYLOAD_BYTES).toBe(17);
-    expect(frame.byteLength).toBe(37);
-    expect(toyFrameRelay(frame, 3).byteLength).toBe(41);
+    expect(frame.byteLength).toBe(38);
+    expect(toyFrameRelay(frame, 3).byteLength).toBe(42);
     const largest = changes([1, 2, 3, 4].map((id) => toy(id, 9, TOY_PAYLOAD_BYTES_MAXIMUM)));
-    expect([largest.byteLength, toyFrameRelay(largest, 3).byteLength]).toEqual([148, 152]);
+    expect([largest.byteLength, toyFrameRelay(largest, 3).byteLength]).toEqual([149, 153]);
     expect(toyFrameCheck(largest)).toBe(true);
   });
 
-  test('round-trips fixed parts, positions and opaque payloads through the relay with the sender as owner', () => {
+  test('round-trips the toy state, fixed parts, positions and opaque payloads with the sender as owner', () => {
     const resting = { ...toy(2, 200, 0), flags: TOY_FLAG_SLEEPING | TOY_FLAG_GROUNDED };
     const origin: [number, number, number] = [1, -2, 1000];
-    const frame = toyFrameEncode({ full: true, tick: 70_000, bits: 9, origin, entries: [toy(1), resting] });
+    const state = { respawned: 0b0101, held: TOY_HELD_MAXIMUM };
+    const frame = toyFrameEncode({ full: true, tick: 70_000, bits: 9, origin, ...state, entries: [toy(1), resting] });
     expect(toyFrameCheck(frame)).toBe(true);
     expect(toyFrameIsFull(frame)).toBe(true);
     const decoded = toyFrameDecode(toyFrameRelay(frame, 4));
@@ -82,21 +84,31 @@ describe('toy frames', () => {
       tick: 70_000 & 0xffff,
       bits: 9,
       origin,
+      ...state,
       entries: [toy(1), resting],
     });
   });
 
   test('an empty full frame clears the sender; an empty changes-only frame is invalid', () => {
-    const frame = toyFrameEncode({ full: true, tick: 3, bits: 0, origin: [0, 0, 0], entries: [] });
+    const frame = toyFrameEncode({
+      full: true,
+      tick: 3,
+      bits: 0,
+      origin: [0, 0, 0],
+      respawned: 0,
+      held: 2,
+      entries: [],
+    });
     expect(frame.byteLength).toBe(TOY_CLIENT_HEADER_BYTES);
-    expect(toyFrameDecode(toyFrameRelay(frame, 1))?.entries).toEqual([]);
+    const decoded = toyFrameDecode(toyFrameRelay(frame, 1));
+    expect([decoded?.entries, decoded?.held]).toEqual([[], 2]);
     expect(toyFrameCheck(changes([]))).toBe(false);
   });
 
   test('rejects bad headers, envelopes and inconsistent or oversized lengths', () => {
     const second = TOY_CLIENT_HEADER_BYTES + TOY_ENTRY_FIXED_BYTES + BALL_PAYLOAD_BYTES;
     const bad = [
-      damaged((frame) => (frame[2] = 2)),
+      damaged((frame) => (frame[2] = 1)),
       damaged((frame) => (frame[3] = 1)),
       damaged((frame) => (frame[3] = 3)),
       damaged((frame) => (frame[4] = 2)),
