@@ -1,5 +1,6 @@
 /** Bun.serve wiring: HTTP upgrade gatekeeping and WebSocket event forwarding. */
 import { transferHttpPrefix, transferHttpServe } from './server_transfer_http.ts';
+import { mcpHttpPrefix, mcpHttpServe } from './server_mcp_http.ts';
 import type { Server, ServerWebSocket, TLSOptions, WebSocketHandler } from 'bun';
 import type { ServerConfiguration } from '../config/server_configuration.ts';
 import type { ConnectionSession, ConnectionUpgradeData } from '../connection/connection_session.ts';
@@ -119,10 +120,8 @@ function collabServerFetch(
   server: Server<SocketData>,
 ): Response | Promise<Response> | undefined {
   const url = new URL(request.url);
-  if (url.pathname === '/healthz' && request.method === 'GET') return new Response('ok\n');
-  const transferPrefix = transferHttpPrefix(state.core.config.websocketPath);
-  if (url.pathname.startsWith(transferPrefix))
-    return transferHttpServe(state.core, request, url.pathname.slice(transferPrefix.length));
+  const plainResponse = collabServerHttpRoute(state.core, request, url.pathname, server);
+  if (plainResponse !== null) return plainResponse;
   if (url.pathname !== state.core.config.websocketPath) return new Response('not found\n', { status: 404 });
   if (request.headers.get('upgrade')?.toLowerCase() !== 'websocket')
     return new Response('websocket upgrade required\n', { status: 426 });
@@ -132,6 +131,31 @@ function collabServerFetch(
   if (server.upgrade(request, { data: { ...admission.data, session: null, refusal: null } })) return undefined;
   state.core.connectionsPerIpKey.release(admission.data.ipKey);
   return new Response('upgrade failed\n', { status: 400 });
+}
+
+/**
+ * Answers the plain HTTP paths: health check, transfer links and browser MCP.
+ *
+ * @param core Relay core.
+ * @param request HTTP request.
+ * @param pathname Request path.
+ * @param server Bun server.
+ * @returns Response, or null when the path is not one of them.
+ */
+function collabServerHttpRoute(
+  core: ServerCore,
+  request: Request,
+  pathname: string,
+  server: Server<SocketData>,
+): Response | Promise<Response> | null {
+  if (pathname === '/healthz' && request.method === 'GET') return new Response('ok\n');
+  const transferPrefix = transferHttpPrefix(core.config.websocketPath);
+  if (pathname.startsWith(transferPrefix))
+    return transferHttpServe(core, request, pathname.slice(transferPrefix.length));
+  const mcpPrefix = mcpHttpPrefix(core.config.websocketPath);
+  if (!pathname.startsWith(mcpPrefix)) return null;
+  const socketAddress = server.requestIP(request)?.address ?? '0.0.0.0';
+  return mcpHttpServe(core, request, pathname.slice(mcpPrefix.length), socketAddress);
 }
 
 /**

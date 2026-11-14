@@ -5,6 +5,8 @@
 import { CompatibilityChecks } from '../forks/compatibility_checks.ts';
 import { handlerMemberControl } from '../handlers/handler_member.ts';
 import { handlerCustom, handlerCustomControl } from '../handlers/handler_custom.ts';
+import { handlerMcpControl } from '../handlers/handler_mcp.ts';
+import { McpListenerRegistry } from '../mcp/mcp_listener_registry.ts';
 import type { ServerConfiguration } from '../config/server_configuration.ts';
 import { ConnectionOutboundQueue, type OutboundSocket } from '../connection/connection_outbound_queue.ts';
 import { ConnectionVerifyState, type ConnectionVerifyHeldMessage } from '../connection/connection_verify_state.ts';
@@ -308,6 +310,8 @@ export class ServerCore {
   readonly abuseCarry: LimiterAbuseCarry;
   /** Issues and checks transfer link tokens with this process's secret. */
   readonly transferCodec = new TransferLinkCodec();
+  /** Browser MCP tokens and the editors listening on them. */
+  readonly mcp: McpListenerRegistry;
   /**
    * Broadcasts the live connection count to members with the `stats`
    * capability.
@@ -334,6 +338,7 @@ export class ServerCore {
     this.joinFailuresPerRoom = new LimiterFailureWindow(config.joinFailuresPerRoomPerMinute, 60_000);
     this.outboundBacklogServerBudget = new LimiterSharedBudget(config.outboundBacklogBytesTotal);
     this.abuseCarry = new LimiterAbuseCarry(config.abuseDecayPerSecond);
+    this.mcp = new McpListenerRegistry(config.mcpQueuedRequestsPerToken);
     this.pruneTimer = setInterval(() => this.limitersPrune(), 60_000);
     this.leaseTimer = setInterval(() => leasesSweep(this), config.lockLeaseSweepMs);
   }
@@ -420,6 +425,7 @@ export class ServerCore {
     this.roomListSubscriptions.unsubscribe(session);
     roomMembershipEnd(this, session, 'disconnected');
     transferSessionClosed(session);
+    this.mcp.unlisten(session);
     this.abuseCarry.sessionClosed(session.ipKey, session.limits.abuse);
     session.outbound.clear();
     this.sessions.delete(session.user);
@@ -609,6 +615,7 @@ export class ServerCore {
   private dispatchContent(session: ConnectionSession, message: ContentMessage, bytes: number): void {
     if (handlerMemberControl(this, session, message)) return;
     if (handlerCustomControl(this, session, message)) return;
+    if (handlerMcpControl(this, session, message)) return;
     switch (message.t) {
       case 'lock.acquire':
       case 'lock.release':
@@ -700,5 +707,6 @@ export class ServerCore {
     this.joinFailuresPerRoom.prune();
     this.roomEntriesPerIpKey.prune();
     this.abuseCarry.prune();
+    this.mcp.prune();
   }
 }

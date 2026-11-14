@@ -67,6 +67,16 @@ export const TRANSFER_MIME_PATTERN = /^[a-z0-9][a-z0-9!#$&^_.+-]{0,126}\/[a-z0-9
  */
 export const TRANSFER_NAME_LENGTH_MAXIMUM = 255;
 
+/** Path segment after the WebSocket path under which browser MCP is served. */
+export const MCP_PATH_SEGMENT = 'mcp';
+/**
+ * A browser MCP token: exactly 64 base64url characters (48 random bytes). The
+ * editor creates it once, keeps it and only replaces it when the user asks.
+ */
+export const MCP_TOKEN_PATTERN = /^[A-Za-z0-9_-]{64}$/;
+/** Exact length of a browser MCP token. */
+export const MCP_TOKEN_LENGTH = 64;
+
 /**
  * File shared in a chat message: the sender's transfer link plus what the file
  * is. Members build the download URL from their own relay URL, so a message can
@@ -269,7 +279,25 @@ export type ClientMessage =
   | { t: 'stream.abort'; to: number; stream: number; reason?: string }
   | { t: 'transfer.create'; r?: number }
   | { t: 'transfer.info'; q: number; size: number; name: string; mime: string }
-  | { t: 'transfer.missing'; q: number };
+  | { t: 'transfer.missing'; q: number }
+  | { t: 'mcp.listen'; r?: number; token: string }
+  | { t: 'mcp.unlisten'; r?: number }
+  | { t: 'mcp.response'; q: number; body: string };
+
+/**
+ * Browser MCP (capability `mcp`): an editor that cannot run a local MCP server
+ * sends `mcp.listen {token}` and gets `mcp.listening`, or the error
+ * `mcp_token_in_use` while another connection listens on the token. Every
+ * JSON-RPC POST to `<WebSocket path>/mcp/<token>` then reaches it as
+ * `mcp.request {q, body}` with the raw request text; the editor answers
+ * `mcp.response {q, body}` with the raw response text, or an empty body for a
+ * notification (HTTP 202). `mcp.unlisten` or closing the connection stops it.
+ */
+export interface McpRequestMessage {
+  t: 'mcp.request';
+  q: number;
+  body: string;
+}
 
 /**
  * Transfer links (capability `transfer`): the owner asks for a link with
@@ -384,7 +412,8 @@ export type ErrorCode =
   | 'protocol_unsupported'
   | 'protocol_mismatch'
   | 'transfer_rate_limited'
-  | 'transfer_unavailable';
+  | 'transfer_unavailable'
+  | 'mcp_token_in_use';
 
 /**
  * One chat message as members receive it. `id` grows per room, `at` is the

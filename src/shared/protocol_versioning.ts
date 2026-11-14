@@ -30,6 +30,8 @@ export const PROTOCOL_VERSION_LIMIT = 0xffff;
  *   `chat.reaction` messages.
  * - `toys`: snapshots of the toys each member owns and simulates (binary kind 5,
  *   from any member to every other member).
+ * - `mcp`: browser MCP, `mcp.*` messages that forward JSON-RPC POSTs of
+ *   `<WebSocket path>/mcp/<token>` to the listening editor.
  */
 export const PROTOCOL_CAPABILITIES = [
   'select',
@@ -39,6 +41,7 @@ export const PROTOCOL_CAPABILITIES = [
   'chat.edit',
   'chat.react',
   'toys',
+  'mcp',
 ] as const;
 /** Union of capability names this relay knows. */
 export type ProtocolCapability = (typeof PROTOCOL_CAPABILITIES)[number];

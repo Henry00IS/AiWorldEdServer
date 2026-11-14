@@ -178,6 +178,33 @@ downloads. Single `Range` requests are answered with 206, so videos can seek; th
 the `Range` header through. The proxy must forward plain HTTP requests on paths below
 `WEBSOCKET_PATH` (the examples above do) and should not buffer the responses.
 
+## Browser MCP
+
+The browser build of AiWorldEd cannot run a local MCP server, so its AI client posts
+JSON-RPC to `<WEBSOCKET_PATH>/mcp/<token>` on the relay (for example
+`https://relay.example.com/ws/mcp/<token>`) and the relay forwards it to the editor
+listening on that token. The relay passes request bodies on at 64 KiB/s. Bun reads
+bodies off the socket itself, so this limits how fast data reaches the editor, not how
+fast the sender uploads; each body (at most about 1 MiB) waits in relay memory while it
+drains. With nginx, add these lines to the `/ws` location above (`/ws` already matches
+`/ws/mcp/<token>`). The body settings only affect plain HTTP requests; the timeout also
+applies to the WebSocket, which is fine because the relay pings every connection within
+its 60 s idle timeout:
+
+```nginx
+        proxy_request_buffering off;
+        proxy_buffering off;
+        proxy_read_timeout 75s;
+        client_max_body_size 1m;
+```
+
+and drop that location's `proxy_read_timeout 1h` and `client_max_body_size 64m`, since
+nginx refuses a duplicate directive. Plain HTTP bodies on that path are only MCP
+requests, and `client_max_body_size` should match the relay's `MAX_PAYLOAD_BYTES` (the
+relay refuses bodies above it minus 1 KiB itself), so nginx answers oversized ones with
+413 before they reach the relay. `75s` outlasts the relay's 60 s request timeout, so
+clients get the relay's own 504. Caddy streams request bodies by default.
+
 ## Security checklist
 
 - Serve `wss://` only (built-in TLS or a proxy). Plain `ws://` exposes room passwords on

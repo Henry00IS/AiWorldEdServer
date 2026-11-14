@@ -29,3 +29,22 @@ test('empty frames and tiny frames have bounded bookkeeping', () => {
   expect(window.take(0, LIMIT, 4096, 999)).toBe(false);
   expect(window.take(0, LIMIT, 4096, 1000)).toBe(true);
 });
+
+test('delayMs is zero while bytes fit and otherwise names when the oldest needed charge leaves', () => {
+  const window = new CustomWindow();
+  expect(window.delayMs(LIMIT, LIMIT, 0)).toBe(0);
+  window.take(LIMIT / 4, LIMIT, 4096, 100);
+  window.take(LIMIT / 2, LIMIT, 4096, 400);
+  expect(window.delayMs(LIMIT / 4, LIMIT, 500)).toBe(0);
+  expect(window.delayMs(LIMIT / 2, LIMIT, 500)).toBe(600);
+  expect(window.delayMs(LIMIT, LIMIT, 500)).toBe(900);
+  expect(window.delayMs(LIMIT / 2, LIMIT, 1100)).toBe(0);
+  expect(window.take(LIMIT / 2, LIMIT, 4096, 1100)).toBe(true);
+});
+
+test('isEmpty turns true once every charge left the window', () => {
+  const window = new CustomWindow();
+  window.take(10, LIMIT, 4096, 0);
+  expect(window.isEmpty(999)).toBe(false);
+  expect(window.isEmpty(1000)).toBe(true);
+});
