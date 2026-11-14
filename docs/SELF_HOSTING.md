@@ -183,27 +183,27 @@ the `Range` header through. The proxy must forward plain HTTP requests on paths 
 The browser build of AiWorldEd cannot run a local MCP server, so its AI client posts
 JSON-RPC to `<WEBSOCKET_PATH>/mcp/<token>` on the relay (for example
 `https://relay.example.com/ws/mcp/<token>`) and the relay forwards it to the editor
-listening on that token. The relay reads request bodies at 64 KiB/s and relies on TCP
-backpressure to slow faster senders, so a proxy must pass bodies through unbuffered,
-otherwise it reads the whole body first. With nginx, add a location for the MCP path next
-to the one above:
+listening on that token. The relay passes request bodies on at 64 KiB/s. Bun reads
+bodies off the socket itself, so this limits how fast data reaches the editor, not how
+fast the sender uploads; each body (at most about 1 MiB) waits in relay memory while it
+drains. With nginx, add these lines to the `/ws` location above (`/ws` already matches
+`/ws/mcp/<token>`). The body settings only affect plain HTTP requests; the timeout also
+applies to the WebSocket, which is fine because the relay pings every connection within
+its 60 s idle timeout:
 
 ```nginx
-    location /ws/mcp/ {
-        proxy_pass http://127.0.0.1:8081;
-        proxy_http_version 1.1;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-Secret "same-value-as-FORWARDED_SECRET";
         proxy_request_buffering off;
         proxy_buffering off;
         proxy_read_timeout 75s;
         client_max_body_size 1m;
-    }
 ```
 
-`client_max_body_size` should match the relay's `MAX_PAYLOAD_BYTES` (the relay refuses
-bodies above it minus 1 KiB itself). Caddy streams request bodies by default.
+and drop that location's `proxy_read_timeout 1h` and `client_max_body_size 64m`, since
+nginx refuses a duplicate directive. Plain HTTP bodies on that path are only MCP
+requests, and `client_max_body_size` should match the relay's `MAX_PAYLOAD_BYTES` (the
+relay refuses bodies above it minus 1 KiB itself), so nginx answers oversized ones with
+413 before they reach the relay. `75s` outlasts the relay's 60 s request timeout, so
+clients get the relay's own 504. Caddy streams request bodies by default.
 
 ## Security checklist
 

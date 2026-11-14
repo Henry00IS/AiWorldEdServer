@@ -1,9 +1,10 @@
 /**
  * Reads a browser MCP request body as a stream at a limited rate. Each chunk is
  * charged to the token's and the client address's sliding byte windows; while
- * they are full the reader does not ask for more, so the socket stops being
- * read and TCP backpressure stalls the sender. At most one chunk beyond the
- * budget is ever held, and the whole body never exceeds its size cap.
+ * they are full the reader waits, so the body reaches the editor no faster than
+ * the rate. Bun reads request bodies off the socket on its own, so this paces
+ * delivery rather than stalling the sender; the whole body never exceeds its
+ * size cap.
  */
 import type { CustomWindow } from '../forks/custom_window.ts';
 import { mcpAbortableSleep } from './mcp_request_abort.ts';

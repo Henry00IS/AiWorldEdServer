@@ -494,14 +494,33 @@ unknown and idle tokens all get the relay's plain `404 not found`. The relay doe
 not interpret or log the traffic and never logs tokens.
 
 The body is read as a stream at `mcpBytesPerSecond` (64 KiB/s) per token and per
-client address, as an exact sliding window: while it is full the relay stops
-reading, so TCP backpressure stalls the sender. Bodies above the WebSocket
+client address, as an exact sliding window, so it reaches the editor no faster
+than that. Bun reads request bodies off the socket on its own, so this paces
+delivery rather than holding the sender back: a request body is held in relay
+memory (at most about 1 MiB each, five per token) while it drains. Bodies above the WebSocket
 payload limit minus 1 KiB get 413; one request flies per token with up to
 `mcpQueuedRequestsPerToken` waiting behind it, then 429 with `Retry-After`; a
 request that takes over `mcpRequestTimeoutMs` (60 s), upload and answer included,
 gets 504; and one whose editor stops listening gets 503. An answer must fit one
-WebSocket message (`maxPayloadBytes`). A proxy in front must not buffer request
-bodies (see [SELF_HOSTING.md](docs/SELF_HOSTING.md#browser-mcp)).
+WebSocket message (`maxPayloadBytes`).
+
+Behind nginx, add these to the location that serves the relay (for example `/ws`;
+it also covers `/ws/mcp/<token>`). The body settings only affect plain HTTP
+requests; the timeout also applies to the WebSocket, which is fine because the
+relay pings every connection within `idleTimeoutSeconds` (60 s):
+
+```nginx
+    proxy_request_buffering off;
+    proxy_buffering off;
+    proxy_read_timeout 75s;
+    client_max_body_size 1m;
+```
+
+`client_max_body_size 1m` makes nginx refuse oversized bodies with 413 before
+they reach the relay; keep it at `maxPayloadBytes`. `proxy_read_timeout 75s`
+outlasts the relay's 60 s request timeout, so clients get the relay's own 504.
+If the location already sets `proxy_read_timeout`, don't add a second one. See
+[SELF_HOSTING.md](docs/SELF_HOSTING.md#browser-mcp).
 
 ### Errors, reason codes and close codes
 
