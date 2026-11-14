@@ -2,6 +2,8 @@
 import { COMPATIBILITY_REASONS } from '../shared/compatibility_identity.ts';
 import {
   EDIT_KINDS,
+  MCP_TOKEN_LENGTH,
+  MCP_TOKEN_PATTERN,
   PROTOCOL_ID,
   SELECT_IDS_MAXIMUM,
   STREAM_KINDS,
@@ -28,6 +30,7 @@ export const PROTOCOL_CAPS = {
   streamSizeMaximum: 512 * 1024 * 1024,
   passwordInputMaximum: 256,
   assetNameMaximum: 512,
+  mcpBodyMaximum: 64 * 1024 * 1024,
 } as const;
 
 const SCHEMA_CUSTOM_KEYS: Schema = { type: 'array', min: 1, max: 256, items: { type: 'string', min: 1, max: 256 } };
@@ -57,6 +60,14 @@ const SCHEMA_CHAT_FILE: Schema = {
     mime: SCHEMA_TRANSFER_MIME,
   },
 };
+const SCHEMA_MCP_TOKEN: Schema = {
+  type: 'string',
+  min: MCP_TOKEN_LENGTH,
+  max: MCP_TOKEN_LENGTH,
+  pattern: MCP_TOKEN_PATTERN,
+};
+const SCHEMA_MCP_QUERY: Schema = { type: 'int', min: 1, max: 0xffffffff };
+const SCHEMA_MCP_BODY: Schema = { type: 'string', min: 0, max: PROTOCOL_CAPS.mcpBodyMaximum };
 const SCHEMA_PROTOCOL_VERSION: Schema = { type: 'int', min: 1, max: PROTOCOL_VERSION_LIMIT };
 const SCHEMA_CAPABILITIES: Schema = {
   type: 'array',
@@ -270,5 +281,11 @@ export const CLIENT_MESSAGE_SCHEMAS: Readonly<Record<ClientMessageType, Schema>>
   'transfer.missing': {
     type: 'object',
     required: { t: { type: 'literal', value: 'transfer.missing' }, q: SCHEMA_TRANSFER_QUERY },
+  },
+  'mcp.listen': messageSchema('mcp.listen', { token: SCHEMA_MCP_TOKEN }),
+  'mcp.unlisten': messageSchema('mcp.unlisten'),
+  'mcp.response': {
+    type: 'object',
+    required: { t: { type: 'literal', value: 'mcp.response' }, q: SCHEMA_MCP_QUERY, body: SCHEMA_MCP_BODY },
   },
 };

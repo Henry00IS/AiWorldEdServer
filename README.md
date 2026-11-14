@@ -104,13 +104,13 @@ The first message must be `hello` within five seconds:
   "minVersion": 3,
   "client": "MyEditor/1.2.3",
   "name": "Builder",
-  "caps": ["select", "transfer", "stats", "typing", "chat.edit", "chat.react", "toys"]
+  "caps": ["select", "transfer", "stats", "typing", "chat.edit", "chat.react", "toys", "mcp"]
 }
 ```
 
 Both supported protocol bounds are currently **2**. The relay selects the newest
 common protocol version and intersects the offered optional transport capabilities
-`select`, `transfer`, `stats`, `typing`, `chat.edit`, `chat.react`, `toys`. These are unrelated to room software
+`select`, `transfer`, `stats`, `typing`, `chat.edit`, `chat.react`, `toys`, `mcp`. These are unrelated to room software
 identity. No common version produces `protocol_unsupported`, followed by close 4008. A room must also use the connection's negotiated protocol version.
 `client` identifies the editor name/build shown in the room list.
 
@@ -163,6 +163,9 @@ limits and semantic checks.
 - **`transfer.create`**: `r?: int[0..2147483647]`.
 - **`transfer.info`**: `q: int[1..4294967295]; size: int[0..9007199254740991]; name: string[0..1020]; mime: string[0..255]`.
 - **`transfer.missing`**: `q: int[1..4294967295]`.
+- **`mcp.listen`**: `token: string[64..64] matching /^[A-Za-z0-9_-]{64}$/; r?: int[0..2147483647]`.
+- **`mcp.unlisten`**: `r?: int[0..2147483647]`.
+- **`mcp.response`**: `q: int[1..4294967295]; body: string[0..67108864]`.
 
 ### Replies and events
 
@@ -227,6 +230,9 @@ at:int, file?:File`. `at` is epoch milliseconds; only `chat.sent` is the sender'
 - `transfer.get`: `q:u32, link:string, thumbnail?:true` (to the link's connected owner;
   `thumbnail` asks for a PNG preview of the file instead).
 - `transfer.chunk`: `q:u32, offset:int, length:int` (request for the next bytes).
+- `mcp.listening`: no additional fields (reply to `mcp.listen`).
+- `mcp.request`: `q:u32, body:string` (raw JSON-RPC request text POSTed to the
+  connection's browser MCP token; negotiated `mcp` only).
 - `stats`: `online:int` (negotiated `stats` only, updates at most every five seconds).
 - `error`: `code:string, r?:int`, plus the code-specific fields described below.
 
@@ -466,6 +472,37 @@ sends `transfer.get` with `thumbnail:true`; the relay serves the answer only as
 an `image/png` of at most 1 MiB and otherwise answers 404. Crawler cards of
 `.aicurve` files (and legacy `.curve`) use it as their preview image.
 
+### Browser MCP
+
+With negotiated `mcp`, an editor that cannot run a local MCP server (the browser
+build) gives its AI client one URL, `<relay origin><WebSocket route>/mcp/<token>`
+(for example `https://relay.example.com/ws/mcp/<token>`), built from its relay
+URL like transfer links. The token is exactly 64 base64url characters (48 random
+bytes) that the editor keeps until the user replaces it. The editor sends
+`mcp.listen {token}` and gets `mcp.listening`, or `mcp_token_in_use` while
+another connection listens on it: one token per connection, one connection per
+token, and listening on another token stops the first. `mcp.unlisten` or closing
+the connection stops listening.
+
+Each HTTP `POST` reaches the editor as `mcp.request {q, body}` with the raw
+request text. The editor answers `mcp.response {q, body}` with the raw JSON-RPC
+response, returned as `application/json` with 200, or an empty body for a
+notification, returned as 202. `GET` returns
+`{ok:true, message:"AiWorldEd MCP endpoint. Use POST for JSON-RPC."}` and
+`OPTIONS` 204 with CORS headers, like the desktop editor's server. Malformed,
+unknown and idle tokens all get the relay's plain `404 not found`. The relay does
+not interpret or log the traffic and never logs tokens.
+
+The body is read as a stream at `mcpBytesPerSecond` (64 KiB/s) per token and per
+client address, as an exact sliding window: while it is full the relay stops
+reading, so TCP backpressure stalls the sender. Bodies above the WebSocket
+payload limit minus 1 KiB get 413; one request flies per token with up to
+`mcpQueuedRequestsPerToken` waiting behind it, then 429 with `Retry-After`; a
+request that takes over `mcpRequestTimeoutMs` (60 s), upload and answer included,
+gets 504; and one whose editor stops listening gets 503. An answer must fit one
+WebSocket message (`maxPayloadBytes`). A proxy in front must not buffer request
+bodies (see [SELF_HOSTING.md](docs/SELF_HOSTING.md#browser-mcp)).
+
 ### Errors, reason codes and close codes
 
 The `error.code` literals below are extracted from the shared `ErrorCode` type.
@@ -479,7 +516,7 @@ Lock failures use `lock.result {ok:false,code,...}`; edit failures use
 `edit.rejected {seq,reason,ids,why?}`. Inspect the discriminator before deciding
 which failure shape to handle.
 
-`owner_timeout`, `owner_left`, `client_incompatible`, `custom_rate_limited`, `custom_too_large`, `custom_target_invalid`, `invalid_name`, `weak_password`, `password_required`, `password_not_allowed`, `wrong_password`, `too_many_attempts`, `room_not_found`, `room_full`, `room_limit_ip`, `room_limit_server`, `already_in_room`, `not_in_room`, `not_owner`, `not_synced`, `internal_test_forbidden`, `lock_conflict`, `lock_limit`, `not_locked`, `lock_unverified`, `lease_busy`, `lease_stale`, `outside_lease`, `rate_limited`, `throttled`, `stream_invalid`, `subscription_limit`, `name_locked`, `invalid_chat`, `chat_rate_limited`, `busy`, `protocol_unsupported`, `protocol_mismatch`, `transfer_rate_limited`, `transfer_unavailable`.
+`owner_timeout`, `owner_left`, `client_incompatible`, `custom_rate_limited`, `custom_too_large`, `custom_target_invalid`, `invalid_name`, `weak_password`, `password_required`, `password_not_allowed`, `wrong_password`, `too_many_attempts`, `room_not_found`, `room_full`, `room_limit_ip`, `room_limit_server`, `already_in_room`, `not_in_room`, `not_owner`, `not_synced`, `internal_test_forbidden`, `lock_conflict`, `lock_limit`, `not_locked`, `lock_unverified`, `lease_busy`, `lease_stale`, `outside_lease`, `rate_limited`, `throttled`, `stream_invalid`, `subscription_limit`, `name_locked`, `invalid_chat`, `chat_rate_limited`, `busy`, `protocol_unsupported`, `protocol_mismatch`, `transfer_rate_limited`, `transfer_unavailable`, `mcp_token_in_use`.
 
 Chat reasons: `empty`, `too_long`, `too_many_lines`. Compatibility reasons: `incompatible_client`, `owner_timeout`, `owner_left`. Verification `why`: `invalid`, `deleted`, `owner_timeout`, `owner_left`, `rate_limited`.
 
@@ -588,6 +625,9 @@ The following numeric defaults are read directly from `configurationDefault()`. 
 | `transferChunkBytes`           | 262,144     |
 | `transferDownloadsPerOwner`    | 16          |
 | `transferReplyTimeoutMs`       | 20,000      |
+| `mcpBytesPerSecond`            | 65,536      |
+| `mcpQueuedRequestsPerToken`    | 4           |
+| `mcpRequestTimeoutMs`          | 60,000      |
 
 Rate abuse can throttle or disconnect clients under the existing abuse scorer. Selection/presence are lossy under load; toy frames over a member's toy rate score one abuse point each; chat has its own FIFO policy. Custom byte/frame-window refusals are explicit and add no abuse points. Per-room lock totals are independent between rooms. See [SELF_HOSTING.md](docs/SELF_HOSTING.md) for environment-variable names and validation bounds.
 

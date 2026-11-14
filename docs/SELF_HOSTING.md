@@ -178,6 +178,33 @@ downloads. Single `Range` requests are answered with 206, so videos can seek; th
 the `Range` header through. The proxy must forward plain HTTP requests on paths below
 `WEBSOCKET_PATH` (the examples above do) and should not buffer the responses.
 
+## Browser MCP
+
+The browser build of AiWorldEd cannot run a local MCP server, so its AI client posts
+JSON-RPC to `<WEBSOCKET_PATH>/mcp/<token>` on the relay (for example
+`https://relay.example.com/ws/mcp/<token>`) and the relay forwards it to the editor
+listening on that token. The relay reads request bodies at 64 KiB/s and relies on TCP
+backpressure to slow faster senders, so a proxy must pass bodies through unbuffered,
+otherwise it reads the whole body first. With nginx, add a location for the MCP path next
+to the one above:
+
+```nginx
+    location /ws/mcp/ {
+        proxy_pass http://127.0.0.1:8081;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-Secret "same-value-as-FORWARDED_SECRET";
+        proxy_request_buffering off;
+        proxy_buffering off;
+        proxy_read_timeout 75s;
+        client_max_body_size 1m;
+    }
+```
+
+`client_max_body_size` should match the relay's `MAX_PAYLOAD_BYTES` (the relay refuses
+bodies above it minus 1 KiB itself). Caddy streams request bodies by default.
+
 ## Security checklist
 
 - Serve `wss://` only (built-in TLS or a proxy). Plain `ws://` exposes room passwords on

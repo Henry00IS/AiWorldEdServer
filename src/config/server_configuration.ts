@@ -183,6 +183,22 @@ export interface ServerConfiguration {
   transferDownloadsPerOwner: number;
   /** How long the relay waits for the owner's file info or next chunk. */
   transferReplyTimeoutMs: number;
+  /**
+   * Browser MCP request body bytes accepted in any sliding second, per token
+   * and per client address; above it the relay stops reading until the window
+   * frees.
+   */
+  mcpBytesPerSecond: number;
+  /**
+   * Browser MCP requests waiting behind the one in flight per token; more get
+   * 429.
+   */
+  mcpQueuedRequestsPerToken: number;
+  /**
+   * Time limit of one browser MCP request, upload and editor answer included
+   * (504).
+   */
+  mcpRequestTimeoutMs: number;
 }
 
 /**
@@ -296,6 +312,13 @@ const CONFIGURATION_TRANSFER_LIMITS_DEFAULT = {
   transferReplyTimeoutMs: 20_000,
 } satisfies Partial<ServerConfiguration>;
 
+/** Default browser MCP limits. */
+const CONFIGURATION_MCP_LIMITS_DEFAULT = {
+  mcpBytesPerSecond: 64 * 1024,
+  mcpQueuedRequestsPerToken: 4,
+  mcpRequestTimeoutMs: 60_000,
+} satisfies Partial<ServerConfiguration>;
+
 /** Default fork admission and custom channel limits. */
 const CONFIGURATION_FORK_LIMITS_DEFAULT = {
   compatibilityTimeoutMs: 5000,
@@ -327,5 +350,6 @@ export function configurationDefault(): ServerConfiguration {
     ...CONFIGURATION_ROOM_LIMITS_DEFAULT,
     ...CONFIGURATION_EDIT_LIMITS_DEFAULT,
     ...CONFIGURATION_TRANSFER_LIMITS_DEFAULT,
+    ...CONFIGURATION_MCP_LIMITS_DEFAULT,
   };
 }
